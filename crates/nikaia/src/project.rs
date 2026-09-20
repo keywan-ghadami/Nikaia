@@ -788,7 +788,20 @@ pub fn check(
     if types > 0 {
         refused.push(format!("{types} type error{}", plural(types)));
     }
-    let crossings = count("NK25");
+    // **`NK2503` is counted apart from the other `NK25xx` codes**
+    // ([ADR-039](../../docs/specification/adr/adr-039.md) D6), for the reason
+    // every split in this tally has: it must say what it counted. The others
+    // are a *value* on the wrong thread; this one is a *call* that can reach a
+    // lock, and the way out is keeping the lock out of its reach rather than
+    // anything about the value.
+    let reaching = count("NK2503");
+    if reaching > 0 {
+        refused.push(format!(
+            "{reaching} call{} that can reach a lock",
+            plural(reaching)
+        ));
+    }
+    let crossings = count("NK25") - reaching;
     if crossings > 0 {
         refused.push(format!(
             "{crossings} value{} that may not cross a thread",
@@ -867,8 +880,15 @@ pub fn check(
             plural(under_a_lock)
         ));
     }
-    let rules =
-        findings.len() - types - crossings - aliases - tasks - walked - pausing - under_a_lock;
+    let rules = findings.len()
+        - types
+        - crossings
+        - reaching
+        - aliases
+        - tasks
+        - walked
+        - pausing
+        - under_a_lock;
     if rules > 0 {
         refused.push(format!(
             "{rules} place{} that can fail without saying so",

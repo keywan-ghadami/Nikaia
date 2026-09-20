@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.91 (Draft)
+**Version:** 0.0.92 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -560,7 +560,7 @@ A task runs on a thread of its own at `yes`, so **everything it uses must be abl
 
 The answer is **the same at both values of the option**, so that a library written at one compiles where it is used at the other. The question is asked of a value **and a destination**, and each destination gets one answer that does not depend on the option. The option changes only whether the build performs the crossing: at `no` nothing in user code runs concurrently, so the task does not run and the refusal is a lint rather than an error. The diagnostic is `NK2501` (Part III C.5).
 
-> **Implementation status:** Implemented. The check runs and is asked about the destination. Plain data, a `Shared[T]` and a lock go into a task of the program's own, so no type reaches `NK2501`'s refusing half at that destination; at the foreign destination a lock is refused with `NK2502`. `spawn` and the lock both lower, so a task that takes plain data and a task that takes a `SharedMut[T]` are programs that run ([ADR-055](adr/adr-055.md) §6 step 4, [ADR-064](adr/adr-064.md) §5).
+> **Implementation status:** Implemented. The check runs and is asked about the destination. Plain data, a `Shared[T]` and a lock go into a task of the program's own, so no type reaches `NK2501`'s refusing half at that destination; at the foreign destination a lock is refused with `NK2503` ([ADR-039](adr/adr-039.md) D6, Part III C.6) and a `Shared[T]` with `NK2502` ([ADR-061](adr/adr-061.md) D1). `spawn` and the lock both lower, so a task that takes plain data and a task that takes a `SharedMut[T]` are programs that run ([ADR-055](adr/adr-055.md) §6 step 4, [ADR-064](adr/adr-064.md) §5).
 
 **The nesting rule does not reach into a spawned task.** A `spawn`'s body runs later and elsewhere, not during the call, so it is not part of what its writer holds at the time. The rule that refuses a lock taken while a lock is held (12.3) does not reach into it ([ADR-039](adr/adr-039.md) D3). A scope is the other case, because it waits for its tasks (12.7).
 

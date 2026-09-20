@@ -6916,14 +6916,25 @@ impl<'a> Checker<'a> {
             .zip(found)
             .enumerate()
             .map(|(at, (expr, ty))| (self.names_the_argument(expr, at), ty));
-        let named = config
-            .iter()
-            .zip(passed)
-            .map(|(arg, (_, ty))| (format!("`{}`", self.parsed.text(arg.name)), ty));
+        let named = config.iter().zip(passed).map(|(arg, (_, ty))| {
+            // The **option's** name in the headline, because that is what the
+            // caller wrote at the `;`; the path is the value behind it, because
+            // `state:` is not something a program can put a `.get()` on.
+            let name = self.parsed.text(arg.name).to_string();
+            ((format!("`{name}`"), self.dotted_path(&arg.value)), ty)
+        });
 
-        for (what, ty) in positional.chain(named).collect::<Vec<_>>() {
+        for ((what, path), ty) in positional.chain(named).collect::<Vec<_>>() {
             let crossing = send::crossing(ty, self.own, self.library, send::Destination::Foreign);
             if crossing.refused().is_none() {
+                continue;
+            }
+            // **Which refusal it is decides which code it prints**
+            // ([ADR-039](../../docs/specification/adr/adr-039.md) D6). A lock
+            // reachable through an argument is `NK2503`, a refusal about the
+            // **call**; everything else is `NK2502`, about the value crossing.
+            if crossing.why() == Some(send::Refusal::Lock) {
+                self.reaches_a_lock(callee, &what, path.as_deref(), &crossing, span);
                 continue;
             }
             let notes = [
@@ -6946,13 +6957,111 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **A call into foreign code from which a lock is reachable** through its
+    /// arguments, transitively and through the fields of a struct
+    /// ([ADR-039](../../docs/specification/adr/adr-039.md) D6, Part III 15.2,
+    /// worked through in C.6): `NK2503`.
+    ///
+    /// D6 says the check **is** `NK2502`'s walk generalised and never a copy of
+    /// it, and this is that sentence built: the walk above is the only one,
+    /// asked once per argument, and what arrives here is its verdict with the
+    /// word `Lock` on it. Nothing is walked twice.
+    ///
+    /// **The difference from `NK2502` is what the refusal is about**, which is
+    /// why it is a second code rather than a second sentence. `NK2502` refuses
+    /// a **value** that may not cross being handed to a call that may start a
+    /// thread; this refuses the **call**, because foreign code touches only
+    /// what it reaches and a lock is what it must not be able to reach. A call
+    /// that can reach no lock is allowed without a word (15.2).
+    fn reaches_a_lock(
+        &mut self,
+        callee: &str,
+        what: &str,
+        path: Option<&str>,
+        crossing: &send::Crossing,
+        span: &Span,
+    ) {
+        let (part, at) = crossing.refused().expect("a lock is a refusal");
+        // The path the note and the way out print: the argument's own name with
+        // the field that decided it behind it, where both are there to be had.
+        // Where the argument is not a name - a literal, a call - there is no
+        // path to write and the note names the type instead.
+        let reached = path.map(|path| match at {
+            Some(field) => format!("{path}.{field}"),
+            None => path.to_string(),
+        });
+        let notes = [
+            Some(format!(
+                "nothing written down describes `{callee}`, so this compiler cannot see what it \
+                 does with what it is handed (Part III, 15.2)"
+            )),
+            Some(match &reached {
+                Some(reached) => format!(
+                    "`{reached}` is a `{part}`, and a lock is what the call must not be able to \
+                     reach"
+                ),
+                None => format!(
+                    "what this passes is a `{part}`, and a lock is what the call must not be \
+                     able to reach"
+                ),
+            }),
+            Some(SAME_AT_BOTH.to_string()),
+        ];
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK2503",
+            message: format!("`{callee}` can reach a lock through {what}"),
+            notes: notes.into_iter().flatten().collect(),
+            // 15.2's way out is keeping the lock out of the call's reach, and
+            // C.6 writes it as a line the program can be edited into.
+            help: Some(match &reached {
+                Some(reached) => format!(
+                    "hand it a copy of what it needs instead of the container:\n\
+                     {:11}{callee}({reached}.get())",
+                    ""
+                ),
+                None => "open the lock where you are and hand over the value inside it - the \
+                         called code then sees an ordinary value and no lock"
+                    .to_string(),
+            }),
+        });
+    }
+
     /// What to call one argument of a call in a message: its own name where it
     /// has one, and its place where it does not.
-    fn names_the_argument(&self, expr: &Expr, at: usize) -> String {
-        match expr {
+    ///
+    /// **Two answers, because two readers want it.** The first is prose for the
+    /// headline (*the `state` this passes*); the second is the bare name where
+    /// there is one, which `NK2503`'s way out writes a path onto
+    /// (`state.counts.get()`) and which is `None` for an argument that is not a
+    /// name at all.
+    fn names_the_argument(&self, expr: &Expr, at: usize) -> (String, Option<String>) {
+        let prose = match expr {
             Expr::Variable(name) => format!("`{}`", self.parsed.text(*name)),
             Expr::Field { name, .. } => format!("the `{}` this passes", self.parsed.text(*name)),
             _ => format!("what this passes as argument {}", at + 1),
+        };
+        (prose, self.dotted_path(expr))
+    }
+
+    /// The argument written back as a path a program could paste, where it is
+    /// one: `state`, `state.inner`, and `None` for anything else.
+    ///
+    /// Rebuilt from the tree rather than read from the source, because an
+    /// expression has no span ([ADR-081](../../docs/specification/adr/adr-081.md)
+    /// D2). So the answer is exact where it is `Some` - a name and a chain of
+    /// fields is all of it - and absent where a guess would be needed, which is
+    /// the same polarity as the ellipsis `NK2204` prints.
+    fn dotted_path(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
+            Expr::Field { base, name } => Some(format!(
+                "{}.{}",
+                self.dotted_path(base)?,
+                self.parsed.text(*name)
+            )),
+            _ => None,
         }
     }
 

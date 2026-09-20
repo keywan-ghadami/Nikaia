@@ -60,6 +60,39 @@ type, answering *can it pause* instead of *can it fail*, is one more of the same
 thing rather than a new idea. And a `for` that cannot pause makes
 `user_parallelism = yes` a promise the standard library itself breaks.
 
+**Asked and measured: would `tokio`'s `Stream` do for A?** Three answers, and
+they are not the same question.
+
+* **`tokio` the runtime is already rejected**, and not by this page.
+  [ADR-055](specification/adr/adr-055.md) §5 says binding it *"brings an
+  executor and an I/O layer, and [ADR-038](specification/adr/adr-038.md) built
+  the second one already. Two event loops in one process is the state D7 treats
+  as a hazard."* Nothing in the `for` question reopens that.
+* **`tokio_stream::Stream` is not tokio's own trait.** It is a re-export of
+  `futures_core::Stream` — so the dependency actually under discussion is
+  `futures-core`: a trait definition, `no_std`-friendly, no executor. A far
+  smaller thing than the runtime, and still the wrong place for it, below.
+* **A needs no trait on the day it is built.** Of `Seq[T]`'s six producers in
+  [`std.contracts`](../crates/nikaia-std/std.contracts) — `io::lines`,
+  `HashMap::keys`, `HashMap::values`, `String::chars`, `Vec::drain`,
+  `HashMap::drain` — five are marked `sync` and **exactly one** can ever pause.
+  The emitted `while let Some(x) = s.next().await` wants an inherent
+  `async fn next` on one concrete type, not a trait over many. A trait is owed
+  when a second pausing producer exists.
+
+**Where A's cost really lands** is `Seq[T]`'s consumers — `collect`, `count`,
+`nth`, `join`, `map` and `filter` — which are `Iterator`'s below and need
+pausing twins. That work is the same whichever trait sits on top, and
+`futures-core` does not shorten it; `futures::StreamExt` would, at the price of
+`Pin`/`Poll` in our signatures and an [ADR-119](specification/adr/adr-119.md)
+D2 `no_std` target we no longer control.
+
+So if A is chosen: a minimal stream-shaped trait of `std`'s own, as the option
+already says — the same move `Joined` made in
+[ADR-170](specification/adr/adr-170.md). `futures_core::Stream` earns its place
+only **at a foreign boundary**, where a described crate hands us a stream and
+its trait is the lingua franca, never in the core.
+
 **What it costs if wrong**: a trait in `std` that a future Rust may make
 redundant. That is the smaller risk of the two — B's cost is a page that says
 one thing and a library that does another, which is the state

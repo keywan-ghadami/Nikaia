@@ -243,6 +243,19 @@ re-entrancy check is off this list** ([ADR-168](specification/adr/adr-168.md)):
 `reentrancy-check` is a `[build]` key now, a dimension of the build cache and
 of the compiled `std`'s own tree, and Part I 1.2's note — which said the check
 was not emitted and the nesting not refused, both false — says what is true.
+**And so is `NK2503`**: a lock reachable through a call's arguments is refused
+under its own code, with Part III C.6's sentences and its way out.
+
+*That one is worth a line, because of what stood in front of it.* The walk had
+found the lock all along and printed `NK2502`'s message about it, and the last
+thing needed was telling a lock from a count in the verdict. Looking for the
+count turned up something else: [ADR-061](specification/adr/adr-061.md) D1 — *a
+`Shared` may not go into code nothing describes* — was **decided and not
+built**. `Shared` sat in `contracts::send`'s `CHOSEN` row and in its
+`CONTAINERS` row, the container row answered first, and the row that would have
+refused was reached by nothing. The test that should have caught it asserted the
+silence instead and passed. Both are built now, and the corpus is unmoved.
+
 What is left:
 
 * **D7's *stored* lambda**, the one part of [ADR-039](specification/adr/adr-039.md)
@@ -261,40 +274,6 @@ What is left:
   calls — *a foreign crate is described before it is called*, below — rather
   than a change here. That number is what any refusal reading the column has to
   be read against, which is why it is kept.
-* **`NK2503`**, catalogued and not emitted — and its question is now
-  **measured** rather than open. (`NK2201` was the other one and is built,
-  below.)
-
-  *`NK2503`'s refusal is built; its number is not.*
-  [ADR-039](specification/adr/adr-039.md) D6 says the check **is** the crossing
-  walk generalised, *never copied* — and it is: a lock reachable through a
-  struct's field, at a call into code nothing describes, is refused today, with
-  the lock's own sentence in the note and D3's way out. Measured on a
-  three-line program:
-
-  ```text
-  error[NK2502]: `b` may not cross a thread, and `foreign_thing::take` may put it on one
-       = `SharedMut[i64]`, which its field `inner` holds, holds a lock, and a lock
-         may not go into code nothing written down describes …
-       help: open the lock where you are and hand over the value inside it
-  ```
-
-  So what is left is a **number and a sentence**, not a walk. Part III C.6
-  writes `NK2503`'s own message — *`hyper_shim::render` can reach a lock through
-  `state`*, a refusal about the **call** rather than about a value crossing —
-  and the shipped diagnostic is `NK2502`'s, about the value. The work is one
-  branch at the site that already walks every argument: where the refusal's
-  reason is a lock, say so under its own code. What it needs first is telling
-  *lock* from *count* in the walk's verdict, since `Shared` answers `MayNot`
-  into foreign code as well and is not a lock.
-
-  *`NK2201` is built* ([ADR-169](specification/adr/adr-169.md)). The question
-  [ADR-067](specification/adr/adr-067.md) D1 left — *is there I/O that neither
-  pauses nor takes a lock?* — is answered with exactly one thing, reading a
-  `fs::Mapped`, and the refusal is in. A type says what reading it touches, so
-  a second such type is a line in a ledger; Part II 12.2's example, which
-  illustrated `NK2201` with an `fs::write` that D1 assigns to `NK2202`, says
-  the page fault instead.
 
 ### 2.4. Part II 12.8's supervision syntax
 

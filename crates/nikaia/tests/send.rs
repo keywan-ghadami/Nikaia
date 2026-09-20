@@ -17,12 +17,20 @@
 //! repository writes `Shared` - `Shared` is unbuilt, and this check is what has
 //! to exist before it lands.
 //!
-//! **Since [ADR-037](../../../docs/specification/adr/adr-037.md) D6 no type *in
-//! the language* is refused a crossing**, and that is stated rather than worked
-//! around. `Shared` was the one `contracts::send` answered `may not` about; D6
-//! gives it one representation at both settings, so it is answered by what it
-//! holds. The programs below that used to produce `NK2501` and `NK2502` for a
-//! `Shared` therefore assert **silence**.
+//! **Into a task of the program's own, no type *in the language* is refused a
+//! crossing** ([ADR-037](../../../docs/specification/adr/adr-037.md) D6,
+//! [ADR-045](../../../docs/specification/adr/adr-045.md) D2), and that is
+//! stated rather than worked around: a lock and a `Shared` both go there at
+//! both settings, so the `spawn` programs below assert **silence**.
+//!
+//! **Into code nothing describes, two of them are refused.** A lock, since
+//! ADR-045 D3 — and that one is `NK2503`'s now rather than this file's, because
+//! what the refusal is about there is the call
+//! ([ADR-039](../../../docs/specification/adr/adr-039.md) D6, and
+//! `reaching_a_lock.rs`). A `Shared`, since
+//! [ADR-061](../../../docs/specification/adr/adr-061.md) D1 — which was decided
+//! and not built, and which this file asserted the *absence* of until
+//! `NK2503`'s split went looking for the count.
 //!
 //! **What does answer *may not* is a described type that says so**
 //! ([ADR-123](../../../docs/specification/adr/adr-123.md) D1). The ledger's
@@ -310,15 +318,25 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     );
     assert_eq!(found.len(), 1, "exactly one refusal: {found:#?}");
     let finding = &found[0];
-    assert_eq!(finding.code, "NK2502");
-    assert!(finding.message.contains("`counter`"), "{}", finding.message);
+    // **`NK2503` and not `NK2502`** ([ADR-039](../../../docs/specification/adr/adr-039.md)
+    // D6): a lock reachable through an argument is a refusal about the *call*,
+    // and the shipped diagnostic used to be the one about the value crossing.
+    assert_eq!(finding.code, "NK2503");
+    assert!(
+        finding
+            .message
+            .contains("`fremd::irgendwas` can reach a lock through `counter`"),
+        "{}",
+        finding.message
+    );
     let notes = finding.notes.join(" ");
     // The note names the type the source wrote, not what it expands to
     // ([ADR-064](../../../docs/specification/adr/adr-064.md) D1).
     assert!(notes.contains("`SharedMut[i32]`"), "{notes}");
-    assert!(notes.contains("deliberately"), "{notes}");
+    assert!(notes.contains("must not be able to reach"), "{notes}");
     let help = finding.help.as_deref().expect("a refusal has a way out");
-    assert!(help.contains("open the lock"), "{help}");
+    // Part III C.6 writes the way out as a line the program can be edited into.
+    assert!(help.contains("fremd::irgendwas(counter.get())"), "{help}");
 
     // And into a task of our own the same value is fine, which is the pair D1
     // added. Without this half the refusal above would read as the old rule.
@@ -330,22 +348,48 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
     .is_empty());
 }
 
-/// ADR-038 D7's first rule still has no `Shared` to refuse, so the foreign
-/// crossing of the `examples/foreign-runtime/crossing` shape is silent too.
+/// **A `Shared` does not go into a call this compiler cannot see the end of**
+/// ([ADR-061](../../../docs/specification/adr/adr-061.md) D1), which is the
+/// `examples/foreign-runtime/crossing` shape.
 ///
-/// The rule is untouched - a call this compiler cannot see the end of may put
-/// what it is given on a thread of its own - and `contracts::sharing` is where
-/// that now costs something: the value's count stays atomic rather than the
-/// program being refused. `docs/rc-or-arc.md` §5.3 is the polarity, and
-/// `tests/sharing.rs` is where it is asserted.
+/// D1 was decided and **not built**: `Shared` sat in `contracts::send`'s
+/// `CHOSEN` row and in its `CONTAINERS` row, the container row was reached
+/// first, and the lock's own row was dead code. This test asserted the silence
+/// that left behind.
+///
+/// The reason is the lock's reason without the lock: which count a value gets
+/// is chosen per value (ADR-037 D7), so a `Shared[Conn]` is one shape for one
+/// value and another for the next in the same program, and no signature outside
+/// this language can name both. `NK2502` and not `NK2503`, because nothing here
+/// is a lock.
 #[test]
-fn a_shared_crosses_into_a_call_this_compiler_cannot_see() {
-    let clean = crossings(
+fn a_shared_does_not_go_into_a_call_this_compiler_cannot_see() {
+    let found = crossings(
         "fn ueber(handle: Shared[String]) {\n\
              fremd::auf_einen_thread(handle)\n\
          }",
     );
-    assert!(clean.is_empty(), "{clean:#?}");
+    assert_eq!(found.len(), 1, "exactly one refusal: {found:#?}");
+    let finding = &found[0];
+    assert_eq!(finding.code, "NK2502");
+    assert!(finding.message.contains("`handle`"), "{}", finding.message);
+    let notes = finding.notes.join(" ");
+    assert!(notes.contains("`Shared[String]`"), "{notes}");
+    assert!(notes.contains("each value"), "{notes}");
+    // The sentence is not the lock's: nothing here is a lock, and a refusal
+    // whose reason is about a lock would be wrong about this.
+    assert!(!notes.contains("lock"), "{notes}");
+    let help = finding.help.as_deref().expect("a refusal has a way out");
+    assert!(help.contains("a view of it or a copy"), "{help}");
+
+    // And into a task of our own the same value is fine, which is the pair: D1
+    // is about a signature outside this language and nothing else.
+    assert!(crossings(
+        "fn ueber(handle: Shared[String]) {\n\
+             spawn fn { println(f\"{handle}\") }\n\
+         }",
+    )
+    .is_empty());
 }
 
 /// A call into a *described* function is not this, however unpleasant its
@@ -371,9 +415,9 @@ fn a_call_this_compiler_can_see_is_not_a_crossing() {
 /// codes, because that is the only comparison that catches the failure.
 ///
 /// Accepted at `yes` and refused at `no` - or silent at `no` and refused at
-/// `yes` - is what Group B was written to prevent. Since ADR-037 D6 the
-/// `Shared` programs are accepted at both, so the property holds from the other
-/// side: the same source, the same verdict, and the build goes on either way.
+/// `yes` - is what Group B was written to prevent. Both halves are asserted:
+/// the programs that are accepted are accepted at both, and the one that is
+/// refused is refused at both.
 ///
 /// **The severity split is what has no input now.** `lint_where_nothing_crosses`
 /// downgrades `NK2501` at `no` and leaves `NK2502` alone, and both arms are
@@ -384,9 +428,6 @@ fn the_verdict_is_the_same_at_both_settings() {
     for source in [
         "fn zaehle(counts: Shared[Vec[i64]]) {\n\
              spawn fn { println(f\"{counts.len()}\") }\n\
-         }",
-        "fn ueber(handle: Shared[String]) {\n\
-             fremd::auf_einen_thread(handle)\n\
          }",
         "fn zaehle(counter: SharedMut[i32]) {\n\
              spawn fn { println(f\"{counter}\") }\n\
@@ -401,6 +442,23 @@ fn the_verdict_is_the_same_at_both_settings() {
             "{source}"
         );
         assert_eq!(refused_at(source, "no"), None, "{source}");
+    }
+
+    // And the same, from the refusing side: ADR-061 D1 and ADR-045 D3 are both
+    // properties of a **type**, so a program either compiles at both settings
+    // or at neither. This is the half the file could not assert while no
+    // program was refused at all.
+    for source in [
+        "fn ueber(handle: Shared[String]) {\n\
+             fremd::auf_einen_thread(handle)\n\
+         }",
+        "fn ueber(counter: SharedMut[i32]) {\n\
+             fremd::irgendwas(counter)\n\
+         }",
+    ] {
+        let at_no = refused_at(source, "no");
+        assert_eq!(at_no, refused_at(source, "yes"), "{source}");
+        assert!(at_no.is_some(), "refused at both settings: {source}");
     }
 }
 

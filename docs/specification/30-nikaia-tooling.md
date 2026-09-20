@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.91 (Draft)
+**Version:** 0.0.92 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -662,7 +662,7 @@ The rule reaches exactly as far as the Rust signature is true. A Rust API that d
 
 **"No lock reachable" is an answer, not the absence of one.** Where nothing written down says what a value contains, the question is undecided: C.5's third answer, which is not permission and is handed on. An undecided type is not a type with no lock in it. A ledger entry with an empty field list, which is what a type whose fields are Rust has, means *nothing recorded* and not *nothing inside* (13.5).
 
-> **Implementation status:** Partially implemented. `NK2502` is implemented, and a lock the compiler knows exists ([ADR-064](adr/adr-064.md)). The reachability walk is not implemented: `NK2503` is catalogued and not emitted (C.3, [ADR-039](adr/adr-039.md) §4).
+> **Implementation status:** Implemented for a call into a crate nothing describes. `NK2502`, `NK2503` and the lock the compiler knows exists ([ADR-064](adr/adr-064.md)) are all in, and the reachability walk is `NK2502`'s own rather than a copy of it ([ADR-039](adr/adr-039.md) D6): one walk per argument, through the fields of a struct and as deep as the ledger reaches, and the refusal's own reason decides which of the two codes it prints. A **described** foreign function is not asked — the rule is about a body this compiler cannot see — and a lambda among the arguments is still read as `Undecided` rather than through its body ([ADR-039](adr/adr-039.md) D7).
 
 **Mapping Types**
 * Rust `i32` -> Nikaia `i32`
@@ -705,10 +705,11 @@ taken on the argument's Nikaia type.
 * A type the compiler knows may cross is allowed in a `spawn` task and in a
   foreign call.
 * A type it knows may not, such as a `Shared[T]`, is refused with `NK2502`
-  (C.5). The diagnostic names the Nikaia type, because that is the one the
-  program wrote.
+  (C.5); where what it may not cross with is a **lock**, the refusal is about
+  the call and the code is `NK2503` (C.6). Either diagnostic names the Nikaia
+  type, because that is the one the program wrote.
 
-> **Implementation status:** Implemented. `NK2502` fires on the crossing the compiler can decide about, at both values of `user_parallelism` ([ADR-038](adr/adr-038.md) D7); everything else is C.5's third answer, undecided.
+> **Implementation status:** Implemented. `NK2502` and `NK2503` fire on the crossings the compiler can decide about, at both values of `user_parallelism` ([ADR-038](adr/adr-038.md) D7, [ADR-061](adr/adr-061.md) D1); everything else is C.5's third answer, undecided.
 
 ```nika
 // Usage of a Rust crate
@@ -1405,7 +1406,7 @@ A code specified ahead of its check has no reproduction test. The obligation abo
 
 `NK2605` is reported for a call whose callee a ledger describes: a function in this program, one in another module of it, or one of `std`'s, by name or as a method on a receiver whose type is known. A call nothing describes is silence rather than approval, which is C.4's property for every check here.
 
-> **Implementation status:** Partially implemented. The codes the compiler emits are `NK1101`–`NK1113`, `NK1115`–`NK1139`, `NK1141`–`NK1163`, `NK2101`, `NK2103`, `NK2104`, `NK2201`–`NK2209`, `NK2302`, `NK2303`, `NK2501`, `NK2502`, `NK2504`, `NK2605`, `NK2606` and `NK2701`; `NK1114` is retired and `NK1120` is unused. `NK2102`, `NK2301`, `NK2401`, `NK2503` and `NK2601`–`NK2604` are specified ahead of the check that raises them ([ADR-039](adr/adr-039.md) §4, [ADR-055](adr/adr-055.md) §6, [ADR-047](adr/adr-047.md) D1, D2).
+> **Implementation status:** Partially implemented. The codes the compiler emits are `NK1101`–`NK1113`, `NK1115`–`NK1139`, `NK1141`–`NK1163`, `NK2101`, `NK2103`, `NK2104`, `NK2201`–`NK2209`, `NK2302`, `NK2303`, `NK2501`–`NK2504`, `NK2605`, `NK2606` and `NK2701`; `NK1114` is retired and `NK1120` is unused. `NK2102`, `NK2301`, `NK2401` and `NK2601`–`NK2604` are specified ahead of the check that raises them ([ADR-055](adr/adr-055.md) §6, [ADR-047](adr/adr-047.md) D1, D2).
 
 ### C.4. What a Type Error Looks Like
 
@@ -1441,11 +1442,11 @@ checker stays quiet about it rather than raising a second error for one mistake.
 
 The `NK25xx` pair covers the two places a value the program wrote reaches another thread. Both come from one question, **may a value of this type go to this destination?**, asked of the value's type and of where it is going ([ADR-045](adr/adr-045.md) D1). Each destination's answer does not depend on which build this is ([ADR-005](adr/adr-005.md) §1 Group B).
 
-The two codes do not share one verdict. Into a task of the program's own a lock may go, at both values (D2). Into code nothing written down describes it may not, at both values (D3). `NK2501` therefore refuses nothing a Nikaia program can write, and `NK2502` refuses the lock.
+The two codes do not share one verdict. Into a task of the program's own a lock may go, at both values (D2). Into code nothing written down describes it may not, at both values (D3). `NK2501` therefore refuses nothing a Nikaia program can write, and `NK2502` refuses the shared value — a `Shared[T]`, whose count is chosen per value and so has no one shape a foreign signature could name ([ADR-061](adr/adr-061.md) D1), and a described type that says `crosses = false` ([ADR-123](adr/adr-123.md) D1). **A lock is the third, and it has a code of its own**: what the refusal is about there is the call and not the value, so it is `NK2503` and C.6 (15.2, [ADR-039](adr/adr-039.md) D6). One walk answers all three, and the reason it comes back with is what picks the code.
 
-*Design rationale:* at `user_parallelism = yes` a real operating-system lock is underneath and the crossing into foreign code would be safe. It is refused anyway, so that a library written at one value stays usable at the other ([ADR-045](adr/adr-045.md) D3).
+*Design rationale:* at `user_parallelism = yes` a real operating-system lock is underneath and the crossing into foreign code would be safe. It is refused anyway, so that a library written at one value stays usable at the other ([ADR-045](adr/adr-045.md) D3). The same sentence is the shared count's reason without the lock: a `Shared[T]`'s count is chosen per value, so there is no one shape of it to write a foreign signature against at either value ([ADR-061](adr/adr-061.md) D1).
 
-> **Implementation status:** Implemented. The verdict is asked of the destination, and `NK2502` fires on a program that hands a `SharedMut[T]` or a `Locked[T]` to an undescribed call; both types are built ([ADR-064](adr/adr-064.md)). No type a program can write reaches `NK2501`'s shape: the `Held` in the two shapes below is a type nothing describes.
+> **Implementation status:** Implemented. The verdict is asked of the destination and carries **why** it refused, which is what tells `NK2502` from `NK2503`: a program that hands a `Shared[T]` to an undescribed call gets `NK2502`, one that hands it a `SharedMut[T]` or a `Locked[T]` gets `NK2503` (C.6), and all three types are built ([ADR-064](adr/adr-064.md)). No type a program can write reaches `NK2501`'s shape: the `Held` in the two shapes below is a type nothing describes.
 
 A task runs somewhere else, so everything it uses goes with it:
 
@@ -1470,12 +1471,12 @@ error[NK2502]: `counter` may not cross a thread, and `hyper_shim::across_a_threa
   14 |     let crossed = hyper_shim::across_a_thread(counter)
            ^
      = nothing written down describes `hyper_shim::across_a_thread`, so this compiler cannot see the end of it - and starting a thread of its own is among the things it may do (Part III, 15.2)
-     = `Locked[i32]` holds a lock, and a lock may not go into code nothing written down describes - at either setting of `user_parallelism`, and deliberately so: where the setting makes it safe the answer is kept anyway, so that a library written at one setting stays usable at the other (Part III, C.5)
+     = `Shared[i64]` is shared, and which way a shared value is counted is chosen for each value rather than once for the type - so there is no one shape of it for code outside this language to be written against, at either setting of `user_parallelism` and deliberately so (Part III, C.5)
      = a value may cross a thread only if it may cross any thread, so the answer is the same at both settings of `user_parallelism` and a library built at one stays usable at the other (Part III, C.3)
-     help: open the lock where you are and hand over the value inside it - the called code then sees an ordinary value and no lock
+     help: hand over what the shared value holds - a view of it or a copy - rather than the shared value itself
 ```
 
-**The way out is one line.** The caller opens the lock and passes the **value inside it**, so the foreign function sees an ordinary number or connection and no lock at all, the shape an ordinary function already has ([ADR-042](adr/adr-042.md) D1, D2, Part I 6.2). The message also says that the refusal was chosen, so that a decision is visible behind it.
+**The way out is one line.** The caller passes what is inside — a view of it or a copy — so the foreign function sees an ordinary number or connection and nothing of this language's sharing at all, the shape an ordinary function already has ([ADR-042](adr/adr-042.md) D1, D2, Part I 6.2). The same shape is the way out of the lock's refusal one section down, which is why `NK2503` is a second code and not a second rule. The message also says that the refusal was chosen, so that a decision is visible behind it.
 
 Four things about that pair are deliberate.
 
@@ -1495,7 +1496,7 @@ call that could reach a lock ([ADR-039](adr/adr-039.md) D2, D6, D10). Each names
 a way out, as C.2 requires, and each way out is one line of code. The shapes
 below are what the codes print (C.3).
 
-> **Implementation status:** Partially implemented. `SharedMut[T]`, `Locked[T]` and the doors are built ([ADR-064](adr/adr-064.md), [ADR-110](adr/adr-110.md)), and `NK2203` (over the `locks` column, so a lock reached through a chain of calls is refused too), `NK2204`, `NK2205` and `NK2208` are emitted. `NK2503`, the foreign call, is specified ahead of its check and waits on 15.2's reachability walk.
+> **Implementation status:** Partially implemented. `SharedMut[T]`, `Locked[T]` and the doors are built ([ADR-064](adr/adr-064.md), [ADR-110](adr/adr-110.md)), and `NK2203` (over the `locks` column, so a lock reached through a chain of calls is refused too), `NK2204`, `NK2205`, `NK2208` and `NK2503` are emitted.
 
 A lock taken inside a lock, which is what `access_all` exists for (Part II, 12.3):
 
@@ -1574,3 +1575,5 @@ The note names the **field** that decided it rather than the struct, as
 so the rule reaches a type declared in another file. A call whose arguments can
 reach no lock gets no diagnostic and no note. It is allowed silently, which is
 not the same as a call whose contents nobody wrote down (C.5).
+
+> **Implementation status:** Implemented. The walk is `NK2502`'s, asked once per argument and never copied ([ADR-039](adr/adr-039.md) D6): what it comes back with says *why* it refused, and a lock is what makes the refusal this one. The way out prints the path it found — the argument's own name with the field that decided it behind it — where the argument is a name or a chain of fields, and says the general form where it is neither, because an expression has no span to quote ([ADR-081](adr/adr-081.md) D2).

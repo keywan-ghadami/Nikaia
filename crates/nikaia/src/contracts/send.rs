@@ -43,8 +43,16 @@
 //
 // **The rule above is untouched.** The verdict still never reads
 // `user_parallelism`, and it is still a property of the type. What changed is
-// one row of a table, and what follows from it is that **no type answers
-// `MayNot` today** - see [`Crossing::MayNot`], which says why the arm stays.
+// one row of a table.
+//
+// **And one row came back** ([ADR-061](../../../../docs/specification/adr/adr-061.md)
+// D1): ADR-037 D7's per-value inference made the count's shape a property of
+// the *value* again, so there is no one representation for a foreign signature
+// to name, and a `Shared` may not go into code nothing describes after all.
+// That row was written into [`CHOSEN`] and never reached, because `Shared` is
+// in [`CONTAINERS`] too and the container row is answered first. It is reached
+// now, after the contents have had their say - see the comment at that fork,
+// which is where the order is argued.
 //
 // ## Three answers and not two
 //
@@ -205,6 +213,39 @@ pub enum Destination {
 /// on one.
 const DEPTH: usize = 16;
 
+/// **Why** a value may not cross — the word [`Crossing::MayNot`]'s own note
+/// asked for the day the arm had a second producer.
+///
+/// That note said it plainly: *"the day there is a second the arm has to carry
+/// **which** — a refusal whose sentence is about a lock would be wrong about
+/// anything else"*. There are three producers now, they print three different
+/// sentences, and one of them —
+/// [`Refusal::Lock`](Refusal::Lock) — is the one
+/// [ADR-039](../../../../docs/specification/adr/adr-039.md) D6 gives its own
+/// code to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// A lock: `SharedMut[T]` or `Locked[T]` at a foreign destination
+    /// ([ADR-045](../../../../docs/specification/adr/adr-045.md) D3). The one
+    /// `NK2503` is about, and the only one it is about.
+    Lock,
+    /// A shared count: a `Shared[T]` at a foreign destination holding nothing a
+    /// lock refuses first
+    /// ([ADR-061](../../../../docs/specification/adr/adr-061.md) D1).
+    ///
+    /// The lock's own reason and not a lock: which count a value gets is chosen
+    /// per value ([ADR-037](../../../../docs/specification/adr/adr-037.md) D7),
+    /// so a `Shared[Conn]` is one representation for one value and another for
+    /// the next **in the same program**, and no signature outside this language
+    /// can name both.
+    Count,
+    /// A described type that says outright that it may not cross
+    /// ([ADR-123](../../../../docs/specification/adr/adr-123.md) D1). Nothing
+    /// about locks or counts is claimed: a ledger said so in one line, and the
+    /// sentence a reader gets has to say that rather than invent a reason.
+    Said,
+}
+
 /// What crossing a thread would mean for a value of one type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Crossing {
@@ -221,17 +262,26 @@ pub enum Crossing {
     ///
     /// So `NK2502` fires on a program this language can write and `NK2501` no
     /// longer does: the two codes stopped sharing one verdict the day the
-    /// destination entered it. [`Crossing::note`] and [`Crossing::way_out`] are
-    /// written for that one producer, and the day there is a second the arm has to
-    /// carry **which** - a refusal whose sentence is about a lock would be wrong
-    /// about anything else.
+    /// destination entered it.
+    ///
+    /// **And the day there was a second producer arrived**, which is what
+    /// [`Refusal`] is: the arm carries *which*, because
+    /// [`Crossing::note`] and [`Crossing::way_out`] were written for a lock and
+    /// would be wrong about anything else. Three producers, three sentences,
+    /// and `NK2503` reads the word rather than guessing from the type's name.
     MayNot {
         /// The part the answer is about - the whole type where the type itself
         /// is the problem, and the field's type where a field is.
         part: String,
-        /// Where in the type it was found, for a note that can be read: empty
-        /// for the value itself, `"its field `counts`"` for a field.
+        /// The **field** it was found in, where it was found in one: `None` for
+        /// the value itself and `Some("counts")` for a field.
+        ///
+        /// The bare name and not a sentence, because two readers want it: the
+        /// note prints prose around it, and `NK2503`'s way out writes a path a
+        /// program can paste (`state.counts.get()`).
         at: Option<String>,
+        /// Why - the word that decides the sentence and the code.
+        why: Refusal,
     },
     /// Nothing written down decides it. **Not permission** (ADR-010 D1).
     Undecided {
@@ -250,7 +300,17 @@ impl Crossing {
     /// The refusal, where the answer is one.
     pub fn refused(&self) -> Option<(&str, Option<&str>)> {
         match self {
-            Crossing::MayNot { part, at } => Some((part, at.as_deref())),
+            Crossing::MayNot { part, at, .. } => Some((part, at.as_deref())),
+            _ => None,
+        }
+    }
+
+    /// **Why** it is refused, where it is - the word `NK2503` reads to know
+    /// whether the refusal is its own ([ADR-039](../../../../docs/specification/adr/adr-039.md)
+    /// D6).
+    pub fn why(&self) -> Option<Refusal> {
+        match self {
+            Crossing::MayNot { why, .. } => Some(*why),
             _ => None,
         }
     }
@@ -265,12 +325,28 @@ impl Crossing {
     /// ([ADR-042](../../../../docs/specification/adr/adr-042.md) D1, D2,
     /// Part I 6.2), so nothing new has to be learned to follow it.
     pub fn way_out(&self) -> Option<String> {
-        self.refused()?;
-        Some(
-            "open the lock where you are and hand over the value inside it - the called code \
-             then sees an ordinary value and no lock"
-                .to_string(),
-        )
+        Some(match self.why()? {
+            Refusal::Lock => {
+                "open the lock where you are and hand over the value inside it - the called \
+                 code then sees an ordinary value and no lock"
+                    .to_string()
+            }
+            // ADR-061 D1's own words: *the way out is to pass what is inside*,
+            // a view or a copy. A library that means to keep what it is given
+            // puts it in a hull of its own anyway.
+            Refusal::Count => {
+                "hand over what the shared value holds - a view of it or a copy - rather than \
+                 the shared value itself"
+                    .to_string()
+            }
+            // Nothing is known about *why* the ledger said no, so the way out
+            // may not pretend to be a repair: what a reader can always do is
+            // keep the value here and hand over what the call actually needs.
+            Refusal::Said => {
+                "keep it where it was made and hand the call what it needs from it instead"
+                    .to_string()
+            }
+        })
     }
 
     /// One line saying why a value of this type may not cross, for a
@@ -288,15 +364,41 @@ impl Crossing {
     pub fn note(&self) -> Option<String> {
         match self {
             Crossing::May => None,
-            Crossing::MayNot { part, at } => Some(format!(
+            Crossing::MayNot {
+                part,
+                at,
+                why: Refusal::Lock,
+            } => Some(format!(
                 "`{part}`{} holds a lock, and a lock may not go into code nothing written down \
                  describes - at either setting of `user_parallelism`, and deliberately so: where \
                  the setting makes it safe the answer is kept anyway, so that a library written \
                  at one setting stays usable at the other (Part III, C.5)",
-                match at {
-                    Some(at) => format!(", {at},"),
-                    None => String::new(),
-                }
+                held(at)
+            )),
+            // ADR-061 D1. The sentence is the lock's reason without the lock:
+            // one representation cannot be named from outside, because there
+            // is not one.
+            Crossing::MayNot {
+                part,
+                at,
+                why: Refusal::Count,
+            } => Some(format!(
+                "`{part}`{} is shared, and which way a shared value is counted is chosen for \
+                 each value rather than once for the type - so there is no one shape of it for \
+                 code outside this language to be written against, at either setting of \
+                 `user_parallelism` and deliberately so (Part III, C.5)",
+                held(at)
+            )),
+            // ADR-123 D1: a line in a ledger, repeated rather than interpreted.
+            Crossing::MayNot {
+                part,
+                at,
+                why: Refusal::Said,
+            } => Some(format!(
+                "`{part}`{} is written down as a value that may not go to another thread, so \
+                 this compiler does not send it to one - at either setting of \
+                 `user_parallelism` (Part III, C.5)",
+                held(at)
             )),
             Crossing::Undecided { part } => Some(format!(
                 "nothing written down says whether `{part}` may cross a thread, so this \
@@ -463,13 +565,36 @@ fn walk(
             if CONTAINERS.contains(&super::ty::base(name)) {
                 // A container with no arguments said nothing about what it
                 // holds, and what it holds is the whole question.
-                if args.is_empty() {
-                    return Crossing::Undecided { part: ty.text() };
+                let inside = match args.is_empty() {
+                    true => Crossing::Undecided { part: ty.text() },
+                    false => join(
+                        args.iter()
+                            .map(|a| walk(a, own, library, into, seen, depth - 1)),
+                    ),
+                };
+                // **`Shared` is in both lists, and the container row answered
+                // first** ([ADR-061](../../../../docs/specification/adr/adr-061.md)
+                // D1). Its row in [`CHOSEN`] was therefore unreachable: a
+                // `Shared[String]` into code nothing describes came back `May`,
+                // which is the opposite of what D1 decided. Measured, not read:
+                // `only_a_lock_is_refused_at_either_destination` asserted the
+                // wrong half of it and passed.
+                //
+                // The contents answer **first** all the same, because where
+                // there is a lock inside, the lock is the better sentence and
+                // the one with a code of its own. D1 is what is left when
+                // nothing inside refuses.
+                if matches!(into, Destination::Foreign)
+                    && CHOSEN.contains(&name.as_str())
+                    && inside.refused().is_none()
+                {
+                    return Crossing::MayNot {
+                        part: ty.text(),
+                        at: None,
+                        why: Refusal::Count,
+                    };
                 }
-                return join(
-                    args.iter()
-                        .map(|a| walk(a, own, library, into, seen, depth - 1)),
-                );
+                return inside;
             }
             // **The one row the destination reaches** (ADR-045 D2, D3). Into our
             // own code a lock is a container: it may go where what it holds may
@@ -481,6 +606,7 @@ fn walk(
                     (Destination::Foreign, _) => Crossing::MayNot {
                         part: ty.text(),
                         at: None,
+                        why: Refusal::Lock,
                     },
                     // A lock with no arguments said nothing about what it holds,
                     // exactly as a bare container does.
@@ -516,6 +642,7 @@ fn walk(
                 return Crossing::MayNot {
                     part: ty.text(),
                     at: None,
+                    why: Refusal::Said,
                 };
             }
             if contract.crosses.may() && args.is_empty() {
@@ -573,13 +700,31 @@ fn described<'a>(
 }
 
 /// Say which field an answer came from, where it is not `May`.
+///
+/// The **innermost** one, because a field already named is not renamed on the
+/// way out: `a.b.c` where the lock is `c`'s reports `c`, which is the field a
+/// reader can look at.
 fn name_the_field(field: &str, answer: Crossing) -> Crossing {
     match answer {
-        Crossing::MayNot { part, at: None } => Crossing::MayNot {
+        Crossing::MayNot {
             part,
-            at: Some(format!("which its field `{field}` holds")),
+            at: None,
+            why,
+        } => Crossing::MayNot {
+            part,
+            at: Some(field.to_string()),
+            why,
         },
         other => other,
+    }
+}
+
+/// The clause a note puts between the part and its verb, for a field that has
+/// a name and for one that is the value itself.
+fn held(at: &Option<String>) -> String {
+    match at {
+        Some(field) => format!(", which its field `{field}` holds,"),
+        None => String::new(),
     }
 }
 
@@ -735,33 +880,85 @@ mod tests {
             Some(("Locked[i32]", None))
         );
 
-        // Everything that is not a lock answers the same at both destinations:
-        // the destination reaches one row of the table and no other.
-        for text in ["i64", "Shared[String]", "Vec[Shared[i64]]", "Mapped", "?"] {
+        // Everything that is neither a lock nor a shared count answers the same
+        // at both destinations: the destination reaches one row of the table and
+        // no other.
+        for text in ["i64", "Vec[i64]", "Mapped", "?"] {
             assert_eq!(of(text), foreign(text), "{text}");
         }
     }
 
-    /// **Nothing written down answers `MayNot` except a lock**, at either
-    /// destination.
+    /// **And a `Shared` does not go there either**
+    /// ([ADR-061](../../../../docs/specification/adr/adr-061.md) D1), which was
+    /// decided and not built: `Shared` is in [`CHOSEN`] *and* in [`CONTAINERS`],
+    /// the container row answered first, and its row in `CHOSEN` was reached by
+    /// nothing. A `Shared[String]` into code nothing describes came back `May` -
+    /// the opposite of what D1 says - and the test that would have caught it
+    /// asserted the wrong half and passed.
     ///
-    /// The guard the refusing arm has always had, now that it has an occupant: a
-    /// name quietly acquiring a refusal is the failure this catches, because a
-    /// refusal is the one answer that can reject a correct program. Every type
-    /// either ledger describes is asked, at both destinations.
+    /// **The contents still answer first**, which is why the order is what it is
+    /// rather than the two lists swapped: where a lock is inside the count, the
+    /// lock is the better sentence and the one `NK2503` has a code for. D1 is
+    /// what is left when nothing inside refuses.
     #[test]
-    fn only_a_lock_is_refused_at_either_destination() {
+    fn a_shared_count_does_not_go_into_code_nothing_describes() {
+        for text in ["Shared[String]", "Shared[i64]", "Shared"] {
+            let answer = foreign(text);
+            assert_eq!(answer.why(), Some(Refusal::Count), "{text}: {answer:?}");
+            // Into a task of our own it is untouched, which is the pair: D1 is
+            // about a signature outside this language and nothing else.
+            assert!(of(text).refused().is_none(), "{text}: {:?}", of(text));
+        }
+
+        // And it is transitive, like everything else in this file: a container
+        // of shared values is no more crossable than one of them (Group B).
+        assert_eq!(foreign("Vec[Shared[i64]]").why(), Some(Refusal::Count));
+        assert!(of("Vec[Shared[i64]]").refused().is_none());
+
+        // A lock inside one is still the lock's refusal, by its own name.
+        let inside = foreign("Shared[Locked[i32]]");
+        assert_eq!(inside.why(), Some(Refusal::Lock));
+        assert_eq!(inside.refused(), Some(("Locked[i32]", None)));
+
+        // The sentence is the lock's reason without the lock, and it carries
+        // neither the word `lock` nor any Rust in it (Part III, C.2).
+        let note = foreign("Shared[String]")
+            .note()
+            .expect("a refusal has a note");
+        assert!(note.contains("`Shared[String]`"), "{note}");
+        assert!(note.contains("each value"), "{note}");
+        for word in ["lock", "Rc", "Arc", "Send"] {
+            assert!(!note.contains(word), "`{word}` in: {note}");
+        }
+        // D1's own way out: pass what is inside, a view or a copy.
+        let way_out = foreign("Shared[String]")
+            .way_out()
+            .expect("a refusal has a way out");
+        assert!(way_out.contains("a view of it or a copy"), "{way_out}");
+    }
+
+    /// **Nothing written down answers `MayNot` but a lock and a shared count**,
+    /// at either destination.
+    ///
+    /// The guard the refusing arm has always had: a name quietly acquiring a
+    /// refusal is the failure this catches, because a refusal is the one answer
+    /// that can reject a correct program. Every type either ledger describes is
+    /// asked, at both destinations, and the two families that are *meant* to
+    /// refuse are named here rather than skipped silently.
+    #[test]
+    fn nothing_but_a_lock_or_a_count_is_refused_at_either_destination() {
         let (own, library) = ledgers();
         for into in [Destination::Ours, Destination::Foreign] {
             for name in own.types.keys().chain(library.types.keys()) {
                 let answer = crossing(&Ty::named(name), &own, &library, into);
                 assert!(
-                    answer.refused().is_none(),
+                    answer.refused().is_none()
+                        || CHOSEN.contains(&crate::contracts::ty::base(name)),
                     "`{name}` into {into:?}: {answer:?}"
                 );
             }
         }
-        for text in ["Shared[String]", "Vec[Shared[i64]]", "Mapped", "?"] {
+        for text in ["Vec[i64]", "Mapped", "?"] {
             assert!(of(text).refused().is_none(), "{text}");
             assert!(foreign(text).refused().is_none(), "{text}");
         }
@@ -778,12 +975,11 @@ mod tests {
     fn a_refusal_says_what_it_is_and_what_to_do_instead() {
         let refused = Crossing::MayNot {
             part: "Locked[i32]".to_string(),
-            at: Some("which its field `hits` holds".to_string()),
+            at: Some("hits".to_string()),
+            why: Refusal::Lock,
         };
-        assert_eq!(
-            refused.refused(),
-            Some(("Locked[i32]", Some("which its field `hits` holds")))
-        );
+        assert_eq!(refused.refused(), Some(("Locked[i32]", Some("hits"))));
+        assert_eq!(refused.why(), Some(Refusal::Lock));
         let note = refused.note().expect("a refusal has a note");
         assert!(note.contains("`Locked[i32]`"), "{note}");
         assert!(note.contains("field `hits`"), "{note}");
@@ -895,8 +1091,16 @@ mod tests {
             let refused = crossing(&Ty::named(ty), &own, &library, Destination::Foreign);
             assert_eq!(
                 refused.refused(),
-                Some(("Locked[i64]", Some("which its field `hits` holds"))),
+                Some(("Locked[i64]", Some("hits"))),
                 "{ty} into code nothing describes"
+            );
+            assert_eq!(refused.why(), Some(Refusal::Lock), "{ty}");
+            assert!(
+                refused
+                    .note()
+                    .expect("a refusal has a note")
+                    .contains("which its field `hits` holds"),
+                "{refused:?}"
             );
         }
     }
@@ -956,6 +1160,7 @@ mod tests {
         let refused = Crossing::MayNot {
             part: "Held".to_string(),
             at: None,
+            why: Refusal::Lock,
         };
         let unknown = Crossing::Undecided {
             part: "?".to_string(),

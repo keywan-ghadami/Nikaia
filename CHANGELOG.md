@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.92] — 2026-09-20
+
+**A call that can reach a lock is refused under its own code** — `NK2503`, which
+[ADR-039](docs/specification/adr/adr-039.md) D6 decided and
+[Part III C.6](docs/specification/30-nikaia-tooling.md) wrote out. And the thing
+that stood in front of it turned out to be a decision nothing built.
+
+### Added
+
+- **`NK2503`: a call into foreign code from which a lock is reachable** through its arguments, transitively and through the fields of a struct. The refusal is about the **call** and not about a value crossing a thread, which is why it is a second code and not a second sentence, and the diagnostic is C.6's to the letter: the call, the argument, the field that decided it, and a way out written as a line the program can be edited into — `hyper_shim::render(state.counts.get())`.
+- **The walk is `NK2502`'s and not a copy of it**, which is what D6 asks for in so many words. One walk per argument, as before; what changed is that its verdict now carries **why** it refused, and the reason picks the code. Nothing is walked twice.
+- The tally counts it apart from the other `NK25xx` codes — *a call that can reach a lock*, not *a value that may not cross a thread* — for the reason every other split in that tally has: it must say what it counted.
+
+### Fixed
+
+- **[ADR-061](docs/specification/adr/adr-061.md) D1 was decided and not built**, and the last step of `NK2503` is what found it. D1 says *a `Shared` may not go into code nothing describes*, for the sentence that was already the lock's: which count a value gets is chosen per value ([ADR-037](docs/specification/adr/adr-037.md) D7), so a `Shared[Conn]` is one shape for one value and another for the next in the same program, and no foreign signature can name both.
+- **The cause was a name in two lists.** `Shared` sat in `contracts::send`'s `CHOSEN` row *and* in its `CONTAINERS` row; the container row is answered first, so the row that would have refused was reached by nothing. Both rows carried a comment explaining why the name was there, and the two comments contradicted each other without either being read against the code.
+- **The test that should have caught it asserted the silence.** `only_a_lock_is_refused_at_either_destination` held that `foreign("Shared[String]")` is not refused — the opposite of D1 — and passed for two records' worth of time. It is `nothing_but_a_lock_or_a_count_is_refused_at_either_destination` now, and the two families that are *meant* to refuse are named rather than skipped.
+- **The contents still answer first**, which is why the order is what it is rather than the two lists swapped: where a lock is inside the count, the lock is the better sentence and the one with a code of its own. D1 is what is left when nothing inside refuses.
+- **`Shared`'s refusal had the lock's sentence**, because there was one sentence. There are three now — a lock, a shared count, and a described type that says `crosses = false` — and each says its own reason and its own way out. A refusal whose sentence is about a lock would be wrong about the other two, which the `MayNot` arm's own note had said it would be.
+- Four specification status notes said things that are no longer true, and one of them (15.2's *the reachability walk is not implemented*) had been true only in the sense that the number was missing. Part III C.5's `NK2502` example used a `Locked[i32]`, which is `NK2503`'s now, and says the shared count instead.
+
+### Measured
+
+- **The corpus is unmoved.** `no_program_in_the_repository_has_a_crossing_refused` is green with both refusals in: nothing in `examples/`, `benches/`, `tests/samples/` or the three ADR-038 D7 projects hands a lock or a shared value to a call nothing describes. [Part III C.4](docs/specification/30-nikaia-tooling.md)'s promise, for the one change in this package that could have broken it.
+- D1 is transitive like everything else in that file: a `Vec[Shared[i64]]` into code nothing describes is refused too, and into a task of ours neither is.
+
 ## [0.0.91] — 2026-09-20
 
 Two questions asked, and six more refusals given their line.
