@@ -396,7 +396,10 @@ fn main() {
 #[test]
 fn the_coalescing_operator_is_not_a_safe_reach() {
     let rust = lowered("fn main() { let a: i64? = null\nlet b = a ?? 1 }");
-    assert!(rust.contains("unwrap_or_else"), "{rust}");
+    // `index::or` since [ADR-161](../../../docs/specification/adr/adr-161.md)
+    // D2; what this asserts is that a `??` is not a **reach**, which is the
+    // same either way.
+    assert!(rust.contains("nikaia_std::index::or("), "{rust}");
     assert!(!rust.contains("map("), "{rust}");
 
     assert!(

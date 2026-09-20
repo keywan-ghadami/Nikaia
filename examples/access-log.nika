@@ -167,7 +167,9 @@ fn main() throws {
     // rows rather than the names is what lets the key be a number without
     // looking anything up.
     let mut rows = names.map fn(path) {
-        let counts = &report.paths[path]
+        // `names` are this map's own keys, so the read cannot fail - and the
+        // brackets answer a `T?` all the same (ADR-114 D1), so this says so.
+        let counts = report.paths[path] ?? panic(f"{path} was a key a moment ago")
         (path, counts.hits, counts.bytes)
     }
 

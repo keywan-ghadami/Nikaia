@@ -119,6 +119,238 @@ pub fn at<I: At>(index: I) -> I::Out {
     index.at()
 }
 
+/// **A read through the brackets answers what the container can promise**
+/// ([ADR-114](../../../docs/specification/adr/adr-114.md) D4).
+///
+/// One trait with an **output type per container**, which is the same
+/// arrangement [`Set`] has and for the same reason: this emitter does not know
+/// types ([ADR-011](../../../docs/specification/adr/adr-011.md) D2), so it
+/// writes the same three tokens for a map and for a sequence and the language
+/// below picks.
+///
+/// And what each can promise is different. A **sequence** has a `T` at every
+/// index it has at all, and an index it does not have is the program's own
+/// arithmetic gone wrong — [Part III A.2](../../../docs/specification/30-nikaia-tooling.md)'s
+/// abort, kept (D3). A **map** has a `V` only where the key is, so what it
+/// answers is a `T?`: *there is nothing there* is data about the world, not a
+/// bug in the program, and a program that knows better says so with `??` (D1).
+pub trait Get<K> {
+    type Out<'a>
+    where
+        Self: 'a;
+
+    fn get(&self, key: K) -> Self::Out<'_>;
+}
+
+/// **A sequence is indexed by a number or sliced by a range**, and one impl
+/// covers both: `SliceIndex` already tells them apart in the language below —
+/// its `Output` is the element for a number and a run of them for a range —
+/// which is what keeps `xs[0]` and `xs[a..<b]` one rule here as they are one
+/// rule in the source.
+impl<V, I> Get<I> for Vec<V>
+where
+    // **`'static` on the index**, which costs nothing and is what lets the
+    // output mention `I::Output` without the index's own lifetime leaking into
+    // the trait: a sequence is read at a number or sliced at a range of them,
+    // and both of those own everything they are.
+    I: std::slice::SliceIndex<[V]> + 'static,
+{
+    type Out<'a>
+        = &'a I::Output
+    where
+        Self: 'a;
+
+    /// `#[track_caller]`, so an index past the end is reported at the line that
+    /// wrote it rather than inside this file.
+    #[track_caller]
+    fn get(&self, key: I) -> &I::Output {
+        &self[key]
+    }
+}
+
+impl<V, I, const N: usize> Get<I> for [V; N]
+where
+    // **`'static` on the index**, which costs nothing and is what lets the
+    // output mention `I::Output` without the index's own lifetime leaking into
+    // the trait: a sequence is read at a number or sliced at a range of them,
+    // and both of those own everything they are.
+    I: std::slice::SliceIndex<[V]> + 'static,
+{
+    type Out<'a>
+        = &'a I::Output
+    where
+        Self: 'a;
+
+    #[track_caller]
+    fn get(&self, key: I) -> &I::Output {
+        &self[key]
+    }
+}
+
+/// **Text is sliced by a range** and never indexed by a number: a byte of
+/// UTF-8 is not a character, which is why Part I 2.2 has no such read.
+impl<I> Get<I> for str
+where
+    I: std::slice::SliceIndex<str> + 'static,
+{
+    type Out<'a>
+        = &'a I::Output
+    where
+        Self: 'a;
+
+    #[track_caller]
+    fn get(&self, key: I) -> &I::Output {
+        &self[key]
+    }
+}
+
+impl<I> Get<I> for String
+where
+    I: std::slice::SliceIndex<str> + 'static,
+{
+    type Out<'a>
+        = &'a I::Output
+    where
+        Self: 'a;
+
+    #[track_caller]
+    fn get(&self, key: I) -> &I::Output {
+        &self.as_str()[key]
+    }
+}
+
+/// **A view of a container reads like the container**, because this emitter
+/// writes `get(&x, …)` whether `x` is owned or already a view
+/// ([ADR-011](../../../docs/specification/adr/adr-011.md) D2) — so a `&&str`
+/// arrives here and has to answer what a `&str` would.
+///
+/// **The answer is tied to the inner reference and not to this borrow**, which
+/// is the whole of what this impl has to get right: `&dna[a..<b]` on a
+/// `dna: &str` parameter is a view of what `dna` points at, and answering with
+/// the lifetime of the `&dna` the emitter wrote would make it a view of a local
+/// — *cannot return value referencing function parameter*, about a file nobody
+/// wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+impl<'b, K, T> Get<K> for &'b T
+where
+    T: Get<K> + ?Sized,
+{
+    type Out<'a>
+        = T::Out<'b>
+    where
+        Self: 'a;
+
+    #[track_caller]
+    fn get(&self, key: K) -> Self::Out<'_> {
+        let inner: &'b T = self;
+        inner.get(key)
+    }
+}
+
+/// What a **map** read answers, before the `*` the emitter writes around every
+/// read takes it apart ([ADR-161](../../../docs/specification/adr/adr-161.md)
+/// D6).
+///
+/// A sequence read has to be a **value** — `return xs[at]` on a `-> i64` is the
+/// shape that says so — and a map read has to be an **option**. One trait
+/// cannot answer both unless the caller writes the same thing for each, so the
+/// caller writes `*`: for a sequence that is the element in its place, and for
+/// a map it is this, whose `Deref` hands back the option.
+pub struct Found<'a, V>(Option<&'a V>);
+
+impl<'a, V> std::ops::Deref for Found<'a, V> {
+    type Target = Option<&'a V>;
+
+    fn deref(&self) -> &Option<&'a V> {
+        &self.0
+    }
+}
+
+impl<K, Q, V, S> Get<&Q> for std::collections::HashMap<K, V, S>
+where
+    K: std::cmp::Eq + std::hash::Hash + std::borrow::Borrow<Q>,
+    Q: std::cmp::Eq + std::hash::Hash + ?Sized,
+    S: std::hash::BuildHasher,
+{
+    type Out<'a>
+        = Found<'a, V>
+    where
+        Self: 'a;
+
+    fn get(&self, key: &Q) -> Found<'_, V> {
+        Found(std::collections::HashMap::get(self, key))
+    }
+}
+
+impl<K, Q, V> Get<&Q> for std::collections::BTreeMap<K, V>
+where
+    K: Ord + std::borrow::Borrow<Q>,
+    Q: Ord + ?Sized,
+{
+    type Out<'a>
+        = Found<'a, V>
+    where
+        Self: 'a;
+
+    fn get(&self, key: &Q) -> Found<'_, V> {
+        Found(std::collections::BTreeMap::get(self, key))
+    }
+}
+
+/// The emitted spelling: `nikaia_std::index::get(&m, nikaia_std::index::at(k))`.
+#[track_caller]
+pub fn get<T, K>(target: &T, key: K) -> T::Out<'_>
+where
+    T: Get<K> + ?Sized,
+{
+    target.get(key)
+}
+
+/// What `??` does, once the left of it may be a **view into a container**
+/// ([ADR-114](../../../docs/specification/adr/adr-114.md) D4).
+///
+/// A map read answers `Option<&V>`, because the value reached is the map's and
+/// copying it is never something a compiler does on its own
+/// ([ADR-008](../../../docs/specification/adr/adr-008.md) D5). But the fallback
+/// is written as the value it stands for — `m[k] ?? 0` — so the two sides do
+/// not have the same type, and `unwrap_or_else` cannot join them.
+///
+/// **Two impls, and the language below picks**, which is the same arrangement
+/// [`Get`] has. They do not overlap: one is `Or<T> for Option<T>` and the other
+/// `Or<T> for Option<&T>`, and a `T` is never a `&T`.
+///
+/// `T: Copy` on the second and not `Clone`: a copy of a number is what
+/// `m[k] ?? 0` means, and a **clone** of a `String` is an allocation the
+/// program did not write ([ADR-008](../../../docs/specification/adr/adr-008.md)
+/// D5). Where the value does not copy, the fallback has to be a view too — or
+/// the program says `.to_owned()`, which is the same sentence that section has
+/// everywhere else.
+pub trait Or<T> {
+    fn or(self, fallback: impl FnOnce() -> T) -> T;
+}
+
+impl<T> Or<T> for Option<T> {
+    fn or(self, fallback: impl FnOnce() -> T) -> T {
+        self.unwrap_or_else(fallback)
+    }
+}
+
+impl<T: Copy> Or<T> for Option<&T> {
+    fn or(self, fallback: impl FnOnce() -> T) -> T {
+        self.copied().unwrap_or_else(fallback)
+    }
+}
+
+/// The emitted spelling: `nikaia_std::index::or(value, || fallback)`.
+///
+/// A **free function** and not a method, because `Option` has an inherent `or`
+/// of its own and an inherent method wins over a trait's.
+pub fn or<S, T>(value: S, fallback: impl FnOnce() -> T) -> T
+where
+    S: Or<T>,
+{
+    value.or(fallback)
+}
+
 /// **A write through the brackets is not an index**, and that is what this
 /// exists to say ([ADR-080](../../../docs/specification/adr/adr-080.md) D2).
 ///

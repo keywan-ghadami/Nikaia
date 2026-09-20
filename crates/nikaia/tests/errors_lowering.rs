@@ -124,7 +124,11 @@ fn coalescing_still_parses() {
 
 fn main() { let p = cli::args().nth(1) ?? "x" }"#,
     );
-    assert!(rust.contains("unwrap_or_else"), "{rust}");
+    // **`index::or` and not `unwrap_or_else`** since
+    // [ADR-161](../../../docs/specification/adr/adr-161.md) D2: the left of a
+    // `??` may be a view into a container, so the two sides do not have the
+    // same type and the language below is what joins them.
+    assert!(rust.contains("nikaia_std::index::or("), "{rust}");
 }
 
 /// The whole chapter in one program, compiled and run: an error type with a

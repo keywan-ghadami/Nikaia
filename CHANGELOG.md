@@ -4,6 +4,38 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.78] — 2026-09-20
+
+Reading a map through the brackets is a `T?`
+([ADR-114](docs/specification/adr/adr-114.md), built by
+[ADR-161](docs/specification/adr/adr-161.md)) — a key is data and may be
+absent, so *there is nothing there* is an answer rather than the end of the
+program.
+
+### Added
+
+- **`m[k]` on a map answers a `T?`** and on a sequence a `T`; the write is unchanged and a compound one is refused with the written-out form (`NK1162`); the read is one call, `nikaia_std::index::get`, with an output type per container.
+- **`panic(message)`** (D3), because it is [ADR-114](docs/specification/adr/adr-114.md) D1's own written way out for a key the program knows is present. It was on Part I 1.3's list, is in Part III A.2's list of unrecoverable errors, and **did not exist** — the form lowered to a call to a function nothing declares. It ends the program with the program's own words, at the Nikaia line.
+- **`a ?? b` on a `T?` is a `T`** (D7), which the checker claimed nothing about before.
+
+### The five `rustc` messages this cost, and how each was found
+
+None of them would have been found by reading the emitted Rust.
+
+- **`??` could not join a view with a value** (D2). A map read is an `Option<&V>` — copying what the map holds is never the compiler's to do ([ADR-008](docs/specification/adr/adr-008.md) D5) — while the fallback is written as the value it stands for. `nikaia_std::index::or` is where they meet, as two impls that do not overlap, so the emitter chooses nothing.
+- **`&m[k]` slipped past the checker** (D4). A view of a `T?` answered *unknown*, which claimed nothing, so `let s = &m[k]` followed by `s.min` reached no `NK1125`. That was the shape **both** corpus lines were written in.
+- **D2's own written-out counter did not build** (D5). `m[k] = (m[k] ?? 0) + 1` — the form the refusal's message hands a reader — had a `&m` inside the arguments of a `set(&mut m, …)`. The value is bound before the write now, which is what a reader would write by hand.
+- **A sequence read had to stay a place** (D6). `return xs[at]` on a `-> i64` is what said so: [ADR-114](docs/specification/adr/adr-114.md) D4's *a `T` for a sequence* cannot be a value in the language below, because reading one out by value moves out of the container. So the emitter writes `(*get(…))` — a place for a sequence, and for a map a small wrapper whose `Deref` hands back the option. One trait still, and the caller still writes the same thing for both.
+- **`io::Lines`' step threw the language below's own error** (D8). [ADR-158](docs/specification/adr/adr-158.md) named every **function** in `std` and missed the one **iterator**. Nothing saw it while every program that read a line also had a `"?"` in its set; the day one had a named channel, the `?` the loop's step takes had a raw error on the left and a named one on the right.
+
+### What said so
+
+- Ten tests in `crates/nikaia/tests/map_reads.rs`, six of which compile and **run** the program; `examples.rs`, which runs every example; and the ceiling in `sequences.rs`, which counts method calls nobody could answer and went from 39 to 40 the moment `??` stopped being typed for something.
+
+### Changed
+
+- **The two evidence lines say what they know.** `examples/1brc.nika` and `examples/access-log.nika` now read `… ?? panic(f"… was a key a moment ago")`, which is [ADR-114](docs/specification/adr/adr-114.md) D1's own example: the key came from the map, and the line says so rather than relying on it silently.
+
 ## [0.0.77] — 2026-09-20
 
 A set with two error types in it is a **generated sum**

@@ -98,7 +98,13 @@ fn a_postfix_leaves_a_plain_receiver_alone() {
     let emitted = emit("fn f(xs: Vec[i32]) { let n = xs.len() let m = xs[0].abs() }");
     assert!(emitted.contains("xs.len()"), "{emitted}");
     assert!(!emitted.contains("(xs)"), "{emitted}");
-    assert!(emitted.contains("xs[0].abs()"), "{emitted}");
+    // The read is a call now ([ADR-161](../../../docs/specification/adr/adr-161.md)
+    // D6) and the `*` around it is a place, so a postfix still needs no
+    // parentheses of its own beyond the ones the read already has.
+    assert!(
+        emitted.contains("(*nikaia_std::index::get(&xs, nikaia_std::index::at(0))).abs()"),
+        "{emitted}"
+    );
 }
 
 /// A float may carry an exponent, which is how a program about physical

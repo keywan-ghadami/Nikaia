@@ -89,7 +89,7 @@ fn both_ends_pause_and_the_receiver_hands_back_a_nullable() {
     assert!(rust.contains("tx.send(1).await"), "{rust}");
     assert!(rust.contains("rx.recv().await"), "{rust}");
     assert!(
-        rust.contains("unwrap_or"),
+        rust.contains("nikaia_std::index::or("),
         "a `T?` is read with `??`\n{rust}"
     );
 }

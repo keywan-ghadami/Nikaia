@@ -212,7 +212,13 @@ fn a_let_over_a_place_is_a_view() {
          }\n\
          fn main() { }\n",
     );
-    assert!(rust.contains("let row = &store.rows["), "{rust}");
+    // The read is `index::get`, which hands back a **view** of the element —
+    // which is what this test is about, one spelling on
+    // ([ADR-161](../../../docs/specification/adr/adr-161.md) D6).
+    assert!(
+        rust.contains("let row = &(*nikaia_std::index::get(&store.rows,"),
+        "{rust}"
+    );
 }
 
 /// **And over a value that copies, it is not.**

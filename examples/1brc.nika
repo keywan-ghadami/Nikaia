@@ -251,7 +251,11 @@ fn main() throws {
 
     let body = names
         .map fn(name) {
-            let s = &totals.stations[name]
+            // `names` came out of this very map, so the key is there - and
+            // since ADR-114 D1 the brackets say a `T?` whether or not this
+            // line knows better, so the line says what it knows. The abort it
+            // used to get for free is the one it now writes.
+            let s = totals.stations[name] ?? panic(f"{name} was a key a moment ago")
             // 1BRC prints one decimal; a hole may say how it is written, after
             // the colon, as a format string does anywhere else.
             f"{name}={s.min as f64 / 10.0:.1}/{s.mean():.1}/{s.max as f64 / 10.0:.1}"

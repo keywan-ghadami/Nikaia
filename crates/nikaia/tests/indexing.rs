@@ -66,6 +66,11 @@ fn ran(purpose: &str, source: &str) -> String {
 }
 
 /// Part I 4.5's own example, compiled and run.
+///
+/// **With the `??` the read now needs** ([ADR-114](../../../docs/specification/adr/adr-114.md)
+/// D1, built by [ADR-161](../../../docs/specification/adr/adr-161.md)): a map
+/// has a value only where the key is, so the bracket answers a `T?` and a
+/// program that knows better says so.
 #[test]
 fn a_map_written_through_the_brackets_compiles_and_runs() {
     let printed = ran(
@@ -78,7 +83,9 @@ fn main() {
     let mut scores = collections::HashMap()
     scores["Player1"] = 100
     scores["Player2"] = 7
-    println(f"{scores[\"Player1\"]} {scores[\"Player2\"]}")
+    let one = scores["Player1"] ?? 0
+    let two = scores["Player2"] ?? 0
+    println(f"{one} {two}")
 }
 "#,
     );
@@ -86,9 +93,13 @@ fn main() {
 }
 
 /// D2: the write is an `insert`, which takes the key **by value** and is what
-/// pins it. The read stays an index, because a read is one.
+/// pins it. The **read** is a call of its own now
+/// ([ADR-114](../../../docs/specification/adr/adr-114.md) D4): it answers what
+/// the container can promise, and the `*` around it is what lets the same three
+/// tokens serve a map and a sequence
+/// ([ADR-161](../../../docs/specification/adr/adr-161.md) D6).
 #[test]
-fn the_write_is_a_set_and_the_read_is_still_an_index() {
+fn the_write_is_a_set_and_the_read_is_a_get() {
     let rust = lowered(
         "a map's two directions",
         r#"
@@ -98,19 +109,27 @@ use std::collections
 fn main() {
     let mut scores = collections::HashMap()
     scores["Player1"] = 100
-    println(f"{scores[\"Player1\"]}")
+    let one = scores["Player1"] ?? 0
+    println(f"{one}")
 }
 "#,
     );
     assert!(
         rust.contains(
-            "nikaia_std::index::set(&mut scores, nikaia_std::index::at(\"Player1\"), 100)"
+            "nikaia_std::index::set(&mut scores, nikaia_std::index::at(\"Player1\"), __nikaia_stored)"
         ),
         "the write goes through `set`:\n{rust}"
     );
     assert!(
-        rust.contains("scores[nikaia_std::index::at(\"Player1\")]"),
-        "and the read is still an index:\n{rust}"
+        rust.contains("(*nikaia_std::index::get(&scores, nikaia_std::index::at(\"Player1\")))"),
+        "the read goes through `get`:\n{rust}"
+    );
+    // **And it is no longer an index.** Rust's `Index` for a map panics on an
+    // absent key, which is the abort
+    // [ADR-114](../../../docs/specification/adr/adr-114.md) took away.
+    assert!(
+        !rust.contains("scores[nikaia_std::index::at(\"Player1\")]"),
+        "the read is not an index any more:\n{rust}"
     );
 }
 
@@ -185,7 +204,8 @@ fn main() {
     let mut scores = collections::HashMap()
     scores["a"] = 1
 
-    println(f"{xs[0]} {xs[1]} {scores[\"a\"]}")
+    let n = scores["a"] ?? 0
+    println(f"{xs[0]} {xs[1]} {n}")
 }
 "#,
     );

@@ -1262,6 +1262,14 @@ enum Named<'a> {
 /// collides with it.
 const SUM: &str = "__NikaiaThrows_";
 
+/// The call that never comes back
+/// ([Part III A.2](../../docs/specification/30-nikaia-tooling.md), Part I 1.3).
+const PANIC: &str = "panic";
+
+/// Where a write through the brackets holds its value while the read in it
+/// finishes ([ADR-114](../../docs/specification/adr/adr-114.md) D2).
+const STORED: &str = "__nikaia_stored";
+
 /// The slot a function's result is filed under, as `contracts::sharing` keys it.
 const SHARED_RESULT: &str = "<result>";
 
@@ -1444,6 +1452,14 @@ struct Flow<'a> {
     /// member, so passing the error on is putting it back in the variant it
     /// came out of.
     caught_member: Option<&'a str>,
+    /// What is being emitted is a **place** rather than a value
+    /// ([ADR-114](../../../docs/specification/adr/adr-114.md) D4).
+    ///
+    /// The left of an assignment is the only one: `self.bodies[0].vx = …`
+    /// writes **through** the index, so the brackets there are the language
+    /// below's own and not a read. A read is what answers a `T?` on a map; a
+    /// place has to stay a place or there is nothing to assign to.
+    in_a_place: bool,
     /// The byte the statement being emitted starts at.
     ///
     /// It is here because the checker's answer about method calls is keyed by
@@ -1572,6 +1588,7 @@ impl<'a> Flow<'a> {
         caught_named: false,
         caught_sum: None,
         caught_member: None,
+        in_a_place: false,
         statement: usize::MAX,
         function: "",
         in_lambda: false,
@@ -1593,6 +1610,15 @@ impl<'a> Flow<'a> {
     fn guarded(self) -> Self {
         Flow {
             caught: true,
+            ..self
+        }
+    }
+
+    /// The left of an assignment
+    /// ([ADR-114](../../../docs/specification/adr/adr-114.md) D4).
+    fn place(self) -> Self {
+        Flow {
+            in_a_place: true,
             ..self
         }
     }
@@ -3084,6 +3110,7 @@ impl<'p> Emitter<'p> {
             caught_named: false,
             caught_sum: None,
             caught_member: None,
+            in_a_place: false,
             statement: usize::MAX,
             function: key,
             // A function body was not written inside whatever lambda the call
@@ -4216,19 +4243,29 @@ impl<'p> Emitter<'p> {
                     unreachable!("matched as an index")
                 };
                 let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
-                out.push("nikaia_std::index::set(&mut ");
-                self.expr(out, base, depth, flow)?;
-                out.push(", nikaia_std::index::at(");
-                self.expr(out, index, depth, flow)?;
-                out.push("), ");
+                // **The value first, and then the write**
+                // ([ADR-114](../../../docs/specification/adr/adr-114.md) D2).
+                // Since D1 a read is `index::get(&m, …)`, so the written-out
+                // counter D2 hands a reader — `m[k] = (m[k] ?? 0) + 1` — has a
+                // `&m` inside the arguments of a `set(&mut m, …)`, which is
+                // *cannot borrow as immutable because it is also borrowed as
+                // mutable* about a file nobody wrote
+                // ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+                // A `let` ends the read before the write begins, which is what
+                // a reader would write by hand.
+                out.push(&format!("{{ let {STORED} = "));
                 out.push(before);
                 self.expr(out, value, depth, flow)?;
                 out.push(after);
-                out.push(");");
+                out.push("; nikaia_std::index::set(&mut ");
+                self.expr(out, base, depth, flow)?;
+                out.push(", nikaia_std::index::at(");
+                self.expr(out, index, depth, flow)?;
+                out.push(&format!("), {STORED}); }}"));
             }
             Stmt::Assign { target, op, value } => {
                 let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
-                self.expr(out, target, depth, flow)?;
+                self.expr(out, target, depth, flow.place())?;
                 match op {
                     Some(op) => out.push(&format!(" {}= ", binary_op(*op))),
                     None => out.push(" = "),
@@ -4761,6 +4798,25 @@ impl<'p> Emitter<'p> {
                 // since every integer type answers with the same `usize`, and
                 // `cannot infer type` about a generated file is exactly what
                 // Part III C.1 forbids.
+                //
+                // **A read is a call and a place is brackets**
+                // ([ADR-114](../../../docs/specification/adr/adr-114.md) D4). A
+                // read through the brackets answers what the container can
+                // promise — a `T` for a sequence, a `T?` for a map, because a
+                // key that is not there is data about the world rather than a
+                // bug — and `index::get` is the one trait that lets this
+                // emitter write the same three tokens for both. The **left of
+                // an assignment** is not a read: `self.bodies[0].vx = …` writes
+                // through the index, so the brackets there stay the language
+                // below's own.
+                if !flow.in_a_place {
+                    out.push("(*nikaia_std::index::get(&");
+                    self.postfix_base(out, base, depth, flow)?;
+                    out.push(", nikaia_std::index::at(");
+                    self.expr(out, index, depth, flow)?;
+                    out.push(")))");
+                    return Ok(());
+                }
                 self.postfix_base(out, base, depth, flow)?;
                 match only_literals(index) {
                     true => {
@@ -4975,7 +5031,9 @@ impl<'p> Emitter<'p> {
             // this record's own example is written in, would have thrown
             // nothing and bound a value nobody produced. The `match` puts the
             // jump in the function it was written in.
-            Expr::Coalesce { value, fallback } if jumps(fallback) => {
+            Expr::Coalesce { value, fallback }
+                if jumps(fallback) || self.never_returns(fallback) =>
+            {
                 out.push("match ");
                 self.expr(out, value, depth, flow)?;
                 out.push(" { Some(__nikaia_value) => __nikaia_value, None => ");
@@ -4998,9 +5056,20 @@ impl<'p> Emitter<'p> {
                 // *"type annotations needed"* about a file nobody wrote
                 // (Part III, C.1). Without the `into` the literal is simply
                 // one more use of the type, which is what decides it.
+                //
+                // **`index::or` and not `unwrap_or_else`**
+                // ([ADR-114](../../docs/specification/adr/adr-114.md) D4): the
+                // left of a `??` may now be a **view into a container**, because
+                // a map read answers `Option<&V>` — the value reached is the
+                // map's, and copying it is never the compiler's to do
+                // ([ADR-008](../../docs/specification/adr/adr-008.md) D5). The
+                // fallback is still written as the value it stands for, so the
+                // two sides do not have the same type and the language below is
+                // what joins them.
                 let bare = a_number(fallback);
+                out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;
-                out.push(".unwrap_or_else(|| ");
+                out.push(", || ");
                 self.expr(out, fallback, depth, flow)?;
                 out.push(match bare {
                     true => ")",
@@ -6489,6 +6558,19 @@ impl<'p> Emitter<'p> {
     /// because a variant is one identifier.
     fn sum_variant(name: &str) -> String {
         name.replace("::", "_")
+    }
+
+    /// Whether an expression **never comes back**, so that nothing joins with
+    /// it ([Part III A.2](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// `panic(…)` is the one call of that shape, and it is
+    /// [ADR-114](../../docs/specification/adr/adr-114.md) D1's own written way
+    /// out for a key the program knows is present: `m[k] ?? panic(f"…")`. It
+    /// belongs beside [`jumps`] rather than inside it, because telling it apart
+    /// needs the name and a free function has no parse to read one from.
+    fn never_returns(&self, expr: &Expr) -> bool {
+        matches!(expr, Expr::Call { func, .. }
+            if matches!(func.as_ref(), Expr::Variable(name) if self.text(*name) == PANIC))
     }
 
     /// How a sum is **named** wherever it is used.

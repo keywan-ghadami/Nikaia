@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.77 (Draft)
+**Version:** 0.0.78 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -128,9 +128,13 @@ rather than a file of the compiler's.
 > shared buffer, written bare, and what `fs::read` hands back (D3). The
 > **tether** it is the container for is still not built, so a view of a buffer
 > a body owns is refused rather than compiled (`NK2303`, D4).
-> **`assert` and `panic` are named by the list and do not exist**: they belong
-> with the testing chapter (Part III 14), which is not built either, and
-> `docs/open-work.md` carries them.
+> **`panic` exists** ([ADR-161](adr/adr-161.md) D3): Part III A.2 lists *an
+> explicit `panic()`* among the unrecoverable errors, and
+> [ADR-114](adr/adr-114.md) D1 writes it as the way a program says it knows a
+> key is present. It ends the program with the program's own words, at the
+> Nikaia line. **`assert` is named by the list and does not exist**: it belongs
+> with the testing chapter (Part III 14), which is not built, and
+> `docs/open-work.md` carries it.
 
 ---
 
@@ -1136,8 +1140,13 @@ use std::collections
     `T`, because an index is the program's own arithmetic and a wrong one is a
     bug (Part III, Appendix A).
 
-    > **Implementation status:** Not implemented. Today a missing key aborts
-    > ([ADR-114](adr/adr-114.md) §5).
+    > **Implementation status:** Implemented
+    > ([ADR-161](adr/adr-161.md)). A map read answers a `T?`, a `+=` on a map
+    > slot is refused with the written-out form (`NK1162`), and a list keeps
+    > its `T` and its abort. The value reached is a **view** of the map where
+    > it does not copy, so a map of structs is read without an allocation
+    > nobody wrote — and `m[k] ?? 0` on a map of numbers is the number
+    > ([ADR-114](adr/adr-114.md) D4).
 
     A map's hash function follows where its keys came from. Keys derived from
     data a remote peer supplied are hashed with a random per-run key, so no

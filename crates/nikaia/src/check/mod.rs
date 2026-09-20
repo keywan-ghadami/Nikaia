@@ -3538,11 +3538,29 @@ impl<'a> Checker<'a> {
                     };
                     self.a_changed_binding_says_mut(&root, how);
                 }
-                let into = self.expr(target, span);
+                // **A write through the brackets is unchanged**
+                // ([ADR-114](../../docs/specification/adr/adr-114.md) D2):
+                // `m[k] = v` inserts or replaces, and what it inserts is a `V`.
+                // Only the **read** answers a `T?`, so the slot being written
+                // is the value type with that answer taken back off — without
+                // this, the write would be handed a `Some(v)` for a map whose
+                // values are plain.
+                let into = match target {
+                    Expr::Index { .. } => match self.expr(target, span) {
+                        Ty::Nullable(inner) => *inner,
+                        other => other,
+                    },
+                    _ => self.expr(target, span),
+                };
                 let found = self.expr(value, span);
                 // **A write to shared mutable state goes through a door**
                 // ([ADR-099](../../../docs/specification/adr/adr-099.md)).
                 self.a_write_that_skips_the_door(target, &into, value, span);
+                // **A compound assignment on a map slot is written out**
+                // ([ADR-114](../../docs/specification/adr/adr-114.md) D2).
+                if op.is_some() {
+                    self.a_compound_write_to_a_map_slot(target, span);
+                }
                 // Only a plain assignment: `n += 1` is whatever the operator
                 // makes of the two, and Stage 0 does not model operators.
                 if op.is_none() {
@@ -4526,9 +4544,23 @@ impl<'a> Checker<'a> {
                 Ty::Unknown
             }
             Expr::Coalesce { value, fallback } => {
-                self.expr(value, span);
+                let left = self.expr(value, span);
                 self.expr(fallback, span);
-                Ty::Unknown
+                // **`a ?? b` on a `T?` is a `T`** (Part I 3.5): that is what
+                // ending the chain means, and claiming nothing about it cost
+                // everything downstream — the day a map read became a `T?`
+                // ([ADR-114](../../docs/specification/adr/adr-114.md) D1),
+                // `let s = m[k] ?? panic(…)` made `s` unknown and `s.mean()`
+                // one more method call nobody could answer.
+                //
+                // **Only that shape.** A `??` over something this checker could
+                // not type claims nothing, which is
+                // [Part III C.4](../../../docs/specification/30-nikaia-tooling.md):
+                // the answer is more information than before and no new claim.
+                match left {
+                    Ty::Nullable(inner) => *inner,
+                    _ => Ty::Unknown,
+                }
             }
             // Indexing a container yields what the container holds - but only
             // where the container's type says so.
@@ -4562,9 +4594,20 @@ impl<'a> Checker<'a> {
                 // what is indexed is the type rather than where it is reached
                 // from.
                 match (crate::contracts::ty::base(name), args.as_slice()) {
-                    ("Vec" | "List", [item]) => item.clone(),
-                    // A map is indexed by its key and yields its value.
-                    ("HashMap" | "Map", [_, value]) => value.clone(),
+                    // **A sequence keeps its `T` and its abort**
+                    // ([ADR-114](../../docs/specification/adr/adr-114.md) D3):
+                    // it has a `T` at every index it has at all, and an index
+                    // it does not have is the program's own arithmetic gone
+                    // wrong ([Part III A.2](../../../docs/specification/30-nikaia-tooling.md)).
+                    ("Vec" | "List" | "Array", [item, ..]) => item.clone(),
+                    // **A map answers a `T?`** (D1). It has a value only where
+                    // the key is, and *there is nothing there* is data about
+                    // the world rather than a bug in the program — so the
+                    // bracket says what `get` says, and `??` is how a program
+                    // that knows better says so.
+                    ("HashMap" | "Map" | "BTreeMap", [_, value]) => {
+                        Ty::Nullable(Box::new(value.clone()))
+                    }
                     _ => Ty::Unknown,
                 }
             }
@@ -7014,6 +7057,46 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **`NK1162`: `m[k] += 1` on a map**
+    /// ([ADR-114](../../docs/specification/adr/adr-114.md) D2).
+    ///
+    /// A compound assignment reads the slot and writes it, and since D1 the
+    /// read is a **`T?`** — so the form has to say what an absent key counts
+    /// as, which is the question [ADR-080](../../docs/specification/adr/adr-080.md)
+    /// D2 left open. `m[k] = (m[k] ?? 0) + 1` is that sentence, and the message
+    /// carries it.
+    ///
+    /// **A sequence is untouched**: `xs[i] += 1` reads a `T` and writes a `T`,
+    /// because a list has a value at every index it has at all (D3).
+    fn a_compound_write_to_a_map_slot(&mut self, target: &Expr, span: &Span) {
+        let Expr::Index { base, index } = target else {
+            return;
+        };
+        // **Only where the read is nullable**, which is only a map. Where the
+        // container's type is not known, nothing is claimed
+        // ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)).
+        if !matches!(self.expr(target, span), Ty::Nullable(_)) {
+            return;
+        }
+        let slot = format!("{}[{}]", self.written(base), self.written(index));
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1162",
+            message: format!("`{slot}` reads the slot as well as writing it, and reading a map through the brackets is a `T?`"),
+            notes: vec![
+                "a key that is not there is data about the world rather than a bug \
+                 (Part I, 4.5), so what an absent key counts as is something this line \
+                 has to say (ADR-114 D2)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "write it out, with the fallback saying what an absent key counts as: \
+                 `{slot} = ({slot} ?? 0) + 1`"
+            )),
+        });
+    }
+
     /// Whether more than one error **type** can arrive at a handler
     /// ([ADR-160](../../docs/specification/adr/adr-160.md) D4).
     ///
@@ -9144,6 +9227,17 @@ fn view_of(inner: &Ty) -> Ty {
             args: args.clone(),
             view: true,
         },
+        // **A view of a `T?` is a nullable view**, which is the one shape
+        // Part I 2.3 already writes: `&str?` is a view that may be absent, and
+        // `is_view` and `is_nullable` are independent flags on a written type
+        // for exactly that reason.
+        //
+        // Answering `Unknown` here left `&m[k]` unchecked the day a map read
+        // became a `T?` ([ADR-114](../../docs/specification/adr/adr-114.md)
+        // D1): `let s = &m[k]` followed by `s.min` reached no `NK1125` and was
+        // refused by `rustc`, about the generated file
+        // ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+        Ty::Nullable(inner) => Ty::Nullable(Box::new(view_of(inner))),
         // A tuple of views is not a view of a tuple, and nothing writes down
         // what a view of a lambda would be.
         _ => Ty::Unknown,

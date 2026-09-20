@@ -59,6 +59,11 @@ pub mod prelude {
     // ([ADR-156](../../../docs/specification/adr/adr-156.md) D1): `Bytes` is a
     // language type, written bare, so the generated Rust has to find it
     // without a `use` the program did not write.
+    // **`panic`** ([Part III A.2](../../../docs/specification/30-nikaia-tooling.md),
+    // Part I 1.3's list): written bare, because it is on that list and because
+    // a program that reaches a state it has no answer for should not need an
+    // import to say so.
+    pub use crate::abort::panic;
     pub use crate::bytes::Bytes;
     pub use crate::cli;
     pub use crate::collections;

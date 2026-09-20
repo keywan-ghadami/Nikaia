@@ -211,10 +211,21 @@ pub struct Lines {
 }
 
 impl Iterator for Lines {
-    type Item = Result<String, std::io::Error>;
+    /// **`IoError` and not the language below's own**
+    /// ([ADR-158](../../../docs/specification/adr/adr-158.md) D1): a step of
+    /// this fails, so the function around the `for` says `throws` — and what it
+    /// throws is what `std` says it throws, here as everywhere else. This was
+    /// the one surface that record missed, and it showed the day a program
+    /// whose whole set was `io::IoError` got a **named** channel
+    /// ([ADR-159](../../../docs/specification/adr/adr-159.md) D1): the `?` the
+    /// loop's step takes had a raw `std::io::Error` on the left of it and a
+    /// named one on the right.
+    type Item = Result<String, IoError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
+        self.inner
+            .next()
+            .map(|line| line.map_err(|e| IoError::of(e, STDIN)))
     }
 }
 

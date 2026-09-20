@@ -25,6 +25,27 @@
 /// emitter can sort once at compile time instead of the program sorting at every
 /// start.
 pub type Site = (u32, &'static str, u32);
+/// **`panic(message)`**: the program says it has reached a state it has no
+/// answer for ([Part III A.2](../../../docs/specification/30-nikaia-tooling.md),
+/// Part I 1.3).
+///
+/// A.2 lists *an explicit `panic()`* beside an index out of range and a
+/// division by zero: an unrecoverable error, which is a bug in the program
+/// rather than something the world did. It is **not** `throw` — what `throws`
+/// carries is recoverable and the caller may catch it (Part I 7.1) — and it is
+/// not a testing helper either, whatever `assert` turns out to be.
+///
+/// It hands back **never**, so it stands where a value is wanted: the right of
+/// a `??` is the shape [ADR-114](../../../docs/specification/adr/adr-114.md) D1
+/// writes it in, where a program that knows a key is present says so.
+///
+/// The message reaches the hook `report_in_nikaia_terms` installed, so what a
+/// reader sees is the Nikaia line rather than this file
+/// ([ADR-044](../../../docs/specification/adr/adr-044.md) D2).
+#[track_caller]
+pub fn panic(message: impl std::fmt::Display) -> ! {
+    std::panic!("{message}")
+}
 
 /// Install the hook that translates an abort's location.
 ///

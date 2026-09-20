@@ -11,8 +11,8 @@ pub use nikaia_std::error::Full;
 // use std::cli
 
 async fn __nikaia_main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = cli::args().nth(1).unwrap_or_else(|| "stock.csv".into());
-    let out = cli::args().nth(2).unwrap_or_else(|| "report.html".into());
+    let path = nikaia_std::index::or(cli::args().nth(1), || "stock.csv".into());
+    let out = nikaia_std::index::or(cli::args().nth(2), || "report.html".into());
     let data = match fs::map(&path).await {
         Ok(value) => value,
         Err(error) => {

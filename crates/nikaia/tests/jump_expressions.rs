@@ -86,7 +86,8 @@ fn a_jumping_fallback_is_a_match_and_not_a_closure() {
         "fn find(id: i64) -> i64? { return null }\n\
          fn pick(id: i64) -> i64 { return find(id) ?? 0 }\n",
     );
-    assert!(plain.contains("unwrap_or_else(|| 0"), "{plain}");
+    assert!(plain.contains("nikaia_std::index::or("), "{plain}");
+    assert!(plain.contains("|| 0"), "{plain}");
 }
 
 /// **A `continue` as a fallback**, inside a loop, which is the same rule with

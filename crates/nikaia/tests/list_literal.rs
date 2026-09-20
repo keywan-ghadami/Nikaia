@@ -182,8 +182,15 @@ fn an_index_on_its_subjects_line_still_indexes() {
                   \x20   println(f\"{y}\")\n\
                   }\n";
     let rust = lowered(source);
-    assert!(rust.contains("xs[0]"), "{rust}");
-    assert!(rust.contains("let y = xs[2];"), "{rust}");
+    // **A read is `index::get` since
+    // [ADR-161](../../../docs/specification/adr/adr-161.md) D6**, so what this
+    // asserts is the **subject** — that `xs [2]` on one line reads `xs` and is
+    // not a list literal of its own.
+    assert!(rust.contains("nikaia_std::index::get(&xs,"), "{rust}");
+    assert!(
+        rust.contains("let y = (*nikaia_std::index::get(&xs, nikaia_std::index::at(2)));"),
+        "{rust}"
+    );
 }
 
 /// **A comment between them changes nothing**, on either side of the line
@@ -193,7 +200,7 @@ fn a_comment_does_not_move_the_line() {
     let same = lowered(
         "fn main() {\n\x20   let xs = [1, 2]\n\x20   println(f\"{xs /* here */ [0]}\")\n}\n",
     );
-    assert!(same.contains("xs[0]"), "{same}");
+    assert!(same.contains("nikaia_std::index::get(&xs,"), "{same}");
     let across = lowered(
         "fn main() {\n\x20   let n = 1\n\x20   println(f\"{n}\")\n\x20   /* here */ [n].len()\n}\n",
     );
