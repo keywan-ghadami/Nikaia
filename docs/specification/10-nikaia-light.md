@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.85 (Draft)
+**Version:** 0.0.86 (Draft)
 **Date:** 2026-09-20
 
 ---
@@ -80,9 +80,19 @@ The check cannot fire in a correct compiler. If it fires, the compiler has a
 defect; without the check, the same defect would appear as a silent hang
 ([ADR-039](adr/adr-039.md) D8, D2).
 
-> **Implementation status:** Not implemented. Nothing refuses the nesting of
-> Part II 12.3, no re-entrancy check is emitted, and `nikaia.toml` has no key
-> for this option ([ADR-039](adr/adr-039.md) §4).
+The key is `reentrancy-check` in `[build]`, and it takes `yes` or `no`. It has
+no command-line override: a shipped build that could be changed from the
+command line is not reproducible, and the two options above are the ones a
+single build may override.
+
+> **Implementation status:** Implemented. `NK2203` refuses the nesting of
+> Part II 12.3 when the program is compiled, the runtime check is in `std`'s
+> crossing shape, and `reentrancy-check` decides whether the built program
+> carries it — as a `[build]` key, a dimension of the build cache and of the
+> compiled `std`'s own tree ([ADR-039](adr/adr-039.md) D8). Declining it reaches
+> the crossing shape alone: the single-threaded shape's check is a `RefCell`'s
+> own borrow flag, which is the language below's and not this option's to
+> switch off.
 
 ### 1.3. The prelude
 Some names need no `use`. They are these, and there are no others

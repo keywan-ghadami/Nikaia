@@ -117,12 +117,13 @@ impl Sysroot {
     /// cache and 13 GB in the one the project tests share, with a build then
     /// failing for want of disk. Coexisting is right (D7); coexisting forever is
     /// the leak. See [`cache::sweep`].
-    pub fn rlib_cache(&self, target: &str, codegen: &Codegen) -> PathBuf {
+    pub fn rlib_cache(&self, target: &str, codegen: &Codegen, features: &str) -> PathBuf {
         let key = Key::sysroot(
             env!("NIKAIA_COMPILER"),
             env!("NIKAIA_RUSTC_VERSION"),
             target,
             &codegen.render(),
+            features,
         );
         let root = Layout::user_cache_dir().join("rlib");
         let tree = root.join(key.as_str());
@@ -264,8 +265,8 @@ mod tests {
             "unwind",
         );
         assert_ne!(
-            sysroot.rlib_cache("x86_64-linux", &plain),
-            sysroot.rlib_cache("x86_64-linux", &tuned),
+            sysroot.rlib_cache("x86_64-linux", &plain, ""),
+            sysroot.rlib_cache("x86_64-linux", &tuned, ""),
         );
     }
 
@@ -276,8 +277,8 @@ mod tests {
         let sysroot = Sysroot::new("/nowhere");
         let codegen = Codegen::new(&BTreeMap::new(), "unwind");
         assert_ne!(
-            sysroot.rlib_cache("x86_64-linux", &codegen),
-            sysroot.rlib_cache("wasm32-unknown", &codegen),
+            sysroot.rlib_cache("x86_64-linux", &codegen, ""),
+            sysroot.rlib_cache("wasm32-unknown", &codegen, ""),
         );
     }
 

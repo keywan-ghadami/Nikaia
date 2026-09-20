@@ -50,6 +50,9 @@ pub const ENTRY: &str = "src/main.nika";
 pub const WRAPPER_MARKER: &str = "NIKAIA_RUSTC_WRAPPER";
 const TARGET_VAR: &str = "NIKAIA_BUILD_TARGET";
 const PARALLELISM_VAR: &str = "NIKAIA_USER_PARALLELISM";
+/// The third switch's word, down the same channel
+/// ([ADR-039](../../docs/specification/adr/adr-039.md) D8).
+const REENTRANCY_VAR: &str = "NIKAIA_REENTRANCY_CHECK";
 const GEN_DIR_VAR: &str = "NIKAIA_GEN_DIR";
 const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
 
@@ -74,6 +77,7 @@ pub struct Settings {
     pub build: Build,
     pub target: String,
     pub user_parallelism: String,
+    pub reentrancy_check: String,
 }
 
 impl Settings {
@@ -90,10 +94,19 @@ impl Settings {
         let user_parallelism = manifest
             .setting("user-parallelism", user_parallelism, "no")
             .to_string();
+        // **No flag of its own** ([ADR-039](../../docs/specification/adr/adr-039.md)
+        // D8): it *lives in the manifest*, because otherwise a shipped build is
+        // not reproducible, and Part I 1.2 names the two that a single build may
+        // override. The environment is not a second front door — it is how the
+        // resolved word reaches the wrapper, which Cargo owns the arguments of.
+        let reentrancy_check = manifest
+            .setting("reentrancy-check", None, "yes")
+            .to_string();
         Ok(Settings {
-            build: Build::parse(&target, &user_parallelism)?,
+            build: Build::parse(&target, &user_parallelism, &reentrancy_check)?,
             target,
             user_parallelism,
+            reentrancy_check,
         })
     }
 
@@ -108,6 +121,10 @@ impl Settings {
                 PARALLELISM_VAR.to_string(),
                 OsString::from(&self.user_parallelism),
             ),
+            (
+                REENTRANCY_VAR.to_string(),
+                OsString::from(&self.reentrancy_check),
+            ),
         ]
     }
 
@@ -118,10 +135,12 @@ impl Settings {
             |name: &str, default: &str| std::env::var(name).unwrap_or_else(|_| default.to_string());
         let target = word(TARGET_VAR, "x86_64-linux");
         let user_parallelism = word(PARALLELISM_VAR, "no");
+        let reentrancy_check = word(REENTRANCY_VAR, "yes");
         Ok(Settings {
-            build: Build::parse(&target, &user_parallelism)?,
+            build: Build::parse(&target, &user_parallelism, &reentrancy_check)?,
             target,
             user_parallelism,
+            reentrancy_check,
         })
     }
 
@@ -136,7 +155,13 @@ impl Settings {
     /// backend caches, the literal here becomes that backend's name and the two
     /// cannot collide.
     pub fn choices(&self) -> Choices {
-        Choices::new(format!("{}/{}", self.target, self.user_parallelism), "rust")
+        Choices::new(
+            format!(
+                "{}/{}/{}",
+                self.target, self.user_parallelism, self.reentrancy_check
+            ),
+            "rust",
+        )
     }
 
     /// What a panic does on this machine (ADR-037 D1), in Cargo's vocabulary.
@@ -1189,7 +1214,7 @@ impl Project {
     /// package under it in a library beside it
     /// ([ADR-053](../../docs/specification/adr/adr-053.md) D1).
     fn cargo_member(&self, member: &Member, rust: &str, kind: CrateKind) -> Result<CargoProject> {
-        let mut dependencies = runtime_dependencies(rust)?;
+        let mut dependencies = runtime_dependencies(rust, self.settings.build.reentrancy_check)?;
         for (dependency, value) in member.manifest.dependencies() {
             match value {
                 // The whole point of D1: whatever the author wrote reaches
@@ -1450,7 +1475,11 @@ impl Project {
             // get it.
             target_dir: match std::env::var_os("CARGO_TARGET_DIR") {
                 Some(_) => None,
-                None => Some(Sysroot::resolve().rlib_cache(&self.settings.target, &self.codegen())),
+                None => Some(Sysroot::resolve().rlib_cache(
+                    &self.settings.target,
+                    &self.codegen(),
+                    &self.settings.reentrancy_check,
+                )),
             },
             wrapper: std::env::current_exe().context("finding this compiler's own path")?,
             env,
@@ -1676,7 +1705,10 @@ fn run_directly(binary: &std::path::Path, args: &[String]) -> Result<i32> {
     Ok(status.code().unwrap_or(1))
 }
 
-fn runtime_dependencies(rust: &str) -> Result<BTreeMap<String, toml::Value>> {
+fn runtime_dependencies(
+    rust: &str,
+    reentrancy_check: crate::emit::ReentrancyCheck,
+) -> Result<BTreeMap<String, toml::Value>> {
     let mut out = BTreeMap::new();
 
     if rust.contains("nikaia_std") {
@@ -1685,6 +1717,15 @@ fn runtime_dependencies(rust: &str) -> Result<BTreeMap<String, toml::Value>> {
             "path".to_string(),
             toml::Value::String(Sysroot::resolve().std_dir().to_string_lossy().into_owned()),
         );
+        // **A declined guarantee reaches the crate that carries it**
+        // ([ADR-039](../../docs/specification/adr/adr-039.md) D8). The check
+        // lives in `std`, so the switch is a Cargo feature: on by default, and
+        // a program that declined it builds `std` without it. The compiled-`std`
+        // cache keys on the word too (`Sysroot::rlib_cache`), or the second
+        // project on this machine would link the first one's answer.
+        if !reentrancy_check.is_on() {
+            table.insert("default-features".to_string(), toml::Value::Boolean(false));
+        }
         out.insert("nikaia-std".to_string(), toml::Value::Table(table));
     }
 
@@ -1901,8 +1942,11 @@ mod tests {
     /// time, the copies would drift and a program would link two `winnow`s.
     #[test]
     fn the_runtime_travels_with_the_compiler() {
-        let runtime = runtime_dependencies("use winnow_grammar::grammar; use nikaia_std::prelude;")
-            .expect("the declarations this compiler was built with parse");
+        let runtime = runtime_dependencies(
+            "use winnow_grammar::grammar; use nikaia_std::prelude;",
+            crate::emit::ReentrancyCheck::Yes,
+        )
+        .expect("the declarations this compiler was built with parse");
         assert!(runtime["nikaia-std"].get("path").is_some());
         assert!(runtime.contains_key("winnow-grammar"));
         assert!(
@@ -1915,7 +1959,11 @@ mod tests {
     /// nothing at all.
     #[test]
     fn a_program_that_names_no_runtime_depends_on_nothing() {
-        let runtime = runtime_dependencies("fn main() { println!(\"hi\"); }").expect("resolves");
+        let runtime = runtime_dependencies(
+            "fn main() { println!(\"hi\"); }",
+            crate::emit::ReentrancyCheck::Yes,
+        )
+        .expect("resolves");
         assert!(runtime.is_empty(), "{runtime:?}");
     }
 

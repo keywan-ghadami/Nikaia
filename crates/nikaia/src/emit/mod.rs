@@ -89,21 +89,70 @@ pub enum UserParallelism {
     Yes,
 }
 
-/// The two build switches together (ADR-037).
+/// **Whether the program carries the runtime re-entrancy check**
+/// ([ADR-039](../../docs/specification/adr/adr-039.md) D8).
 ///
-/// One value rather than two parameters: a third switch is then a field, not a
-/// change at every call site.
+/// Taking a lock while a lock is held is refused when the program is compiled
+/// (`NK2203`, Part II 12.3), so under D2 this check cannot fire in a correct
+/// compiler — and that is its role: **self-control of D2's rule, not error
+/// handling.** No input can trigger it; if it fires, the compiler has a hole,
+/// and without it such a hole is a silent hang instead.
+///
+/// **For every program that obeys the nesting rule, both builds behave
+/// identically**, which is what keeps Part I 1.2's *how, never what* intact:
+/// the switch decides only whether a violation is **noticed**.
+///
+/// It is not named *debug* and is not a development aid to be removed later. It
+/// is a guarantee that can be declined, which is
+/// [ADR-033](../../docs/specification/adr/adr-033.md) D8's precedent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReentrancyCheck {
+    /// `yes` — the default. The program carries the check.
+    #[default]
+    Yes,
+    /// `no` — it does not, and a hole in this compiler is a hang.
+    No,
+}
+
+impl ReentrancyCheck {
+    pub fn parse(value: &str) -> Result<ReentrancyCheck> {
+        match value {
+            "yes" => Ok(ReentrancyCheck::Yes),
+            "no" => Ok(ReentrancyCheck::No),
+            // **A third spelling is refused rather than guessed at**, which is
+            // what `user-parallelism` does one switch over: `on` and `off` read
+            // like this option and are not it, and a build that silently took
+            // the default for a word it did not know would ship the guarantee
+            // the manifest declined.
+            other => Err(refused!(
+                "unknown reentrancy-check `{other}` (expected yes or no)"
+            )),
+        }
+    }
+
+    /// Whether the emitted program carries it.
+    pub fn is_on(self) -> bool {
+        matches!(self, ReentrancyCheck::Yes)
+    }
+}
+
+/// The build switches together (ADR-037, [ADR-039](../../docs/specification/adr/adr-039.md) D8).
+///
+/// One value rather than three parameters: a fourth switch is then a field, not
+/// a change at every call site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Build {
     pub target: Target,
     pub user_parallelism: UserParallelism,
+    pub reentrancy_check: ReentrancyCheck,
 }
 
 impl Build {
-    pub fn parse(target: &str, user_parallelism: &str) -> Result<Build> {
+    pub fn parse(target: &str, user_parallelism: &str, reentrancy_check: &str) -> Result<Build> {
         Ok(Build {
             target: Target::parse(target)?,
             user_parallelism: UserParallelism::parse(user_parallelism)?,
+            reentrancy_check: ReentrancyCheck::parse(reentrancy_check)?,
         })
     }
 

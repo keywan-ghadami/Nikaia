@@ -65,8 +65,8 @@ fn the_committed_rust_is_what_this_compiler_lowers() {
 #[test]
 fn stds_nikaia_half_lowers_the_same_at_both_switches() {
     let sysroot = Sysroot::resolve();
-    let sequential = Build::parse("x86_64-linux", "no").expect("a switch that exists");
-    let concurrent = Build::parse("x86_64-linux", "yes").expect("a switch that exists");
+    let sequential = Build::parse("x86_64-linux", "no", "yes").expect("a switch that exists");
+    let concurrent = Build::parse("x86_64-linux", "yes", "yes").expect("a switch that exists");
 
     for nika in sysroot.std_modules().expect("std's Nikaia modules") {
         let source = std::fs::read_to_string(&nika).expect("the source reads");
@@ -139,8 +139,8 @@ fn a_different_codegen_table_is_a_different_compiled_std() {
         &BTreeMap::from([("opt-level".to_string(), toml::Value::Integer(3))]),
         "unwind",
     );
-    let a = sysroot.rlib_cache("x86_64-linux", &plain);
-    let b = sysroot.rlib_cache("x86_64-linux", &tuned);
+    let a = sysroot.rlib_cache("x86_64-linux", &plain, "yes");
+    let b = sysroot.rlib_cache("x86_64-linux", &tuned, "yes");
     assert_ne!(a, b);
     assert_eq!(
         a.parent(),

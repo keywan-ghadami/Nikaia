@@ -3,6 +3,15 @@ name = "nikaia-std"
 version = "0.1.0"
 edition = "2021"
 
+# **The re-entrancy check is a build option** (ADR-039 D8, Part I 1.2). It is on
+# by default and a program that declines it is built with `default-features =
+# false`, which the orchestrator writes into the generated manifest from the
+# `[build]` key. It is a Cargo feature because the check lives in this crate,
+# and a switch the compiler acts on has to reach the crate the code is in.
+[features]
+default = ["reentrancy-check"]
+reentrancy-check = []
+
 [dependencies]
 # `fs::map` maps the file (Part III, 17.1); this is the mapping.
 memmap2 = "0.9"

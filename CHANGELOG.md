@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.86] — 2026-09-20
+
+The re-entrancy check is a **build option** now
+([ADR-039](docs/specification/adr/adr-039.md) D8, built by
+[ADR-168](docs/specification/adr/adr-168.md)) — and measuring it first found
+the note describing it to be wrong about two of its three clauses.
+
+### Fixed
+
+- **Part I 1.2's status note said three things and two were false.** It read *nothing refuses the nesting of Part II 12.3, no re-entrancy check is emitted, and `nikaia.toml` has no key for this option*. `NK2203` refuses the nesting and has for some time; the runtime check is in `std`'s crossing shape, as a mark read before every acquisition. Only *no key* was true. A stale status note is a defect in its own right (`README.md` §1) — a reader cannot tell a plan from a promise — and this one told a reader that a guarantee they have is one they do not.
+
+### Added
+
+- **`reentrancy-check` in `[build]`**, `yes` or `no`, `yes` by default. A third spelling is refused rather than guessed at — `on` reads like this option and is not it, and a build that took the default for a word it did not know would ship the guarantee the manifest declined. `reentrancy_check` with an underscore is the mistake `[build]`'s own key list exists to catch.
+- **No command-line override**, which is the half [ADR-039](docs/specification/adr/adr-039.md) D8 states in one direction and this makes explicit in the other: it *lives in the manifest*, because a shipped build that could be changed from the command line is not reproducible. Part I 1.2 names the two options a single build may override, and this is not one of them.
+- **A dimension of the build cache and of the compiled `std`'s own tree.** The first is [ADR-037](docs/specification/adr/adr-037.md) D4's rule for any switch; the second is what the other two switches did not need, because the check lives in the `nikaia-std` crate and the word decides what that crate **contains**. Without it the second project on a machine links the first one's answer ([ADR-021](docs/specification/adr/adr-021.md) D7: dimensions coexist; they do not share). The mechanism is a Cargo feature, and the generated manifest writes `default-features = false` for a package that declined it.
+
+### What declining it reaches, and what it does not
+
+- **The crossing shape alone.** That one carries a mark this compiler wrote — an atomic load before the acquisition and a store after it, which [ADR-057](docs/specification/adr/adr-057.md) D2 makes free at one thread and D3 charges only on values that actually cross.
+- **The single-threaded shape's check is a `RefCell`'s own borrow flag**, which notices a re-entrant borrow whatever anyone asks. It is the language below's and no option of ours switches it off — more noticing than the switch promises, which costs a program obeying the rule nothing, and is stated rather than left to be discovered.
+
+### Why it is offered at all
+
+- Under [ADR-039](docs/specification/adr/adr-039.md) D2 the check **cannot fire in a correct compiler**: the nesting is refused when the program is compiled. So it is self-control of that rule rather than error handling — if it fires, this compiler has a hole, and without it such a hole is a silent hang instead. It is offered because a guarantee that cannot be declined is a decision **imposed** rather than offered ([ADR-033](docs/specification/adr/adr-033.md) D8), not because a measurement asked for it: [ADR-057](docs/specification/adr/adr-057.md) D2 says the mark is free at one thread, so most programs gain nothing by declining.
+- Reaching the runtime check at all means writing the nesting in Rust, which is what `nikaia-std`'s own test does — no Nikaia program can get there.
+
 ## [0.0.85] — 2026-09-20
 
 The shared types are the language's, and a prelude name written with a module

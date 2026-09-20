@@ -252,12 +252,25 @@ impl Key {
     ///   thing this cache exists to stop.
     /// * **The lowering backend.** It changes what a `.nika` file lowers to,
     ///   and `std`'s Rust is not lowered by this build at all.
-    pub fn sysroot(compiler: &str, toolchain: &str, target: &str, codegen: &str) -> Self {
+    pub fn sysroot(
+        compiler: &str,
+        toolchain: &str,
+        target: &str,
+        codegen: &str,
+        features: &str,
+    ) -> Self {
         let mut b = KeyBuilder::new(SYSROOT_DOMAIN);
         b.field("compiler", compiler);
         b.field("toolchain", toolchain);
         b.field("target", target);
         b.field("codegen", codegen);
+        // **A switch that changes what `std` itself contains is a dimension of
+        // the compiled `std`** ([ADR-021](../../../docs/specification/adr/adr-021.md)
+        // D7, [ADR-039](../../../docs/specification/adr/adr-039.md) D8): the
+        // re-entrancy check lives in that crate, so without this the second
+        // project on the machine links the first one's answer — a guarantee
+        // declined in one manifest and shipped from another's cache.
+        b.field("features", features);
         Key(b.finish())
     }
 

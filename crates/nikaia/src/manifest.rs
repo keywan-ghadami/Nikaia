@@ -77,11 +77,21 @@ pub enum Dependency {
 /// otherwise, and saying so beats a switch that silently stayed at its default:
 /// `user_parallelism` with an underscore is the mistake this catches.
 ///
-/// The list is `target` and `user-parallelism` (ADR-037 D5), and the one key
-/// that has **moved out** - see [`MOVED`]. A key that is neither, and that this
-/// compiler once had, is in [`WITHDRAWN`]: refused, but in its own words rather
-/// than as a typo.
-const KNOWN: &[&str] = &["target", "user-parallelism", "cleanup-deadline"];
+/// The list is `target`, `user-parallelism` (ADR-037 D5) and
+/// `reentrancy-check` ([ADR-039](../../../docs/specification/adr/adr-039.md)
+/// D8), plus the one key that has **moved out** - see [`MOVED`]. A key that is
+/// none of those, and that this compiler once had, is in [`WITHDRAWN`]:
+/// refused, but in its own words rather than as a typo.
+///
+/// **Part I 1.2 names the options rather than counting them**, and this is why:
+/// the count has been wrong twice (ADR-039 D8's own correction), so the page
+/// lists them and this list is what a manifest is checked against.
+const KNOWN: &[&str] = &[
+    "target",
+    "user-parallelism",
+    "reentrancy-check",
+    "cleanup-deadline",
+];
 
 /// The keys this compiler had and no longer has, with what to do instead.
 ///

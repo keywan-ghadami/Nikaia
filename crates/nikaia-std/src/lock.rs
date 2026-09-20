@@ -297,6 +297,22 @@ impl<T> Crossing<T> {
         // **Read before the acquisition**, because once that blocks there is
         // nothing left to report to - which is the whole reason this shape
         // carries a mark at all.
+        //
+        // **And it is a build option** ([ADR-039](../../../docs/specification/adr/adr-039.md)
+        // D8, Part I 1.2): under D2 a re-entrant acquisition cannot happen in a
+        // correct compiler, so this is self-control of that rule rather than
+        // error handling, and it is a guarantee that may be declined. For every
+        // program that obeys the nesting rule both builds behave identically —
+        // the switch decides only whether a violation is **noticed**.
+        //
+        // **It reaches this shape and not [`Local`]'s**, which is the honest
+        // scope rather than an omission: the mark below is this compiler's, and
+        // declining it costs an atomic load and store per acquisition
+        // ([ADR-057](../../../docs/specification/adr/adr-057.md) D2 makes that
+        // free at one thread and D3 charges it only on values that cross).
+        // `Local`'s check is a `RefCell`'s own borrow flag — the language
+        // below's, which no switch of ours declines.
+        #[cfg(feature = "reentrancy-check")]
         if self.held_by.load(Ordering::Relaxed) == me {
             reentered();
         }
@@ -349,6 +365,55 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Re-entering the crossing shape is noticed**, where the build carries
+    /// the check ([ADR-039](../../../docs/specification/adr/adr-039.md) D8).
+    ///
+    /// Under D2 this cannot happen in a correct compiler — `NK2203` refuses the
+    /// nesting when the program is compiled — so the only way to reach it is to
+    /// write the nesting in Rust, here. That is what makes it *self-control of
+    /// D2's rule* rather than error handling: no Nikaia program can get here.
+    #[test]
+    #[cfg(feature = "reentrancy-check")]
+    fn re_entering_the_crossing_shape_is_noticed() {
+        let lock = Crossing::new(1_i64);
+        // The hook is taken off around it: the panic is the answer being
+        // tested, and a test that prints a backtrace for its own expectation
+        // reads like a failure.
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let again = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            lock.access(|_| lock.get());
+        }));
+        std::panic::set_hook(hook);
+
+        let said = again.expect_err("the second acquisition is noticed");
+        // `panic!` with no arguments carries a `&'static str`; with any, a
+        // `String`. Both, because the message is one literal today and need not
+        // stay one.
+        let said = said
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| said.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        assert!(said.contains("cannot be re-entered"), "{said}");
+    }
+
+    /// **And `Local`'s check is not ours to decline.** It is a `RefCell`'s own
+    /// borrow flag, so it is there at both settings — which is more noticing
+    /// than the switch promises and costs a program that obeys the rule
+    /// nothing.
+    #[test]
+    fn the_local_shapes_check_is_the_language_belows() {
+        let lock = Local::new(1_i64);
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let again = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            lock.access(|_| lock.set(2));
+        }));
+        std::panic::set_hook(hook);
+        assert!(again.is_err(), "a `RefCell` notices either way");
+    }
 
     /// The four doors, on both shapes
     /// ([ADR-059](../../../docs/specification/adr/adr-059.md)).

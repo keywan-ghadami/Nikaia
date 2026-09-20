@@ -235,7 +235,12 @@ rather than here.
 [ADR-064](specification/adr/adr-064.md) gave the shared mutable type its name, its
 constructor and its single spelling. Part II 12.2's counter compiles and runs at
 both settings, so the type is not what anything here waits on — what is left is
-the section's own rules, and they are refusals nothing raises:
+the section's own rules, and they are refusals nothing raises. **The
+re-entrancy check is off this list** ([ADR-168](specification/adr/adr-168.md)):
+`reentrancy-check` is a `[build]` key now, a dimension of the build cache and
+of the compiled `std`'s own tree, and Part I 1.2's note — which said the check
+was not emitted and the nesting not refused, both false — says what is true.
+What is left:
 
 * **D7's *stored* lambda**, the one part of [ADR-039](specification/adr/adr-039.md)
   D3 the `locks` column does not answer for. The column itself is built
@@ -253,10 +258,6 @@ the section's own rules, and they are refusals nothing raises:
   calls — *a foreign crate is described before it is called*, below — rather
   than a change here. That number is what any refusal reading the column has to
   be read against, which is why it is kept.
-* the **re-entrancy check as a build switch** ([ADR-039](specification/adr/adr-039.md)
-  D8), which the cache key already accounts for — and which
-  [ADR-057](specification/adr/adr-057.md) D2 makes free at one thread and D3
-  charges only on the values that actually cross;
 * **`NK2201` and `NK2503`**, catalogued and not emitted.
 
   *`NK2503` needs the reachability walk* [ADR-039](specification/adr/adr-039.md)
