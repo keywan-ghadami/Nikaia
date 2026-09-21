@@ -1,8 +1,15 @@
 # Tier-1 Staging: Candidates, Non-Candidates, and How to Measure One
 
 **Date:** September 10, 2026
-**Status:** §2 and §3 are measured and built; §2's original answer was wrong and says so
-**Related:** [ADR-026](specification/adr/adr-026.md) §3 (the two tiers),
+**Status:** §2 and §3 are measured and built; §2's original answer was wrong and says so.
+**The item these findings belong to is closed** — tier-1 staging is withdrawn
+([ADR-178](specification/adr/adr-178.md)), because every candidate below is, and
+three of them closed against this file's own prediction. What stays here are the
+**findings**, which are true whatever is decided about staging; what would reopen
+the item is §6's closing rule, raised to a record as that ADR's D2: a candidate
+with a **measured crossover**.
+**Related:** [ADR-178](specification/adr/adr-178.md) (the withdrawal, which cites
+this file as its evidence), [ADR-026](specification/adr/adr-026.md) §3 (the two tiers),
 [ADR-010](specification/adr/adr-010.md) (the shipped precedent),
 [upstream findings](upstream/winnow-grammar-findings.md)
 

@@ -71,65 +71,6 @@ surface where getting it wrong is silent. That is the argument for B, and it is
 a real one — which is why the recommendation carries the three-value shape
 rather than the column alone.
 
-### Is tier-1 staging withdrawn, or is it still on the list?
-
-**What is blocked.** The roadmap's *Tier-1 staging (compiler-side)* box, which is
-one of the three points the language area is short of, and which is `[ ]` on a
-page that reads as a list of things still to build.
-
-**Measured, and by the file behind the box itself.**
-[`staging-candidates.md`](staging-candidates.md) was written to find candidates
-and it found three. Two are **done** — `String::with_capacity` and `html::escape`
-— and both turned out to be `std` optimisations rather than demonstrations of
-the thesis. The third, first-byte dispatch for literal alternations, was
-profiled and is **not the prize**: under 3 % of the parse, against 56 % for the
-whitespace the alternation was re-skipping. The whitespace hoist that came out
-of that profile is **−19.8 %** and is merged. What is left of the original item
-is a ≤3 % ceiling in a dependency.
-
-That file's own conclusion is a rule: *a staging decision enters the compiler
-only together with a measured crossover; without one the complexity is certain
-and the gain is not, and the complexity is paid twice — once in the language
-surface and once in the generated code.* And its last line: **Tier 1 does not
-need Tier 2, and the applications people cite as the reason for Tier 2 are all
-in this list.**
-
-**Why it is the owner's.** Every candidate anybody wrote down is closed, and the
-rule the survey ended on says the next one may not be opened without a
-measurement that nobody has. So the box is not *unbuilt work* — it is a
-direction the project examined and did not take. Whether that is a **withdrawal**
-is a judgement about what the language is for, which is the one thing this page
-never decides on its own. [ADR-070](specification/adr/adr-070.md) D1's `loop` is
-the precedent for the shape: *the absence is a decision rather than an
-omission*, written down so a reader can tell the two apart.
-
-**The options.**
-
-* **A — withdraw it**, with a record saying what was measured and what would
-  reopen it: a candidate with a crossover, measured before the complexity is
-  paid. The box leaves the roadmap the way `loop` left Part I, and the language
-  area is counted out of 25 rather than 26.
-* **B — keep it open.** The box stays `[ ]` and the page keeps saying there is
-  work here. Honest only if somebody intends to go looking for a fourth
-  candidate, because the three that existed are closed.
-* **C — keep it, and make the box say what the file says.** No record, no
-  withdrawal: the box is re-written to *examined, no candidate survived
-  measurement*, and it stays `[ ]` as a standing invitation.
-
-**What this page recommends: A.** The argument is the one
-[ADR-084](specification/adr/adr-084.md) makes about a keyword and
-[`staging-candidates.md`](staging-candidates.md) makes about a staging rule —
-the cost is certain and the gain is not — and a `[ ]` on a progress page is a
-promise to somebody reading it. C is the cheap half of A and is worth taking if
-the answer is *not yet rather than no*: it costs one paragraph and no record,
-and it keeps the door where it is.
-
-**What it costs if wrong**: a withdrawal has to be undone by a record, which is
-the price [ADR-070](specification/adr/adr-070.md) already paid for `loop` and is
-small — the word stays reserved there, and here there is not even a word to
-reserve. The real cost is the other way: a `[ ]` that nobody intends to build
-makes every other `[ ]` on the page worth less.
-
 ### May a build-time value cross as a **view into what the build allocated**?
 
 **What is blocked.** Three shapes that a `comptime` computes perfectly well and

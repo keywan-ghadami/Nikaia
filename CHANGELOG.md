@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.126] — 2026-09-21
+
+**Tier-1 staging is withdrawn** — [ADR-178](docs/specification/adr/adr-178.md),
+answering [`open-decisions.md`](docs/open-decisions.md)'s question of whether the
+box was still on the list. Nothing was built; a promise nobody intended to keep
+stopped being counted as one.
+
+### What the measurements said
+
+- **Every candidate [`staging-candidates.md`](docs/staging-candidates.md) names is closed**, and three of them closed against that file's own prediction. The table-driven `html::escape` it recommended was **16 % worse** than the one-word mask that replaced it, because 4 KB of fat pointers is not a register. A template's `String::with_capacity` is 3.4 % on a static page and **0.0 %** on a growing table. And first-byte dispatch for literal alternations — which the survey called *the actual prize* — is under **3 %** of the parse.
+- **The one measurement taken before any code was written overturned the ranking outright.** A callgrind profile of the compiler put the whitespace those alternations were re-skipping at **56 %**; hoisting it is **−19.8 %** and is merged upstream, and it is not staging at all.
+- **The headline application has no target.** [ADR-026](docs/specification/adr/adr-026.md) §3's perfect hash over a route table needs an HTTP server, and building one is a feature rather than a first step.
+
+### So the box leaves the page
+
+- **The absence is the decision**, which is the shape [ADR-070](docs/specification/adr/adr-070.md) D1 gave `loop`: a reader who wonders where it went finds the record rather than nothing. The language area is counted out of **25** rather than 26 — 24.5 of 25, and 28.5 of 39 overall — and `scripts/check-roadmap-numbers.py` is what stops a withdrawal that forgets the number.
+- **A `[ ]` on a progress page is a promise**, and every honest one borrows credibility from the rest. That is the cost that decided it, not the cost of writing the record.
+- **The door is a measurement and not a mood** (D2): the survey's own closing rule, raised from a notes page to a record — a staging decision enters the compiler only together with a measured crossover, because the complexity is certain and the gain is not, and it is paid twice, once in the language surface and once in the generated code.
+
+### What is not withdrawn
+
+- **[ADR-026](docs/specification/adr/adr-026.md) §3 is not reversed.** *Tier 1 waits on nothing* was true and still is; what this adds is that waiting on nothing is not the same as being worth doing. **Tier 2** keeps its own status, which is unanswered questions rather than closed candidates.
+- **The compiler still stages**, and [ADR-010](docs/specification/adr/adr-010.md) is what it looks like when it is right: a map's hasher chosen from where its keys came from, measured at 26 % of the flagship, with nothing in the source mentioning hashing. [ADR-176](docs/specification/adr/adr-176.md)'s fixed map is the second, and the measurement **changed its shape** rather than confirming it.
+- **The harness stays** (`crates/nikaia/tests/measure.rs`, callgrind, ignored by default, with two workloads in `benches/`). It was built for this item and is the reason the item could be closed rather than argued about; what it measures is this compiler and the programs it emits.
+
 ## [0.0.125] — 2026-09-21
 
 **What a build-time value *is*, widened** — [ADR-079](docs/specification/adr/adr-079.md)
