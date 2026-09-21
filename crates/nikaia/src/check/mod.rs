@@ -11181,11 +11181,70 @@ impl<'a> Checker<'a> {
         else {
             return;
         };
-        const NUMBERS: [&str; 6] = ["i32", "i64", "u8", "f64", "bool", "char"];
-        if *view || !args.is_empty() || !NUMBERS.contains(&want.as_str()) {
+        if *view {
             return;
         }
-        self.a_cast_over_a_lent_binding(value, span);
+        const NUMBERS: [&str; 6] = ["i32", "i64", "u8", "f64", "bool", "char"];
+        if args.is_empty() && NUMBERS.contains(&want.as_str()) {
+            self.a_cast_over_a_lent_binding(value, span);
+            return;
+        }
+        // **And everything else is a refusal**
+        // ([ADR-185](../../docs/specification/adr/adr-185.md) D1): a number is
+        // `Copy` and reading one through a view inserts nothing, and a `struct`
+        // is not — so the same answer here would be a copy the source did not
+        // write, which [ADR-008](../../docs/specification/adr/adr-008.md) D5
+        // forbids in as many words.
+        let Expr::Variable(name) = value else {
+            return;
+        };
+        let name = self.parsed.text(*name).to_string();
+        if !self.binding(&name).is_some_and(|local| local.lent) {
+            return;
+        }
+        let want = want.clone();
+        self.a_copy_the_source_did_not_write(&name, &want, span);
+    }
+
+    /// **`NK1183`: a `let` that declares the element's type over a `for`
+    /// binding** ([ADR-185](../../docs/specification/adr/adr-185.md) D1).
+    ///
+    /// A `for` lends ([ADR-094](../../docs/specification/adr/adr-094.md) D4),
+    /// so the binding is a **view** of the element and an annotation naming the
+    /// element is a type the value does not have. What came back was `rustc`'s
+    /// *mismatched types*, with *consider using clone here* as the way out —
+    /// an instruction to insert exactly the copy
+    /// [ADR-008](../../docs/specification/adr/adr-008.md) D5 says is written
+    /// and never inserted, about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **The way out is the annotation coming off**, and it is a way out the
+    /// program can take: a view reads the same — `copy.a` reaches through it —
+    /// which is what makes this [C.2](../../docs/specification/30-nikaia-tooling.md)'s
+    /// shape rather than C.1's alone. The compiler knew both that the
+    /// annotation was wrong and what to write instead, and said neither.
+    ///
+    /// **And the copy is named as the other answer**, because sometimes it is
+    /// the one that was meant — but it is the *program's* to write.
+    fn a_copy_the_source_did_not_write(&mut self, name: &str, want: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1183",
+            message: format!(
+                "`{name}` is a view of a `{want}`, and this `let` declares a `{want}`"
+            ),
+            notes: vec![format!(
+                "a `for` lends what it walks (Part I, 6.5), so `{name}` points at an element the \
+                 collection still owns - and a `{want}` here would be a **copy**, which this \
+                 language writes and never inserts (ADR-008 D5)"
+            )],
+            help: Some(format!(
+                "take the annotation off: `let … = {name}` binds the view, and reading through \
+                 one is the same reading. Where a copy is what was meant, write it - \
+                 `{name}.to_owned()` for a type that offers one"
+            )),
+        });
     }
 
     /// **`NK1180`: a reflected field answers `.name` and `.of(value)`**

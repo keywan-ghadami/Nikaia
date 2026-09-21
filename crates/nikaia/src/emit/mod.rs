@@ -3745,13 +3745,39 @@ impl<'p> Emitter<'p> {
             // that), and the `Ok(` is what makes that value the function's
             // outcome.
             let wrap = here == Tail::Return && !matches!(&stmt.node, Stmt::Expr(Expr::Throw(_)));
+            // **And a tail that enters a grammar binds its value first**
+            // ([ADR-185](../../docs/specification/adr/adr-185.md) D2). The
+            // lowering of an entry is a block holding `let _source = &*data`
+            // and a stream over it, and in `Ok({ … }?)` those temporaries live
+            // to the end of the enclosing block — past the **local** that owns
+            // the text. `rustc` then says *`data` does not live long enough*
+            // about a file nobody wrote
+            // ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)),
+            // and its own hint is this fix: *save the expression's value in a
+            // new local variable*.
+            //
+            // A `let` makes the block a **statement**, so its temporaries drop
+            // at the `;` and ahead of the local — which is `ARM_VALUE`'s trick
+            // one construct over ([ADR-164](../../docs/specification/adr/adr-164.md)
+            // D1), for the same kind of reason.
+            //
+            // **Only where the lowering writes the borrow**, which is the one
+            // shape this emitter can be sure of: it is the emitter's own
+            // `_source`, not something a program's expression left behind. Every
+            // other tail keeps `Ok(x)`, because a line the generated file does
+            // not need is a line a reader has to skip (ADR-011 D2).
+            let binds = wrap && self.a_tail_that_enters_a_grammar(&stmt.node);
             out.from(&stmt.span, |out| {
-                if wrap {
-                    out.push("Ok(");
+                match (wrap, binds) {
+                    (true, true) => out.push(&format!("let {ARM_VALUE} = ")),
+                    (true, false) => out.push("Ok("),
+                    (false, _) => {}
                 }
                 self.stmt(out, &stmt.node, &stmt.span, depth + 1, here, flow)?;
-                if wrap {
-                    out.push(")");
+                match (wrap, binds) {
+                    (true, true) => out.push(&format!(";\n{inner_pad}Ok({ARM_VALUE})")),
+                    (true, false) => out.push(")"),
+                    (false, _) => {}
                 }
                 Ok(())
             })?;
@@ -3764,6 +3790,35 @@ impl<'p> Emitter<'p> {
         out.push(&pad);
         out.push("}");
         Ok(())
+    }
+
+    /// **Whether this statement enters a grammar**
+    /// ([ADR-185](../../docs/specification/adr/adr-185.md) D2).
+    ///
+    /// The one lowering that leaves a temporary borrowing a local behind: the
+    /// entry's block binds `_source` to a view of its input and builds a stream
+    /// over it. Read off the **statement** rather than off the type, because
+    /// what has to know is the writer of the `Ok(` around it and this emitter
+    /// has no types ([ADR-028](../../docs/specification/adr/adr-028.md)).
+    fn a_tail_that_enters_a_grammar(&self, stmt: &Stmt) -> bool {
+        let mut found = false;
+        let mut look = |expr: &Expr| {
+            if let Expr::Call { func, args, .. } = expr {
+                if let Expr::Path(segments) = func.as_ref() {
+                    if let [grammar, _] = segments.as_slice() {
+                        if self.grammars.contains_key(grammar) && args.len() == 1 {
+                            found = true;
+                        }
+                    }
+                }
+            }
+        };
+        match stmt {
+            Stmt::Expr(expr) => visit_expr(expr, &mut look),
+            Stmt::Return(Some(expr)) => visit_expr(expr, &mut look),
+            _ => {}
+        }
+        found
     }
 
     // --- Grammars ---

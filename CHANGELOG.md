@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.136] — 2026-09-21
+
+**A view meets two more constructs that were never told** —
+[ADR-185](docs/specification/adr/adr-185.md), closing
+[`open-work.md`](docs/open-work.md) §1.5 and §1.6. **One entry is left in §1**,
+and it waits on a decision rather than on work.
+
+### Both messages told the reader to do something the language forbids
+
+- **`for r in rows { let copy: Row = r }`** answered *mismatched types* with *consider using clone here* — an instruction to insert exactly the copy [ADR-008](docs/specification/adr/adr-008.md) D5 says is **written and never inserted**.
+- **A grammar entry in tail position over a local that owns its input** answered *`data` does not live long enough*, naming a local whose lifetime the source never mentions.
+
+### The first is a refusal and not a lowering
+
+- **`NK1183`.** A `for` lends ([ADR-094](docs/specification/adr/adr-094.md) D4), so the binding is a view and an annotation naming the element is a type the value does not have.
+- **Why not the lowering the numeric half got**: [ADR-182](docs/specification/adr/adr-182.md) D5 reads a number *through* the view and inserts nothing, because a number is `Copy`. A `struct` is not.
+- **The way out is the annotation coming off**, and it is one the program can take — a view reads the same, and `copy.a` reaches through it. That is what makes this [C.2](docs/specification/30-nikaia-tooling.md)'s shape rather than C.1's alone: the compiler knew both that the annotation was wrong and what to write instead, and said neither. The copy is named beside it, because sometimes it is what was meant — but it is the **program's** to write.
+- **Decided where D5's numeric path falls through**, so the two answers cannot drift apart.
+
+### The second binds the tail's value before the `Ok`
+
+- **`let __nikaia_value = { … }?; Ok(__nikaia_value)`.** The lowering of an entry is a block holding `let _source = &*data` and a stream over it; inside `Ok(…?)` those temporaries live to the end of the **enclosing** block, past the local that owns the text. A `let` makes the block a **statement**, so they drop at the `;` and ahead of the local — [ADR-164](docs/specification/adr/adr-164.md) D1's `ARM_VALUE` trick one construct over, and `rustc`'s own hint: *save the expression's value in a new local variable*.
+- **Only where the lowering writes the borrow**, which is the one shape this emitter can be sure of: it is the emitter's own `_source`, not something a program's expression left behind. Every other tail keeps `Ok(x)`, because a line the generated file does not need is a line a reader has to skip.
+- **It was the tail and not the grammar**, which is why the corpus stayed green: the same call bound to a name first compiled and ran, and so did the tail form over a **parameter**, because then no local owns the buffer. `examples/report.nika` writes the first shape. `tests/project.rs` **builds and runs** the broken one, since the emitted text looked right and `rustc` is what refused it.
+
 ## [0.0.135] — 2026-09-21
 
 **The living pages say `ref`** — the upkeep

@@ -39,7 +39,7 @@ pub struct Entry<'a> {
 }
 
 pub fn read(data: &str) -> Result<Vec<Entry<'_>>, ParseError> {
-    Ok({
+    let __nikaia_value = {
         use winnow::Parser;
         let _source = &*data;
         let mut stream = winnow_grammar::ParseInput::<()> {
@@ -49,7 +49,8 @@ pub fn read(data: &str) -> Result<Vec<Entry<'_>>, ParseError> {
         Stock::parse_file()
             .parse_next(&mut stream)
             .map_err(|error| ParseError::of(error.render(_source)))
-    }?)
+    }?;
+    Ok(__nikaia_value)
 }
 
 fn weight(entry: &Entry<'_>) -> i64 { entry.count }

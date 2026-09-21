@@ -68,7 +68,7 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Three entries are open.** §1.3 and §1.4 closed at 0.0.131 and §1.6 opened with them; §1.2 closed at 0.0.132. The closed numbers stay where they were, because this file is cited by number.
+**One entry is open**, and it waits on a **decision** rather than on work. §1.2 closed at 0.0.132, §1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay where they were, because this file is cited by number.
 
 ### 1.1. A grammar's entry does not say what it keeps
 
@@ -123,90 +123,6 @@ rather than guessed at, and it waits on the same mechanism
 
 *Every example still runs*, at both settings, which is what said this cost
 information rather than correctness.
-
-### 1.5. A grammar entry in tail position over a local that owns its input
-
-**Found by [ADR-173](specification/adr/adr-173.md)'s own test**, which is the
-only reason it is visible: nothing in the corpus writes this shape, and the
-record that named a parse failure is what put a program in it.
-
-*Reproduction:*
-
-```nika
-fn both(path: ref String) -> i64 throws {
-    let data = fs::read_to_string(path)
-    return Tiny::number(data)
-}
-```
-
-`rustc` refuses the **generated file** with `E0597: `data` does not live long
-enough`, which is what [Part III C.1](specification/30-nikaia-tooling.md) says
-may not happen. The lowering writes `Ok({ … }?)` for the tail, and the block's
-temporaries — the parse stream, which holds `&data` — outlive the local that
-owns the text.
-
-*It is the tail and not the grammar.* The same call bound to a name first
-compiles and runs:
-
-```nika
-let n = Tiny::number(data)
-return n
-```
-
-…and so does the tail form where `data` is a **parameter**, because then no
-local owns the buffer. `examples/report.nika` writes the first shape, which is
-why the corpus is green.
-
-*What it needs:* the tail wrapper binding the block's value before the `?` —
-`let v = { … }?; Ok(v)` — so the block is a statement and its temporaries drop
-at the `;`, ahead of the local. `ARM_VALUE`'s trick one construct over
-([ADR-164](specification/adr/adr-164.md) D1) is the same idea for the same kind
-of reason.
-
-### 1.6. A `let` that declares a **type** over a `for` binding
-
-**Found by closing §1.3**, and it is the same root one annotation over: a `for`
-lends ([ADR-094](specification/adr/adr-094.md) D4), so the binding is a view of
-the element and an annotation that names the element is a type the value does
-not have.
-
-*Reproduction:*
-
-```nika
-struct Row { a: i64 }
-
-fn main() {
-    let rows: Vec[Row] = [Row { a: 1 }]
-    for r in rows {
-        let copy: Row = r
-        println(f"{copy.a}")
-    }
-}
-```
-
-`rustc` refuses the generated file — relayed onto the `.nika` line — with
-*mismatched types* and *consider dereferencing the borrow*, about a borrow the
-source does not contain: [Part III C.1](specification/30-nikaia-tooling.md).
-
-*The numeric half is closed.* `let q: i64 = n` over a lent `n` reads the number
-through the view (`nikaia_std::num::value`), because a number is `Copy` and
-reading one through a view inserts nothing. A **struct** is not, so the same
-answer there would be a copy the source did not write, which
-[ADR-008](specification/adr/adr-008.md) D5 forbids in as many words: a copy is
-written and never inserted.
-
-*So this is a diagnostic and not a lowering.* The way out exists and the program
-can take it — `let copy = r` binds the view, and `r.a` reads through it — which
-is what makes this [Part III C.2](specification/30-nikaia-tooling.md)'s shape
-rather than C.1's alone: the compiler knows both that the annotation is wrong
-and what to write instead, and says neither.
-
-*What it needs:* the checker refusing the annotation where the value is a lent
-binding and the declared type is not `Copy`, with the way out naming the `let`
-without one. The fact is already on the binding —
-`check::Local::lent`, which §1.3's close put there — so this is a refusal and
-not an analysis. **The corpus does not write the shape**, which is why it is
-here and not fixed.
 
 ## 2. Decided and unbuilt
 

@@ -1911,3 +1911,53 @@ fn a_head_the_next_file_declares_is_not_refused() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A grammar entry in tail position over a local that owns its input**
+/// ([ADR-185](../../../docs/specification/adr/adr-185.md) D2, closing
+/// `open-work.md`'s entry for it at 0.0.136).
+///
+/// The lowering of an entry is a block holding `let _source = &*data` and a
+/// stream over it. In `Ok({ … }?)` those temporaries live to the end of the
+/// enclosing block — **past the local that owns the text** — and `rustc` said
+/// *`data` does not live long enough* about a file nobody wrote
+/// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)). Its own
+/// hint was the fix: *save the expression's value in a new local variable*.
+///
+/// **It was the tail and not the grammar**: the same call bound to a name
+/// first compiled and ran, and so did the tail form where the input is a
+/// **parameter**, because then no local owns the buffer.
+/// `examples/report.nika` writes the first shape, which is why the corpus was
+/// green while this was broken.
+///
+/// **This builds and runs**, because that is the only thing that sees it: the
+/// emitted text looked right and `rustc` is what refused it.
+#[test]
+fn a_grammar_entry_in_tail_position_over_a_local_runs() {
+    let dir = a_project(
+        "project-tail-entry",
+        "[package]\nname = \"tail\"\nversion = \"0.1.0\"\n",
+        "grammar Tiny {\n\
+         \x20   rule WS = multispace0 -> { }\n\
+         \x20   pub rule number -> i64 = n:dec[i64](digit+) -> { n }\n\
+         }\n\
+         \n\
+         fn both(text: ref String) -> i64 throws {\n\
+         \x20   let data = text.to_owned()\n\
+         \x20   return Tiny::number(data)\n\
+         }\n\
+         \n\
+         fn main() throws {\n\
+         \x20   println(f\"{both(\\\"42\\\")}\")\n\
+         }\n",
+    );
+
+    let ran = nikaia(&["run"], &dir);
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert!(
+        String::from_utf8_lossy(&ran.stdout).contains("42"),
+        "{}",
+        said(&ran)
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

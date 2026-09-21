@@ -329,3 +329,72 @@ fn a_narrowing_cast_over_a_for_binding_still_aborts() {
         "the check goes around the value and not the view: {rust}"
     );
 }
+
+/// **A `let` that declares the element's type over a `for` binding is refused**
+/// ([ADR-185](../../../docs/specification/adr/adr-185.md) D1, closing
+/// `open-work.md`'s entry for it at 0.0.136).
+///
+/// A `for` lends (D4), so the binding is a **view** and an annotation naming
+/// the element is a type the value does not have. `rustc` said *mismatched
+/// types* with *consider using clone here* — an instruction to insert exactly
+/// the copy [ADR-008](../../../docs/specification/adr/adr-008.md) D5 says is
+/// written and never inserted, about a file nobody wrote.
+///
+/// **A diagnostic and not a lowering**, which is the whole of why it is this
+/// shape: the way out exists and the program can take it, so the compiler knew
+/// both that the annotation was wrong and what to write instead, and said
+/// neither.
+#[test]
+fn a_let_that_declares_a_type_over_a_for_binding_is_refused() {
+    let found = findings(
+        "struct Row { a: i64 }\n\
+         \n\
+         fn main() {\n\
+         \x20   let rows: Vec[Row] = [Row { a: 1 }]\n\
+         \x20   for r in rows {\n\
+         \x20       let copy: Row = r\n\
+         \x20       println(f\"{copy.a}\")\n\
+         \x20   }\n\
+         }\n",
+    );
+    let refused = found
+        .iter()
+        .find(|f| f.code == "NK1183")
+        .unwrap_or_else(|| panic!("{found:#?}"));
+    assert!(
+        refused.message.contains("`r` is a view of a `Row`"),
+        "{refused:#?}"
+    );
+    // **A way out that can be taken** (Part III C.2), and the other answer
+    // named beside it, because which was meant is not this compiler's to know.
+    let help = refused.help.as_deref().unwrap_or("");
+    assert!(
+        help.contains("take the annotation off") && help.contains("to_owned"),
+        "{refused:#?}"
+    );
+}
+
+/// **And the way out works**, which is what makes the refusal one: a view reads
+/// the same, and the numeric half still reads the number through it
+/// ([ADR-182](../../../docs/specification/adr/adr-182.md) D5).
+#[test]
+fn the_way_out_of_that_refusal_runs() {
+    let printed = ran(
+        "the way out of a declared type over a binding",
+        "struct Row { a: i64 }\n\
+         \n\
+         fn main() {\n\
+         \x20   let rows: Vec[Row] = [Row { a: 1 }, Row { a: 2 }]\n\
+         \x20   for r in rows {\n\
+         \x20       let copy = r\n\
+         \x20       println(f\"{copy.a}\")\n\
+         \x20   }\n\
+         \x20   let ns: Vec[i64] = [7]\n\
+         \x20   for n in ns {\n\
+         \x20       let q: i64 = n\n\
+         \x20       println(f\"{q}\")\n\
+         \x20   }\n\
+         }\n",
+    );
+    assert_eq!(printed, "1\n2\n7\n");
+}
