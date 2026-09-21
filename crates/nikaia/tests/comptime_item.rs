@@ -103,9 +103,15 @@ fn a_function_above_the_constant_still_sees_it() {
 /// the word is for ([ADR-073](../../../docs/specification/adr/adr-073.md) D3 —
 /// a `let` may fold, a `comptime` **must**), and a place where it did not fire
 /// would be a place where `comptime` quietly means `let`.
+///
+/// **The example has moved once**, and that is the guard working rather than
+/// failing: `"x".len()` stood here because text at build time did not exist,
+/// and it **folds** since 0.0.113. What still does not is a method this
+/// evaluator does not read — `len` and `push` over a list it holds are the two
+/// it knows, and nothing else.
 #[test]
 fn an_item_that_cannot_fold_is_refused() {
-    let found = findings("comptime BAD = \"x\".len()\n\nfn main() { }\n");
+    let found = findings("comptime BAD = \"x\".to_uppercase()\n\nfn main() { }\n");
     let codes: Vec<&str> = found.iter().map(|f| f.code).collect();
     assert!(
         codes.contains(&"NK1127"),

@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.113] — 2026-09-21
+
+**A build-time text is the value, not the spelling** — 0.0.112's refusal of
+`.len()` over text was a representation showing through, and the owner asked why.
+
+### Fixed
+
+- **`"\u{0041}".len()` is 1 and `"\u{0041}" == "A"` is `true`.** 0.0.112 held text as the source wrote it — escapes and all — and refused both, on the grounds that they ask about the *value* where it held a spelling. That is a true sentence about the representation and not a rule of the language, which is what made it the wrong answer.
+- **The decoder is a reading and not a second definition**, which is the thing that had to be established before writing one. Which escapes exist is not a question this language left open, though no page states it: the parser's `STR_CHAR` takes `\` and **any** character and keeps both, and the emitter writes a `.nika` literal into the generated Rust verbatim — so `rustc` decides, and `println("a\qb")` is *unknown character escape* on the `.nika` line. The escape set **is** the backend's.
+- **And the pair is held to the only standard that settles it.** A decoder that agrees with this compiler's own re-encoder proves nothing, so the test **runs** the program: `comptime BUILT: &str = "a\tb\nc \"q\" \u{0041} \u{20AC}"` against the same literal read at run time, printing `true true` for the text and for the byte length.
+
+### Added
+
+- **Three walls, and a reader is told which one they met.** `NK1127`'s catalogue is right for a shape this evaluator does not read and is the wrong answer everywhere else — it invites somebody to go looking for the spelling that works when there is none. A **method** is not a shape it reads at all (which is why `"a".to_uppercase()` fails, and a `sync` method of the program's own fails the same way); a callee with no entry is `std`'s or a package's, whose body is not this language's to run; a callee the ledger describes but this file does not declare is the files-share-one-namespace limit of a walk that reads one file.
+- **`sync` is the permission and not the ability**, said out loud in the note, because that is the confusion the question started from: [ADR-075](docs/specification/adr/adr-075.md) D1 says a body *may* run while the program is built, never that this compiler can run it.
+- **The way out belongs to the wall.** *Put the work in a function of this file* is right for a callee in another file and is a trap for a `std` method, which would be just as unreadable one function further in. Each wall carries its own, and the universal `let` escape names the binding as the generic refusal always did.
+
+### Found
+
+- **Three tests used a text operation as their example of *cannot fold*, and all three had to move.** `comptime GREET = "hallo"` at 0.0.112, then `"x".len()` and `"abc".len()` here. That is the guards working rather than failing: a test that records an absence is the thing that notices when the absence ends, and each moved to a method this evaluator still does not read.
+- **`open-work.md` §2.43: the escape set is Rust's and no page says so.** The set itself is fine — borrowing the backend's escapes is the same choice Part I 2.2 makes about numbers. What is a defect is what an *unknown* one is told: a Nikaia program is sent to the Rust reference to find out what it may write, which is [C.2](docs/specification/30-nikaia-tooling.md)'s *in the compiler's own words* not met. Writing the set down is the owner's sentence, since *which escapes this language has* is a decision even where the answer is *the backend's*.
+
 ## [0.0.112] — 2026-09-21
 
 **Text while the program is built** — the thing `NK1127`'s own note had been

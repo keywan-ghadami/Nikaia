@@ -8043,7 +8043,12 @@ impl<'a> Checker<'a> {
     /// first one said again with less in it. The caller keeps `NK1127` for the
     /// case it is about: a shape this evaluator does not read, which nothing
     /// else has a sentence for.
-    fn build_time_value(&mut self, value: &Expr, span: &Span) -> (Option<build_time::Value>, bool) {
+    fn build_time_value(
+        &mut self,
+        value: &Expr,
+        bound: &str,
+        span: &Span,
+    ) -> (Option<build_time::Value>, bool) {
         let outcome = {
             // A name outside the body: a `comptime` already evaluated, or a
             // `let` whose value folded. Integers only, because that is what
@@ -8070,7 +8075,57 @@ impl<'a> Checker<'a> {
                 self.a_build_time_index_is_not_there(at, len, span);
                 (None, true)
             }
+            Err(build_time::Refusal::NotHere { what, why, way_out }) => {
+                self.a_build_time_body_that_is_not_here(bound, &what, why, way_out, span);
+                (None, true)
+            }
         }
+    }
+
+    /// **`NK1127`, with the wall it met named** rather than a catalogue of what
+    /// does work.
+    ///
+    /// The generic note is right for a shape this evaluator does not read —
+    /// the reader wants to know what it *does* read. It is the wrong answer for
+    /// `"a".to_uppercase()`, where the shape is understood and the body is
+    /// Rust: no amount of rewriting the line helps, and a list of working forms
+    /// invites the reader to go looking for the one that does.
+    ///
+    /// **Three walls, three sentences.** `std`'s body is not this language's; a
+    /// function in another file of this program is not in the file this walk
+    /// reads; a method is not a shape it reads at all. Each ends somewhere
+    /// different, and only the last is the catalogue's business.
+    fn a_build_time_body_that_is_not_here(
+        &mut self,
+        bound: &str,
+        what: &str,
+        why: &str,
+        way_out: &str,
+        span: &Span,
+    ) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1127",
+            // **The binding's name and not the callee's**, which is the same
+            // sentence the generic `NK1127` writes: one code, one headline, and
+            // the reader's own name in it. What it met is the note's.
+            message: format!("this compiler cannot evaluate `{bound}` while it builds"),
+            // **One note, written per wall.** The sentence about `sync` belongs
+            // to the three walls that are about a **body** and not to the one
+            // about text, so it lives in each `why` rather than under all of
+            // them — a note that does not apply is one the reader has to rule
+            // out.
+            notes: vec![format!("`{what}`: {why} (Part II, 10.2)")],
+            // **The wall's way out, and then the one every `comptime` has.**
+            // The second half is the generic refusal's own sentence, with the
+            // reader's name in it: a value meant to be computed while the
+            // program runs was never a constant (ADR-073 D3).
+            help: Some(format!(
+                "{way_out}. Or write `let {bound} = …`, where the value is meant to be \
+                 computed while the program runs"
+            )),
+        });
     }
 
     /// **`NK1165`: a build-time index the array does not have.**
@@ -9759,7 +9814,7 @@ impl<'a> Checker<'a> {
         // not ask and does not need to.
         let (evaluated, said) = match &folded {
             Some(folded) => (Some(build_time::Value::Int(folded.value)), false),
-            None => self.build_time_value(value, span),
+            None => self.build_time_value(value, &bound, span),
         };
         // Counted rather than returned, so that every refusal below - the
         // crossing's, the ordinary mismatch's, and whatever `constant_fits`
@@ -9855,11 +9910,13 @@ impl<'a> Checker<'a> {
             Some(build_time::Value::Int(value)) => Some(value.to_string()),
             Some(build_time::Value::Bool(yes)) => Some(yes.to_string()),
             Some(build_time::Value::List(items)) => rust_array_value(items),
-            // **As the source wrote it.** The value holds the written form
-            // precisely so that this is the same text the same literal would
-            // have produced at run time — the emitter passes a `.nika` string's
-            // escapes through into the Rust literal unchanged, and so does this.
-            Some(build_time::Value::Text(text)) => Some(format!("\"{text}\"")),
+            // **The value, spelled as a literal `rustc` reads.** The pair with
+            // `build_time::decoded` is what makes a `comptime` text the same
+            // bytes the same literal produces at run time, and the test that
+            // says so prints both.
+            Some(build_time::Value::Text(text)) => {
+                Some(format!("\"{}\"", build_time::written(text)))
+            }
             None => None,
         };
         match (&below, &written) {
@@ -9883,9 +9940,9 @@ impl<'a> Checker<'a> {
                         .to_string(),
                     "what it evaluates today is an integer, a `bool`, **text** or a \
                          **list** - a literal, `f\"… {n} …\"`, arithmetic and \
-                         comparisons over literals and over other constants, `+` over \
-                         two texts, an `if`, a **call** to a function of this program \
-                         whose body is made of those, a `for` over a range or a `while` \
+                         comparisons over literals and over other constants, `+`, `==` and \
+                         `.len()` over text, an `if`, a **call** to a function declared **in this \
+                         file** whose body is made of those, a `for` over a range or a `while` \
                          inside such a body, and `xs[i]`, `xs[i] = …`, `xs.push(…)` and \
                          `xs.len()` over a list it holds (ADR-073 D5's second stage). \
                          What a build-time value owns, the program gets a view of: a \

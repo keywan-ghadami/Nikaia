@@ -64,10 +64,10 @@ enum Flow {
 
 /// What a build-time expression came to.
 ///
-/// Three kinds, which is what the declaration can carry: Rust's `const` needs a
+/// Four kinds, which is what the declaration can carry: Rust's `const` needs a
 /// type this compiler can spell
 /// ([ADR-073](../../../docs/specification/adr/adr-073.md) D5) — an integer, a
-/// `bool`, and now an **array of them**.
+/// `bool`, a **list** of them, and **text**.
 ///
 /// **The array is the aggregate `open-work.md` §2.8 was about**, and it is an
 /// array rather than a `Vec` for the reason that entry gives from the other
@@ -86,19 +86,22 @@ pub enum Value {
     Bool(bool),
     /// A fixed-length list, every element already a value.
     List(Vec<Value>),
-    /// Text, **as the source wrote it** — escapes and all.
+    /// Text, **decoded** — the value, not the spelling.
     ///
-    /// The parser keeps a string's escapes rather than decoding them, and the
-    /// emitter passes them through into the Rust literal unchanged, because
-    /// this language's escapes are that one's. Holding the written form is
-    /// therefore the shape that agrees with the lowering: what a `comptime`
-    /// writes down is the same text the same literal would have produced at
-    /// run time, character for character.
+    /// 0.0.112 held the written form instead, escapes and all, because the
+    /// parser keeps them and the emitter hands them to `rustc` verbatim. That
+    /// agreed with the lowering and cost every question about the *value*:
+    /// `"\u{0041}"` and `"A"` are one value and two spellings, so `.len()` and
+    /// `==` were refused rather than answered wrongly.
     ///
-    /// **What it costs is every question about the value rather than the
-    /// text.** `"\u{0041}"` and `"A"` are one value and two written forms, so
-    /// `==` and `.len()` over text are refused here rather than answered
-    /// wrongly — a decoder is what they want, and nothing has asked for one.
+    /// **The refusal was a representation showing through, and the fix is a
+    /// decoder.** Which escapes exist is not a question this language has left
+    /// open, though no page states it: the parser takes `\` and any character
+    /// and hands the literal to the backend unchanged, so `rustc` is what
+    /// accepts or rejects it — measured, `"a\qb"` is *unknown character
+    /// escape* on the `.nika` line. This language's escapes **are** that one's,
+    /// so [`decoded`] is a faithful reading rather than an invention, and
+    /// [`written`] puts it back.
     Text(String),
 }
 
@@ -119,6 +122,25 @@ pub enum Refusal {
     },
     /// The call depth above.
     TooDeep { callee: String },
+    /// **Understood, and not something this evaluator can do here.**
+    ///
+    /// A third thing, between the two above: `NotAllowed` is *the rule says
+    /// no*, `Unevaluable` is *this shape is not read*, and this is *the shape
+    /// is read and the thing it needs is somewhere this walk cannot reach*.
+    /// It exists because the three want different sentences — a reader who
+    /// calls `"a".to_uppercase()` is owed *its body is Rust* rather than a
+    /// catalogue of what does work, since no amount of rewriting the line will
+    /// help.
+    NotHere {
+        what: String,
+        why: &'static str,
+        /// **The way out belongs to the wall.** *Put the work in a function of
+        /// this file* is right for a callee in another file and is a trap for
+        /// `"a".to_uppercase()`: the method would be just as unreadable one
+        /// function further in. [Part III C.2](../../../docs/specification/30-nikaia-tooling.md)
+        /// asks for a way out, and one that cannot be taken is not one.
+        way_out: &'static str,
+    },
     /// An index this array does not have. **Understood and wrong**, like
     /// `NotAllowed` and unlike `Unevaluable`: the program says `xs[7]` of five
     /// elements, and a build that answered *cannot evaluate* would send the
@@ -160,7 +182,7 @@ impl<'a> BuildTime<'a> {
         match expr {
             Expr::LitInt(value) => Ok(Value::Int(*value as i128)),
             Expr::LitBool(value) => Ok(Value::Bool(*value)),
-            Expr::LitStr(text) => Ok(Value::Text(text.clone())),
+            Expr::LitStr(text) => decoded(text).map(Value::Text).ok_or(Refusal::Unevaluable),
             // **`f"…"` is text with code in it** (ADR-035), and the code is
             // Nikaia, so this evaluator can read it — which is what makes text
             // at build time worth having at all. A literal alone would be a
@@ -240,9 +262,33 @@ impl<'a> BuildTime<'a> {
             } if args.is_empty() && config.is_empty() && self.parsed.text(*method) == "len" => {
                 match self.expr(receiver, frame)? {
                     Value::List(items) => Ok(Value::Int(items.len() as i128)),
+                    // **Bytes, which is what `String::len` says it is.** Text
+                    // is UTF-8 and a character outside ASCII is more than one
+                    // byte; `chars().count()` is the other question and `std`
+                    // spells it out. The value is decoded, so this is the
+                    // number the program would have counted itself.
+                    Value::Text(text) => Ok(Value::Int(text.len() as i128)),
                     _ => Err(Refusal::Unevaluable),
                 }
             }
+            // **A method is not a shape this evaluator reads**, and the two it
+            // does read above - `len` and `push` over a list it holds - are
+            // forms it knows itself rather than entries it resolved. Said out
+            // loud, because a `sync` method of this program's own looks exactly
+            // like something that should work: `sync` is the **permission**
+            // ([ADR-075](../../../docs/specification/adr/adr-075.md) D1) and a
+            // body this walk can read is the **ability**, and they are two
+            // different things.
+            Expr::MethodCall { method, .. } => Err(Refusal::NotHere {
+                what: format!(".{}()", self.parsed.text(*method)),
+                why: "a method is not a shape this evaluator reads. What it reads is a \
+                      call to a function declared in this file, and `len` and `push` \
+                      over a list it already holds. A `comptime` runs what this compiler can read the body of, and `sync` says a body *may* run while the program is built (ADR-075 D1) rather than that this compiler can run it",
+                // **Not *move it into a function***, which is the trap: the
+                // method would be just as unreadable one function further in.
+                way_out: "write what it does with arithmetic, an `if`, a `for` and a \
+                          call to a function of this file",
+            }),
             Expr::Call { func, args, config } if config.is_empty() => {
                 let Expr::Variable(name) = func.as_ref() else {
                     return Err(Refusal::Unevaluable);
@@ -315,6 +361,11 @@ impl<'a> BuildTime<'a> {
             // written form — see [`Value::Text`].
             (Value::Text(a), Value::Text(b)) => match op {
                 BinaryOp::Add => Ok(Value::Text(format!("{a}{b}"))),
+                // A comparison of **values**, which is what a decoded text
+                // makes answerable: `"\u{0041}" == "A"` is `true` here and at
+                // run time, and was refused while this held spellings.
+                BinaryOp::Eq => Ok(Value::Bool(a == b)),
+                BinaryOp::Ne => Ok(Value::Bool(a != b)),
                 _ => Err(Refusal::Unevaluable),
             },
             (Value::Bool(a), Value::Bool(b)) => match op {
@@ -358,19 +409,56 @@ impl<'a> BuildTime<'a> {
             values.push(self.expr(&expr, frame)?);
         }
 
-        let mut out = String::with_capacity(format.len());
+        // **The literal parts are still *written*.** `interpolation` splits
+        // the text and does not decode it — a `\` and the character after it
+        // are copied through, `\u{…}` braces included — so a chunk is read by
+        // [`decoded`] exactly as a plain literal is, and a hole's value is
+        // already decoded.
+        let mut out = String::new();
+        let mut chunk = String::new();
         let mut taken = values.into_iter();
         let mut chars = format.chars().peekable();
+        let flush = |chunk: &mut String, out: &mut String| -> Result<(), Refusal> {
+            if !chunk.is_empty() {
+                out.push_str(&decoded(chunk).ok_or(Refusal::Unevaluable)?);
+                chunk.clear();
+            }
+            Ok(())
+        };
         while let Some(c) = chars.next() {
             match c {
+                // An escape is two characters and the chunk keeps both, so
+                // that `decoded` sees what the source wrote.
+                '\\' => {
+                    chunk.push('\\');
+                    match chars.next() {
+                        Some(escape) => {
+                            chunk.push(escape);
+                            // `\u{…}` carries its braces, and they are not the
+                            // format's — `interpolation` copies them through
+                            // for exactly this reason.
+                            if escape == 'u' && chars.peek() == Some(&'{') {
+                                for c in chars.by_ref() {
+                                    chunk.push(c);
+                                    if c == '}' {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        None => return Err(Refusal::Unevaluable),
+                    }
+                }
                 // `{{` and `}}` are how a format string spells one brace, and
-                // a written literal spells it with one.
+                // text spells it with one.
                 '{' if chars.peek() == Some(&'{') => {
                     chars.next();
+                    flush(&mut chunk, &mut out)?;
                     out.push('{');
                 }
                 '}' if chars.peek() == Some(&'}') => {
                     chars.next();
+                    flush(&mut chunk, &mut out)?;
                     out.push('}');
                 }
                 '{' => {
@@ -379,6 +467,7 @@ impl<'a> BuildTime<'a> {
                     if chars.next() != Some('}') {
                         return Err(Refusal::Unevaluable);
                     }
+                    flush(&mut chunk, &mut out)?;
                     match taken.next() {
                         Some(Value::Int(n)) => out.push_str(&n.to_string()),
                         Some(Value::Bool(yes)) => out.push_str(&yes.to_string()),
@@ -386,9 +475,10 @@ impl<'a> BuildTime<'a> {
                         _ => return Err(Refusal::Unevaluable),
                     }
                 }
-                c => out.push(c),
+                c => chunk.push(c),
             }
         }
+        flush(&mut chunk, &mut out)?;
         Ok(Value::Text(out))
     }
 
@@ -406,11 +496,22 @@ impl<'a> BuildTime<'a> {
             });
         }
         let Some(contract) = self.own.functions.get(name) else {
-            // A callee this unit does not declare — `std`, a package — is not
-            // refused, it is unevaluable: there is no body here to run, and
-            // saying *you may not* about a function whose body is somewhere
-            // else would be a claim this cannot make.
-            return Err(Refusal::Unevaluable);
+            // A callee this program does not declare — `std`, a package. Not
+            // *you may not*, which would be a claim about somebody else's
+            // body; **there is no body here to run**, and for `std` there
+            // never will be, because half of it is Rust
+            // ([ADR-014](../../../docs/specification/adr/adr-014.md)).
+            //
+            // Reimplementing one here is the thing `open-work.md` §2.9 argues
+            // against one construct over: two implementations of one meaning
+            // is a promise that becomes a hope.
+            return Err(Refusal::NotHere {
+                what: name.to_string(),
+                why: "its body is not this language's to run - `std` is half Rust \
+                      (ADR-014) and a package's body is compiled beside this build \
+                      rather than read by it. A `comptime` runs what this compiler can read the body of, and `sync` says a body *may* run while the program is built (ADR-075 D1) rather than that this compiler can run it",
+                way_out: "write the work in Nikaia, in this file, and call that",
+            });
         };
         if !contract.sync.is_sync() {
             return Err(Refusal::NotAllowed {
@@ -433,7 +534,22 @@ impl<'a> BuildTime<'a> {
             });
         }
         let Some((args, body)) = self.body_of(name) else {
-            return Err(Refusal::Unevaluable);
+            // **The ledger describes it and this file does not declare it.**
+            // The files of a package share one namespace (Part I 9.1), and this
+            // evaluator reads the one file it was handed — so a `comptime`
+            // calling across a file boundary is a limit of this walk rather
+            // than of the language. `open-work.md` carries it with the hazard
+            // that makes it more than plumbing.
+            //
+            // It is also where a **method** would land if one got this far, and
+            // none does: a method is refused at the expression above.
+            return Err(Refusal::NotHere {
+                what: name.to_string(),
+                why: "this file does not declare it. The files of a package share one \
+                      namespace (Part I 9.1), and a build-time body is read from the \
+                      file it stands in. A `comptime` runs what this compiler can read the body of, and `sync` says a body *may* run while the program is built (ADR-075 D1) rather than that this compiler can run it",
+                way_out: "move it into this file",
+            });
         };
         if args.len() != given.len() {
             return Err(Refusal::Unevaluable);
@@ -722,6 +838,89 @@ fn element<'v>(on: &'v Value, at: &Value) -> Result<&'v Value, Refusal> {
             at: *at,
             len: items.len(),
         })
+}
+
+/// **What a written string literal means** — the value behind the spelling.
+///
+/// The parser keeps a literal's escapes (`STR_CHAR` takes `\` and any
+/// character) and the emitter hands the text to `rustc` unchanged, so **this
+/// language's escapes are Rust's**, decided by what that compiler accepts
+/// rather than by a page here. Measured: `println("a\qb")` is *unknown
+/// character escape: `q`* — on the `.nika` line, which is
+/// [ADR-012](../../../docs/specification/adr/adr-012.md)'s source map working,
+/// and in `rustc`'s vocabulary, which is `open-work.md`'s.
+///
+/// So this is a **faithful reading** and not a second definition. `None` where
+/// the escape is one `rustc` would reject: that program does not compile either
+/// way, and the evaluator says *cannot evaluate* rather than inventing a
+/// meaning for it.
+///
+/// [`written`] is the inverse, and `crates/nikaia/tests/build_time.rs` holds
+/// the pair to the only standard that settles it: the same literal, read at
+/// build time and at run time, printing the same bytes.
+pub fn decoded(literal: &str) -> Option<String> {
+    let mut out = String::with_capacity(literal.len());
+    let mut chars = literal.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next()? {
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            't' => out.push('\t'),
+            '0' => out.push('\0'),
+            '\\' => out.push('\\'),
+            '\'' => out.push('\''),
+            '"' => out.push('"'),
+            // `\x41`, which Rust limits to the ASCII range inside a string.
+            'x' => {
+                let digits: String = [chars.next()?, chars.next()?].into_iter().collect();
+                let byte = u8::from_str_radix(&digits, 16).ok()?;
+                out.push(char::from_u32(u32::from(byte)).filter(|c| c.is_ascii())?);
+            }
+            // `\u{…}`, up to six digits.
+            'u' => {
+                if chars.next()? != '{' {
+                    return None;
+                }
+                let mut digits = String::new();
+                loop {
+                    match chars.next()? {
+                        '}' => break,
+                        digit => digits.push(digit),
+                    }
+                }
+                out.push(char::from_u32(u32::from_str_radix(&digits, 16).ok()?)?);
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// The inverse of [`decoded`]: a value, spelled as a literal `rustc` reads.
+///
+/// **Total rather than minimal.** Every control character is written as an
+/// escape rather than passed through, because a literal is going into a
+/// generated file that a person may open: a bell in the middle of a `const` is
+/// the sort of thing that makes a reader doubt the file rather than the value.
+pub fn written(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c if c.is_control() => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Whether a touch is the build's own parameters

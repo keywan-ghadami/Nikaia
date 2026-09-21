@@ -11,6 +11,8 @@
 //! Q4, and three records have been waiting on this since
 //! (`docs/open-work.md` §2.9).
 
+mod common;
+
 use nikaia::contracts::{Ledger, STD};
 use nikaia::emit::{emit_program, Build};
 use nikaia::parser::parse_to_ast;
@@ -20,6 +22,32 @@ fn findings(source: &str) -> Vec<nikaia::check::Finding> {
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's ledger");
     nikaia::check::check(&parsed, &own, &library).findings
+}
+
+/// Compile the lowering as a binary, run it, hand back what it printed.
+///
+/// **Some questions only a run answers.** A decoder that agrees with this
+/// compiler's own re-encoder proves nothing; what settles it is the backend
+/// reading the same literal and printing the same bytes.
+fn ran(purpose: &str, source: &str) -> String {
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    let dir = common::scratch_dir(purpose);
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    assert!(
+        out.status.success(),
+        "the lowering of {purpose} does not compile:\n{}\n--- the Rust ---\n{rust}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("the program runs");
+    let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
+    let _ = std::fs::remove_dir_all(&dir);
+    printed
 }
 
 fn lowered(source: &str) -> String {
@@ -667,20 +695,56 @@ fn a_constant_declared_a_string_is_sent_to_the_view() {
     );
 }
 
-/// **What the written form cannot answer is refused rather than answered
-/// wrongly.** `"\u{0041}"` and `"A"` are one value and two written forms, so a
-/// comparison and a length over text want a decoder — and nothing has asked
-/// for one, so they are shapes this evaluator does not read.
+/// **A question about the value is answered**, which 0.0.112 refused and
+/// 0.0.113 does not.
+///
+/// That refusal was a *representation* showing through: text was held as the
+/// source wrote it, so `"\u{0041}"` was six characters and `== "A"` was
+/// unanswerable. Which escapes exist is not a question this language left open,
+/// though no page states it — the parser takes `\` and any character and hands
+/// the literal to the backend, so `rustc` decides, and `"a\qb"` is *unknown
+/// character escape* on the `.nika` line. So a decoder is a faithful reading.
 #[test]
-fn a_question_about_the_value_rather_than_the_text_is_not_answered() {
-    for source in [
-        "comptime SAME: bool = \"a\" == \"a\"\nfn main() { println(f\"{SAME}\") }\n",
-        "comptime N: i64 = \"abc\".len()\nfn main() { println(f\"{N}\") }\n",
-    ] {
-        let found = findings(source);
-        assert!(
-            found.iter().any(|f| f.code == "NK1127"),
-            "not answered from the written form: {found:#?}"
-        );
-    }
+fn a_question_about_the_value_is_answered() {
+    let source = "comptime SAME: bool = \"\\u{0041}\" == \"A\"\n\
+                  comptime N: i64 = \"\\u{0041}\".len()\n\
+                  fn main() { println(f\"{SAME} {N}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(rust.contains("const SAME: bool = true;"), "{rust}");
+    assert!(
+        rust.contains("const N: i64 = 1;"),
+        "one character, not six:\n{rust}"
+    );
+}
+
+/// **The pair is held to the only standard that settles it**: the same literal,
+/// read while the program is built and while it runs, is the same bytes.
+///
+/// A decoder and its inverse are two implementations of one meaning, which is
+/// the hazard [`open-work.md`](../../../docs/open-work.md) §2.9 argues about one
+/// construct over. What makes this one safe is not care, it is this test — and
+/// it **runs** the program, because a decoder that agrees with itself proves
+/// nothing.
+#[test]
+fn the_build_and_the_run_read_a_literal_the_same_way() {
+    let printed = ran(
+        "the decoder against the backend",
+        "comptime BUILT: &str = \"a\\tb\\nc \\\"q\\\" \\u{0041} \\u{20AC}\"\n\
+         comptime BUILT_LEN: i64 = \"a\\tb\\nc \\\"q\\\" \\u{0041} \\u{20AC}\".len()\n\
+         fn main() {\n\
+         \x20   let at_run_time = \"a\\tb\\nc \\\"q\\\" \\u{0041} \\u{20AC}\"\n\
+         \x20   println(f\"{BUILT == at_run_time} {BUILT_LEN == at_run_time.len()}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "true true");
+}
+
+/// An escape `rustc` would reject is not given a meaning here either: the
+/// program does not compile whichever stage reads it, and this says *cannot
+/// evaluate* rather than inventing one.
+#[test]
+fn an_escape_the_backend_rejects_is_not_invented_here() {
+    let found = findings("comptime X: &str = \"a\\qb\"\nfn main() { println(X) }\n");
+    assert!(found.iter().any(|f| f.code == "NK1127"), "{found:#?}");
 }

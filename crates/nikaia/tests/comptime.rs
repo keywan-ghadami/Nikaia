@@ -115,10 +115,14 @@ fn a_program_with_comptime_bindings_compiles_and_prints_them() {
 /// **This test used to hold `comptime GREET = "hallo"`**, because text at build
 /// time did not exist and a refusal was the whole of what a string literal got.
 /// It does exist now ([ADR-079](../../../docs/specification/adr/adr-079.md) D1,
-/// 0.0.112), so the example moved to one that still cannot fold and stayed in
-/// the same family on purpose: `.to_uppercase()` is a question about the
-/// **value** where this evaluator holds the text as the source wrote it, and
-/// answering it would want a decoder nobody has asked for.
+/// 0.0.112), so the example moved to one that still cannot fold.
+///
+/// **And the reason 0.0.112 gave for it was wrong**, which 0.0.113 corrects
+/// twice over. `.to_uppercase()` is not refused because a question about the
+/// *value* cannot be answered — it never gets that far, and that question is
+/// answered now anyway, because text is **decoded**. A **method** is not a
+/// shape this evaluator reads at all: what it reads is a call to a function
+/// declared in this file, plus `len` and `push` over a list it already holds.
 #[test]
 fn a_comptime_binding_this_compiler_cannot_evaluate_is_refused_by_name() {
     let found =
@@ -169,4 +173,54 @@ fn a_comptime_binding_cannot_be_mutable() {
 fn a_comptime_binding_over_text_folds() {
     let rust = lower("fn main() { comptime GREET = \"hallo\" println(f\"{GREET}\") }");
     assert!(rust.contains("const GREET: &str = \"hallo\";"), "{rust}");
+}
+
+/// **Three walls, and a reader is told which one they met** (0.0.113). The
+/// generic catalogue is right for a shape this evaluator does not read and is
+/// the wrong answer everywhere else — it invites somebody to go looking for the
+/// spelling that works when there is none.
+#[test]
+fn a_comptime_says_which_wall_it_met() {
+    // `std`'s body is Rust, and moving the call does not help.
+    let method = findings("comptime X = \"a\".to_uppercase()\nfn main() { println(X) }");
+    let said = method.iter().find(|f| f.code == "NK1127").expect("NK1127");
+    assert!(
+        said.message.contains("cannot evaluate `X`"),
+        "the headline is the binding's, as the generic one is: {}",
+        said.message
+    );
+    assert!(
+        said.notes[0].contains("`.to_uppercase()`")
+            && said.notes[0].contains("a method is not a shape this evaluator reads"),
+        "the note names what it met and which wall: {:#?}",
+        said.notes
+    );
+    assert!(
+        said.help.as_deref().is_some_and(
+            |h| h.contains("call to a function of this file") && h.contains("`let X = …`")
+        ),
+        "the wall's way out, and the one every `comptime` has: {:?}",
+        said.help
+    );
+    // **`sync` is the permission and not the ability**, which is the confusion
+    // this sentence exists to end.
+    assert!(
+        said.notes[0].contains("`sync` says a body *may* run"),
+        "{:#?}",
+        said.notes
+    );
+
+    // And a callee in another file of the same program is the third: the files
+    // of a package share one namespace (Part I 9.1) and this walk reads one
+    // file, which is a limit of the walk rather than of the language.
+    let elsewhere = findings("comptime N = doubled(21)\nfn main() { println(f\"{N}\") }");
+    let said = elsewhere
+        .iter()
+        .find(|f| f.code == "NK1127")
+        .expect("NK1127");
+    assert!(
+        said.notes[0].contains("`doubled`"),
+        "it names the callee: {:#?}",
+        said.notes
+    );
 }

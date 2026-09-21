@@ -496,10 +496,9 @@ by name.
 `const BANNER: &str = "nikaia 0.1";`. The same crossing one type over — a
 `String` arrives as a `&str` ([ADR-079](specification/adr/adr-079.md) D1), which
 is the spelling Part I 2.2 already gives text, so nothing had to be invented for
-it. The value is held **as the source wrote it**, escapes and all, so a literal
-produces the same bytes at either stage; what that costs is `==` and `.len()`
-over text, which are questions about the value rather than the written form and
-are refused rather than answered wrongly.
+it. The value is **decoded**, so `"\u{0041}".len()` is 1 and `== "A"` is true;
+0.0.112 held the written form and refused both, which was a representation
+showing through rather than a rule.
 
 *Why it is work and not a question:* two records decided what may happen, and
 one of them now can.
@@ -533,6 +532,37 @@ below, *running a grammar while the program is built*.
 
 *What it does **not** include:* running a **grammar**. That looks like the same
 job and is not; it is the next entry's, and the reason is there.
+
+### 2.43. The escape set is Rust's, and no page says so
+
+*Measured at 0.0.113*, while building a decoder for build-time text. The
+parser's `STR_CHAR` takes `\` and **any** character and keeps both; the emitter
+writes a `.nika` string literal into the generated Rust verbatim. So what a
+`\` means is decided by `rustc`, and this language's escape set is that one's —
+`\n \r \t \0 \\ \' \" \xNN \u{…}` — with no page of the specification
+saying it.
+
+*Two things follow, and only the second is a defect.*
+
+**The set itself is fine.** Borrowing the backend's escapes is the same choice
+Part I 2.2 makes about numbers, and writing them down is describing rather than
+deciding. It is [`build_time::decoded`](../crates/nikaia/src/build_time.rs)'s
+whole justification, and a test runs a program to hold the two readings
+together.
+
+**What an unknown escape is told is not.** `println("a\qb")` is refused on the
+right line — [ADR-012](specification/adr/adr-012.md)'s source map — in `rustc`'s
+vocabulary, ending *for more information, visit
+doc.rust-lang.org/reference/tokens.html#literals*. A Nikaia program is sent to
+the Rust reference to find out what it may write, which is
+[Part III C.2](specification/30-nikaia-tooling.md)'s *in the compiler's own
+words* not met. A parser-level refusal naming the set is what it wants, and
+that needs the set written down first.
+
+*What it needs:* the set in Part I 2.5 beside the literal it belongs to, then a
+refusal in this compiler's words. The first half is the owner's sentence, since
+*which escapes this language has* is a decision even where the answer is
+*Rust's*.
 
 ### 2.9. Running a grammar while the program is built is not interpretation
 
