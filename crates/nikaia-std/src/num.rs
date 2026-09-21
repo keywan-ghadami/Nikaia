@@ -99,9 +99,81 @@ pub fn to_isize(value: f64) -> isize {
     to_int(value)
 }
 
+/// **What a cast's operand is, where it arrived as a view**
+/// ([ADR-182](../../../docs/specification/adr/adr-182.md) D1).
+///
+/// A `for` lends ([ADR-094](../../../docs/specification/adr/adr-094.md) D4), so
+/// `for n in NS` binds a **view** of each element — which is right, and is what
+/// lets the loop read without copying. Rust's `as` does not see through one:
+/// `casting &i32 as i64 is invalid`, about a noun the program does not contain,
+/// which is [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s
+/// class.
+///
+/// **Why a trait and not a `*`.** The same reason [`crate::index::At`] is one:
+/// a `*` is right for the binding and wrong for a name that shadows it one line
+/// down, and this emitter has no types to tell the two apart with
+/// ([ADR-028](../../../docs/specification/adr/adr-028.md)). Choosing on the
+/// type is what a trait is, and for a number that is already a number this is
+/// the **identity** — so the rule can be applied wherever the name could be a
+/// lent binding without ever being applied to the wrong operand.
+pub trait Value {
+    /// The number itself, however many views it arrived behind.
+    type Out;
+    fn value(self) -> Self::Out;
+}
+
+macro_rules! itself {
+    ($($t:ty),*) => {
+        $(
+            impl Value for $t {
+                type Out = $t;
+                #[inline]
+                fn value(self) -> $t {
+                    self
+                }
+            }
+        )*
+    };
+}
+
+itself!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64, bool, char);
+
+/// **A view of one answers what it points at**, through any number of them:
+/// `&&i32` is what a lent binding over a container of views is.
+///
+/// No overlap with the impls above, because `&T` is not any of them - which is
+/// the same shape [`crate::index::At`]'s own `&T` impl has.
+impl<T: Value + Copy> Value for &T {
+    type Out = T::Out;
+    #[inline]
+    fn value(self) -> T::Out {
+        (*self).value()
+    }
+}
+
+/// The emitted spelling: `nikaia_std::num::value(n) as i64`.
+#[inline]
+pub fn value<T: Value>(operand: T) -> T::Out {
+    operand.value()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A cast's operand reaches the number through any number of views**,
+    /// which is what `for n in NS { n as i64 }` needs: the binding is a `&i32`
+    /// and `as` does not see through one.
+    #[test]
+    fn a_view_of_a_number_answers_the_number() {
+        let n: i32 = 7;
+        assert_eq!(value(n), 7i32);
+        assert_eq!(value(&n), 7i32);
+        assert_eq!(value(&&n), 7i32);
+        assert_eq!(value(&1.5f64) as i64, 1);
+        assert_eq!(value(&'a') as u32, 97);
+        assert!(value(&true));
+    }
 
     #[test]
     fn a_value_that_fits_comes_through() {

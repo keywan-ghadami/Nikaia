@@ -68,7 +68,7 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Four entries are open.**
+**Four entries are open.** §1.3 and §1.4 closed at 0.0.131 and §1.6 opened with them; the two closed numbers stay where they were, because this file is cited by number.
 
 ### 1.1. A grammar's entry does not say what it keeps
 
@@ -157,64 +157,6 @@ describes, or a type. Three of those four are already written down somewhere;
 what is missing is one walk that asks them in order and a sentence for the case
 where none of them answers — the same shape `NK1117` has one segment down.
 
-### 1.3. A cast over a `for` binding is a cast over a view
-
-*Reproduction:*
-
-```nika
-comptime NS: Array[i32, 3] = [1, 2, 3]
-
-fn main() {
-    let mut sum: i64 = 0
-    for n in NS { sum = sum + (n as i64) }
-    println(f"{sum}")
-}
-```
-
-`rustc` refuses the **generated file** — relayed onto the `.nika` line, so it
-reads *casting `&i32` as `i64` is invalid* — which is
-[Part III C.1](specification/30-nikaia-tooling.md)'s class: the noun `&i32` is
-not in the program.
-
-*It is the binding and not the cast.* `for` over a sequence binds a **view** of
-each element, which is right and is what lets the loop read without copying; the
-cast then stands over the view rather than over the number. The same cast on a
-named `let` compiles, and so does the same loop without a cast.
-
-*What it needs:* the lowering writing `*n` where a cast's operand is a loop
-binding over a sequence — the emitter already knows which bindings those are
-(`lent_lets` is the neighbouring fact), so this is a question of asking at the
-cast rather than of new analysis. **The corpus does not write the shape** —
-`tests/examples.rs` runs every runnable example and is green — which is why it
-is here and not fixed.
-
-### 1.4. A slice of text read as a value does not lower
-
-*Reproduction:*
-
-```nika
-fn main() {
-    let text = "hello"
-    println(f"{text[1..3]}")
-}
-```
-
-`rustc` refuses the generated file with *the size for values of type `str`
-cannot be known at compilation time*. The lowering writes `(*index::get(&text,
-index::at(1..=3)))`, and the `*` that every bracket read carries
-([ADR-161](specification/adr/adr-161.md) D6) dereferences to `str`, which is
-unsized.
-
-*The `&` form is fine*, which is what keeps this small and is what every program
-in the corpus writes: `let part = &text[1..3]` compiles and runs, and
-`examples/k-nucleotide.nika`'s `&dna[i..<i + k]` is the shape `index.rs` was
-built around.
-So the defect is the **bare** slice in value position.
-
-*What it needs:* the read wrapper knowing that a slice of text is already a
-view — the same distinction `Found` draws for a map one arm over, where the `*`
-is what takes the option apart. A slice needs no `*` at all.
-
 ### 1.5. A grammar entry in tail position over a local that owns its input
 
 **Found by [ADR-173](specification/adr/adr-173.md)'s own test**, which is the
@@ -253,6 +195,51 @@ why the corpus is green.
 at the `;`, ahead of the local. `ARM_VALUE`'s trick one construct over
 ([ADR-164](specification/adr/adr-164.md) D1) is the same idea for the same kind
 of reason.
+
+### 1.6. A `let` that declares a **type** over a `for` binding
+
+**Found by closing §1.3**, and it is the same root one annotation over: a `for`
+lends ([ADR-094](specification/adr/adr-094.md) D4), so the binding is a view of
+the element and an annotation that names the element is a type the value does
+not have.
+
+*Reproduction:*
+
+```nika
+struct Row { a: i64 }
+
+fn main() {
+    let rows: Vec[Row] = [Row { a: 1 }]
+    for r in rows {
+        let copy: Row = r
+        println(f"{copy.a}")
+    }
+}
+```
+
+`rustc` refuses the generated file — relayed onto the `.nika` line — with
+*mismatched types* and *consider dereferencing the borrow*, about a borrow the
+source does not contain: [Part III C.1](specification/30-nikaia-tooling.md).
+
+*The numeric half is closed.* `let q: i64 = n` over a lent `n` reads the number
+through the view (`nikaia_std::num::value`), because a number is `Copy` and
+reading one through a view inserts nothing. A **struct** is not, so the same
+answer there would be a copy the source did not write, which
+[ADR-008](specification/adr/adr-008.md) D5 forbids in as many words: a copy is
+written and never inserted.
+
+*So this is a diagnostic and not a lowering.* The way out exists and the program
+can take it — `let copy = r` binds the view, and `r.a` reads through it — which
+is what makes this [Part III C.2](specification/30-nikaia-tooling.md)'s shape
+rather than C.1's alone: the compiler knows both that the annotation is wrong
+and what to write instead, and says neither.
+
+*What it needs:* the checker refusing the annotation where the value is a lent
+binding and the declared type is not `Copy`, with the way out naming the `let`
+without one. The fact is already on the binding —
+`check::Local::lent`, which §1.3's close put there — so this is a refusal and
+not an analysis. **The corpus does not write the shape**, which is why it is
+here and not fixed.
 
 ## 2. Decided and unbuilt
 

@@ -490,6 +490,20 @@ pub struct Checked {
     /// move out of a container — so this is a set that has to be *right* rather
     /// than one that can be safe.
     pub lent_lets: BTreeSet<usize>,
+    /// **Where a number is read through a `for` binding**, by the byte the
+    /// statement starts at and the name it was written under
+    /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
+    ///
+    /// A `for` lends ([ADR-094](../../docs/specification/adr/adr-094.md) D4),
+    /// so the binding is a view of the element and Rust's `as` does not see
+    /// through one. Answered here for the reason every set beside it is: which
+    /// name is a view is a question about the **scope**, and the emitter keeps
+    /// none (ADR-028).
+    ///
+    /// Keyed by the **name** as well as by the statement, because one
+    /// statement may cast twice — `(n as i64) + (m as i64)` — and only one of
+    /// the two may be a binding.
+    pub viewed_numbers: BTreeSet<(usize, String)>,
     /// The list literals that are an **array** rather than a list
     /// ([ADR-152](../../docs/specification/adr/adr-152.md) D4), by the byte the
     /// `[` stands at.
@@ -1068,6 +1082,20 @@ pub struct Propagation {
     pub concatenations: BTreeSet<usize>,
     /// [`Checked::lent_lets`].
     pub lent_lets: BTreeSet<usize>,
+    /// **Where a number is read through a `for` binding**, by the byte the
+    /// statement starts at and the name it was written under
+    /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
+    ///
+    /// A `for` lends ([ADR-094](../../docs/specification/adr/adr-094.md) D4),
+    /// so the binding is a view of the element and Rust's `as` does not see
+    /// through one. Answered here for the reason every set beside it is: which
+    /// name is a view is a question about the **scope**, and the emitter keeps
+    /// none (ADR-028).
+    ///
+    /// Keyed by the **name** as well as by the statement, because one
+    /// statement may cast twice — `(n as i64) + (m as i64)` — and only one of
+    /// the two may be a binding.
+    pub viewed_numbers: BTreeSet<(usize, String)>,
     /// [`Checked::array_literals`].
     pub array_literals: BTreeSet<usize>,
     /// [`Checked::lent_args`].
@@ -1206,6 +1234,7 @@ pub fn propagation_against(
         unrolled_calls: checked.unrolled_calls,
         concatenations: checked.concatenations,
         lent_lets: checked.lent_lets,
+        viewed_numbers: checked.viewed_numbers,
         array_literals: checked.array_literals,
         lent_args: checked.lent_args,
         mut_args: checked.mut_args,
@@ -1501,6 +1530,19 @@ struct Local {
     name: String,
     ty: Ty,
     constant: Option<i128>,
+    /// **The binding is a view the emitter lent**, which a `for` over a place
+    /// is ([ADR-094](../../docs/specification/adr/adr-094.md) D4).
+    ///
+    /// One reader: a **cast** over it. `for n in NS { n as i64 }` reaches the
+    /// language below as `n as i64` where `n` is a `&i32`, and `casting &i32
+    /// as i64 is invalid` is a sentence about a noun the program does not
+    /// contain ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// On the binding and not in a map, for the reason `immutable` gives one
+    /// field down: the **scope** is the one `scope` already keeps, so a `let n
+    /// = 5` inside the loop stops being a view exactly where it stops being
+    /// the answer.
+    lent: bool,
     /// Where the binding was written and what kind it is, when it did **not**
     /// say `mut` — `None` for one a change to is nobody's business here.
     ///
@@ -1568,6 +1610,7 @@ impl Local {
             name: local.name.clone(),
             ty: local.ty.clone(),
             constant: local.constant,
+            lent: local.lent,
             built: local.built.clone(),
             immutable: local.immutable.clone(),
             empty_list: local.empty_list,
@@ -1579,6 +1622,7 @@ impl Local {
             name,
             ty,
             constant: None,
+            lent: false,
             built: None,
             immutable: None,
             empty_list: None,
@@ -2676,6 +2720,9 @@ impl<'a> Checker<'a> {
                 name,
                 ty: self.declared(&arg.ty, &arg.span).erase(&parameters),
                 constant: None,
+                // A parameter is not a `for` binding: what a call lends is the
+                // caller's business, and a cast over one needs no deref.
+                lent: false,
                 built: None,
                 // **D3**: without the word, a body that changes this parameter
                 // is `NK1138`.
@@ -3565,6 +3612,7 @@ impl<'a> Checker<'a> {
             name: self.parsed.text(name).to_string(),
             ty,
             constant: None,
+            lent: false,
             built: None,
             empty_list: None,
             immutable: asked.then(|| Immutable {
@@ -4572,6 +4620,7 @@ impl<'a> Checker<'a> {
                         self.expect(&found, &want, span.clone(), "let", |found, want| {
                             format!("this is `{found}`, and the `let` says `{want}`")
                         });
+                        self.a_number_read_through_a_lent_binding(&want, value, span);
                         want
                     }
                     None => {
@@ -4617,6 +4666,11 @@ impl<'a> Checker<'a> {
                     name,
                     ty: bound,
                     constant,
+                    // **A `let` is not lent here** even where D4 lends its
+                    // initialiser: what the emitter writes there is a `&` in
+                    // front of a place, and a cast over the name that comes
+                    // out of one is the language below's own deref.
+                    lent: false,
                     // A `let` binds a number where one folded; the whole value
                     // is a `comptime`'s, which is the one that *must* fold.
                     built: None,
@@ -4731,9 +4785,19 @@ impl<'a> Checker<'a> {
                 // is why the record is keyed on the type being a `Seq`.
                 self.a_sequence_is_walked(iter, &over, span);
                 let element = element_of(&over, bindings.len());
+                // **A `for` over a place lends** (ADR-094 D4), which the
+                // emitter writes as `.iter()` — so the binding is a *view* of
+                // each element. Recorded on the binding because the one thing
+                // that has to know is a **cast** over it, and Rust's `as` does
+                // not see through a reference. The predicate is the emitter's
+                // own, so the two cannot answer differently.
+                let lent = crate::emit::is_a_place(iter);
                 let frame: Vec<Local> = bindings
                     .iter()
-                    .map(|b| Local::free(self.parsed.text(*b).to_string(), element.clone()))
+                    .map(|b| Local {
+                        lent,
+                        ..Local::free(self.parsed.text(*b).to_string(), element.clone())
+                    })
                     .collect();
                 for local in &frame {
                     self.nameable(&local.name.clone(), span, "a `for` binding");
@@ -5833,6 +5897,7 @@ impl<'a> Checker<'a> {
             Expr::Cast { expr, ty } => {
                 let from = self.expr(expr, span);
                 let into = self.declared(ty, span);
+                self.a_cast_over_a_lent_binding(expr, span);
                 if let Ty::Named { name, .. } = &into {
                     if !OFFERED.contains(&name.as_str()) {
                         self.cast_names_a_foreign_type(name, span);
@@ -10984,6 +11049,61 @@ impl<'a> Checker<'a> {
         self.checked.unrolled.insert((name, on), fields);
     }
 
+    /// **A cast whose operand is a `for` binding**
+    /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
+    ///
+    /// `for n in NS { sum = sum + (n as i64) }` reached the language below as
+    /// `n as i64` over a `&i32`, and what came back was *casting `&i32` as
+    /// `i64` is invalid* with a way out that reads *dereference the
+    /// expression* — a noun and an instruction about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Only a bare name**, because that is the only operand shape that can
+    /// arrive as a view: a call, a literal and an arithmetic expression each
+    /// come to a value, and a field read or an index is already taken apart by
+    /// the lowering that wrote it.
+    fn a_cast_over_a_lent_binding(&mut self, operand: &Expr, span: &Span) {
+        let Expr::Variable(name) = operand else {
+            return;
+        };
+        let name = self.parsed.text(*name).to_string();
+        if self.binding(&name).is_some_and(|local| local.lent) {
+            self.checked.viewed_numbers.insert((span.start, name));
+        }
+    }
+
+    /// **A `let` whose declared type is a number and whose value is a `for`
+    /// binding** ([ADR-182](../../docs/specification/adr/adr-182.md) D5).
+    ///
+    /// `for m in xs { let q: i64 = m }` reached the language below as
+    /// `let q: i64 = m;` over a `&i64`, and what came back was *mismatched
+    /// types*, with *consider dereferencing the borrow* as the way out — about
+    /// a borrow the source does not contain
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Only where the annotation is a number**, because that is the whole of
+    /// what `num::value` answers and the whole of what may be read through a
+    /// view without a copy being **inserted**
+    /// ([ADR-008](../../docs/specification/adr/adr-008.md) D5). A `let r: Row =
+    /// <binding>` is a different question with a different answer, and it is
+    /// [`open-work.md`](../../docs/open-work.md) §1.6's to carry until
+    /// somebody decides it.
+    fn a_number_read_through_a_lent_binding(&mut self, want: &Ty, value: &Expr, span: &Span) {
+        let Ty::Named {
+            name: want,
+            args,
+            view,
+        } = want
+        else {
+            return;
+        };
+        const NUMBERS: [&str; 6] = ["i32", "i64", "u8", "f64", "bool", "char"];
+        if *view || !args.is_empty() || !NUMBERS.contains(&want.as_str()) {
+            return;
+        }
+        self.a_cast_over_a_lent_binding(value, span);
+    }
+
     /// **`NK1180`: a reflected field answers `.name` and `.of(value)`**
     /// ([ADR-088](../../docs/specification/adr/adr-088.md) D2).
     ///
@@ -11340,6 +11460,7 @@ impl<'a> Checker<'a> {
             name,
             ty,
             constant,
+            lent: false,
             built: None,
             immutable: None,
             empty_list: None,
@@ -12386,6 +12507,7 @@ impl<'a> Checker<'a> {
         self.bind_local(Local {
             name: bound,
             ty: held,
+            lent: false,
             // The fold's number, which is what `constant_of` reads one
             // `comptime` later and what `ADR-043` D5's overflow check needs.
             constant: match &evaluated {
@@ -12774,6 +12896,28 @@ fn element_of(over: &Ty, bindings: usize) -> Ty {
                 _ => Ty::Unknown,
             }
         }
+        // **An array's element is its first argument**
+        // ([ADR-152](../../docs/specification/adr/adr-152.md) D4), and the
+        // second is the length, which is why the arm above does not reach it:
+        // `Array[i64, 2]` has two arguments where a `Vec[i64]` has one.
+        //
+        // Without this a `for` over an array bound a name of **unknown** type,
+        // and everything downstream of it went quiet — including
+        // [ADR-043](../../docs/specification/adr/adr-043.md) D4's abort, so
+        // `for n in NS { n as u8 }` over an `Array[i64, 2]` **truncated
+        // silently**, which is the one thing that record exists to stop.
+        Ty::Named { name, args, view }
+            if bindings == 1 && !view && name == ty::ARRAY && !args.is_empty() =>
+        {
+            args[0].clone()
+        }
+        // …and a `&[T]` carries its `T` the same way
+        // ([ADR-179](../../docs/specification/adr/adr-179.md) D1). Both are a
+        // run; which of the two carries the length is not what a walk asks.
+        Ty::Pointed { .. } if bindings == 1 => match slice_element(over) {
+            Some(item) => item.clone(),
+            None => Ty::Unknown,
+        },
         // **A produced sequence is what a `for` walks**
         // ([ADR-105](../../docs/specification/adr/adr-105.md) D1), and its item
         // is the binding's type: `for c in text.chars()` binds a `char`. A

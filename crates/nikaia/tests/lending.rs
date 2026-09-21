@@ -254,3 +254,78 @@ fn a_let_over_a_whole_name_stays_a_move() {
     );
     assert!(rust.contains("let b = a;"), "{rust}");
 }
+
+/// **A cast over a `for` binding is a cast over a view**
+/// ([ADR-182](../../../docs/specification/adr/adr-182.md) D1, which closed
+/// `open-work.md`'s entry for it at 0.0.131).
+///
+/// The loop binds a view of each element, which is what D4 is for and is what
+/// lets the loop read without copying — and Rust's `as` does not see through
+/// one. What came back was *casting `&i32` as `i64` is invalid*, relayed onto
+/// the `.nika` line, with a way out that reads *dereference the expression*: a
+/// noun and an instruction about a file nobody wrote
+/// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// **This runs**, because what a cast comes to is a question only the language
+/// below answers, and the arithmetic has to be right as well as compile.
+#[test]
+fn a_cast_over_a_for_binding_reaches_the_number() {
+    let printed = ran(
+        "a cast over a for binding",
+        "comptime NS: Array[i32, 3] = [1, 2, 3]\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut sum: i64 = 0\n\
+         \x20   for n in NS { sum = sum + (n as i64) }\n\
+         \x20   println(f\"{sum}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "6");
+}
+
+/// **A name that shadows the binding is not a view**, and the same statement
+/// may cast over both.
+///
+/// This is why the answer is the checker's and keyed by the name: a `*` would
+/// be right for one of these two and wrong for the other, on one line.
+#[test]
+fn a_name_that_shadows_a_for_binding_is_cast_as_itself() {
+    let printed = ran(
+        "a shadowed for binding",
+        "comptime NS: Array[i32, 3] = [1, 2, 3]\n\
+         \n\
+         fn main() {\n\
+         \x20   let mut sum: i64 = 0\n\
+         \x20   for n in NS {\n\
+         \x20       let m: i32 = 10\n\
+         \x20       sum = sum + (n as i64) + (m as i64)\n\
+         \x20   }\n\
+         \x20   for n in NS {\n\
+         \x20       let n: i32 = 100\n\
+         \x20       sum = sum + (n as i64)\n\
+         \x20   }\n\
+         \x20   println(f\"{sum}\")\n\
+         }\n",
+    );
+    // 6 + 30 from the first loop, 300 from the second.
+    assert_eq!(printed.trim(), "336");
+}
+
+/// **A narrowing cast over a binding is still narrowing**, which is the half a
+/// fix written around the conversion rather than inside it would have lost:
+/// `as` truncates by definition, and [ADR-043](../../../docs/specification/adr/adr-043.md)
+/// D4 puts an abort there rather than a silent wrong number.
+#[test]
+fn a_narrowing_cast_over_a_for_binding_still_aborts() {
+    let rust = lowered(
+        "comptime NS: Array[i64, 2] = [1, 300]\n\
+         \n\
+         fn main() {\n\
+         \x20   for n in NS { println(f\"{n as u8}\") }\n\
+         }\n",
+    );
+    assert!(
+        rust.contains("u8::try_from(nikaia_std::num::value("),
+        "the check goes around the value and not the view: {rust}"
+    );
+}

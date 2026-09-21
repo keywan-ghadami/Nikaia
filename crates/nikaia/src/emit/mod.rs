@@ -1037,6 +1037,12 @@ struct Emitter<'p> {
     /// beside it is: it is a question about the type, and this has none
     /// (ADR-028).
     lent_lets: std::collections::BTreeSet<usize>,
+    /// Where a number is read through a `for` binding and therefore through a
+    /// **view** ([`check::Checked::viewed_numbers`]), by the statement's byte
+    /// and the name. Handed over exactly as `lent_lets` is, and for the same
+    /// reason: which name is a view is a question about the scope, and this
+    /// keeps none (ADR-028).
+    viewed_numbers: std::collections::BTreeSet<(usize, String)>,
     /// The list literals that are an **array**
     /// ([ADR-152](../../docs/specification/adr/adr-152.md) D4), by the byte the
     /// `[` stands at. `vec![…]` for one that is not in here and `[…]` for one
@@ -2031,6 +2037,7 @@ impl<'p> Emitter<'p> {
             nullable_sites: propagation.nullable,
             concatenations: propagation.concatenations,
             lent_lets: propagation.lent_lets,
+            viewed_numbers: propagation.viewed_numbers,
             array_literals: propagation.array_literals,
             comptime_values: propagation.comptime_values,
             with_types: propagation.with_types,
@@ -4535,6 +4542,36 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
+    /// A cast's operand, through the view a `for` binding is
+    /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
+    ///
+    /// **`num::value` and not a `*`**, which is `nikaia_std::index::at`'s own
+    /// reasoning one construct over: for a number that is already a number it
+    /// is the identity, so it cannot be written onto the wrong operand — and a
+    /// `*` written onto one would be a `rustc` error about the generated file,
+    /// which is the very thing this closes.
+    ///
+    /// **Inside the checked conversion and not around it**, because a
+    /// narrowing cast over a lent binding is still a narrowing cast: `i8::from`
+    /// of a `&i64` does not exist either, and the abort ADR-043 D4 puts there
+    /// is not a thing a view may skip.
+    fn operand(
+        &self,
+        out: &mut Out,
+        expr: &Expr,
+        viewed: bool,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        if !viewed {
+            return self.expr(out, expr, depth, flow);
+        }
+        out.push("nikaia_std::num::value(");
+        self.expr(out, expr, depth, flow)?;
+        out.push(")");
+        Ok(())
+    }
+
     fn block(
         &self,
         out: &mut Out,
@@ -4747,7 +4784,20 @@ impl<'p> Emitter<'p> {
                 if self.lent_lets.contains(&span.start) {
                     out.push("&");
                 }
-                self.expr(out, value, depth, flow)?;
+                // **A `let` whose annotation is a number and whose value is a
+                // `for` binding reads the number through the view**
+                // ([ADR-182](../../docs/specification/adr/adr-182.md) D5):
+                // `let q: i64 = m` over a lent `m` is a
+                // `&i64` where an `i64` was declared, and *consider
+                // dereferencing the borrow* is a way out the source cannot
+                // take, because there is no borrow in it.
+                let viewed = match value {
+                    Expr::Variable(name) => self
+                        .viewed_numbers
+                        .contains(&(flow.statement, self.text(*name).to_string())),
+                    _ => false,
+                };
+                self.operand(out, value, viewed, depth, flow)?;
                 out.push(after);
                 out.push(";");
             }
@@ -5452,7 +5502,25 @@ impl<'p> Emitter<'p> {
                 // through the index, so the brackets there stay the language
                 // below's own.
                 if !flow.in_a_place {
-                    out.push("(*nikaia_std::index::get(&");
+                    // **A slice is already a view, so it takes no `*`**
+                    // ([ADR-182](../../docs/specification/adr/adr-182.md) D2). A read
+                    // at a number answers a `&T` and the `*` is what makes it
+                    // the `T` the program asked for; a read at a **range**
+                    // answers a `&str` or a `&[T]`, and `*` over one of those
+                    // is a `str` or a `[T]` — a value whose size the language
+                    // below does not know, which is what it said: *the size
+                    // for values of type `str` cannot be known at compilation
+                    // time*, about a noun nobody wrote
+                    // ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+                    //
+                    // **Off the shape of what is in the brackets**, which is
+                    // the one place this needs no type: a range is a run and a
+                    // key is not, in this language and in the one below alike.
+                    let slicing = matches!(&**index, Expr::Range { .. });
+                    match slicing {
+                        true => out.push("(nikaia_std::index::get(&"),
+                        false => out.push("(*nikaia_std::index::get(&"),
+                    }
                     self.postfix_base(out, base, depth, flow)?;
                     out.push(", ");
                     // **The literal exception belongs to the read as well**, and
@@ -5468,16 +5536,37 @@ impl<'p> Emitter<'p> {
                     // class and the very thing the paragraph above says this
                     // exception exists to prevent.
                     //
-                    // **A range is not in the exception here**, though it is
-                    // in the brackets below: `text[1..3]` as a read goes
-                    // through `Get<I> for str`, whose `I` a bare
-                    // `Range<{integer}>` does not pin, and what came back was
-                    // `rustc` about `str` not being `Sized`. `at` answers a
-                    // `Range<usize>` and settles it, which is what it is for.
-                    match only_literals(index) && !matches!(&**index, Expr::Range { .. }) {
+                    // **And a range written in literals is in the
+                    // exception**, which it was not while the `*` above stood
+                    // over one. `at` cannot settle a bare `1..=2`: `At` is
+                    // implemented for a `RangeInclusive` of every signed type
+                    // and each answers the same `RangeInclusive<usize>`, so
+                    // there is nothing to infer `I` *from* and what came back
+                    // was `cannot infer type` about the generated file. Handed
+                    // over as written it settles itself, because
+                    // `RangeInclusive<usize>` is the only one of them that is a
+                    // `SliceIndex<[V]>` — which is what the exception says
+                    // everywhere else it applies.
+                    //
+                    // **Except where it counts from the end.** `xs[-2..-1]` is
+                    // an index out of bounds and says so at run time
+                    // ([ADR-048](../../../docs/specification/adr/adr-048.md)
+                    // D1) — but only if it reaches run time, and handed over as
+                    // written it does not: `-2` against a `usize` is *the trait
+                    // `Neg` is not implemented for `usize`*, about a type the
+                    // program never named. So a range with a negation in it
+                    // goes back through the conversion, **widened**, because an
+                    // `i64` is the one width this language indexes with and
+                    // `at` has nothing else to read it off.
+                    let counts_down = slicing && a_negation_inside(index);
+                    match only_literals(index) && !counts_down {
                         true => self.expr(out, index, depth, flow.inferred())?,
                         false => {
                             out.push("nikaia_std::index::at(");
+                            let flow = match counts_down {
+                                true => flow.widened(),
+                                false => flow,
+                            };
                             self.expr(out, index, depth, flow)?;
                             out.push(")");
                         }
@@ -5501,6 +5590,23 @@ impl<'p> Emitter<'p> {
             }
             Expr::Cast { expr, ty } => {
                 let into = self.ty(ty, Lifetimes::ELIDED);
+                // **A `for` lends, and `as` does not see through a view**
+                // ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
+                // The checker says which operands those are, because which name is
+                // a view is a question about the scope (ADR-028).
+                //
+                // **`num::value` and not a `*`**, which is
+                // `nikaia_std::index::at`'s own reasoning one construct over:
+                // for a number that is already a number this is the identity,
+                // so the rule cannot be written onto the wrong operand — and a
+                // `*` written onto one would be a `rustc` error about the
+                // generated file, which is the very thing this closes.
+                let viewed = match expr.as_ref() {
+                    Expr::Variable(name) => self
+                        .viewed_numbers
+                        .contains(&(flow.statement, self.text(*name).to_string())),
+                    _ => false,
+                };
                 match self.narrows(flow.statement, &into) {
                     // **A narrowing conversion is checked, and an unchecked one
                     // aborts** (ADR-043 D4). Rust's `as` truncates by definition
@@ -5514,7 +5620,7 @@ impl<'p> Emitter<'p> {
                         // Rust internals in a sentence a Nikaia user reads, and
                         // the same leak the diagnostics filter exists to stop.
                         out.push(&format!("{into}::try_from("));
-                        self.expr(out, expr, depth, flow)?;
+                        self.operand(out, expr, viewed, depth, flow)?;
                         out.push(&format!(
                             ").unwrap_or_else(|_| panic!(\"the value does not fit in an `{into}`\"))"
                         ));
@@ -5523,8 +5629,12 @@ impl<'p> Emitter<'p> {
                     // "not a number" are tested by a `std` helper instead.
                     Some(crate::check::Narrowing::FromFloat) => {
                         out.push(&format!("nikaia_std::num::to_{into}("));
-                        self.expr(out, expr, depth, flow)?;
+                        self.operand(out, expr, viewed, depth, flow)?;
                         out.push(")");
+                    }
+                    None if viewed => {
+                        self.operand(out, expr, viewed, depth, flow)?;
+                        out.push(&format!(" as {into}"));
                     }
                     None => {
                         self.nested(out, expr, u8::MAX, depth, flow)?;
@@ -5666,6 +5776,19 @@ impl<'p> Emitter<'p> {
                         };
                         out.push(&format!("-{v}{wide}"));
                         return Ok(());
+                    }
+                }
+                // **A `&` over a slice read is the view it already is**
+                // ([ADR-182](../../docs/specification/adr/adr-182.md) D2). The read
+                // answers a `&str` or a `&[T]` since the `*` came off it, so
+                // writing the `&` as well would make `&dna[i..<i + k]` a
+                // `&&str` — which coerces in most places and is a type error
+                // in the ones that matter, and is not what the source says
+                // either: the source's `&` and the read's own view are one
+                // claim written twice.
+                if let (UnaryOp::Ref, Expr::Index { index, .. }) = (op, &**expr) {
+                    if matches!(&**index, Expr::Range { .. }) && !flow.in_a_place {
+                        return self.expr(out, expr, depth, flow);
                     }
                 }
                 out.push(unary_op(*op));
@@ -8787,6 +8910,24 @@ fn pointing(mutable: bool) -> &'static str {
     }
 }
 
+/// Whether a written index **counts from the end**
+/// ([ADR-048](../../../docs/specification/adr/adr-048.md) D1).
+///
+/// One reader: a range. A negative one is an access out of bounds and reports
+/// as one at run time — and it has to *reach* run time, which handed over as
+/// written it does not, because the `usize` the slice wants has no negation.
+fn a_negation_inside(index: &Expr) -> bool {
+    match index {
+        Expr::Unary {
+            op: UnaryOp::Neg, ..
+        } => true,
+        Expr::Unary { expr, .. } => a_negation_inside(expr),
+        Expr::Binary { lhs, rhs, .. } => a_negation_inside(lhs) || a_negation_inside(rhs),
+        Expr::Range { start, end, .. } => a_negation_inside(start) || a_negation_inside(end),
+        _ => false,
+    }
+}
+
 fn only_literals(index: &Expr) -> bool {
     match index {
         Expr::LitInt(_) => true,
@@ -8896,7 +9037,7 @@ fn pausing_in_a_lambda(at: usize, callee: &str) -> anyhow::Error {
 /// method call are not: `for i in 0..n` counts, `for line in io::lines()` reads
 /// a stream, and `for x in xs.drain()` is the written form of taking the
 /// elements away — none of the three has anything to lend.
-fn is_a_place(expr: &Expr) -> bool {
+pub(crate) fn is_a_place(expr: &Expr) -> bool {
     matches!(
         expr,
         Expr::Variable(_) | Expr::Field { .. } | Expr::SafeField { .. } | Expr::Index { .. }

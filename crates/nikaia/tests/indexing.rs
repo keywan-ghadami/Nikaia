@@ -250,22 +250,150 @@ fn a_field_of_an_indexed_element_compiles_and_runs() {
     assert_eq!(printed, "3\n6\n3\n");
 }
 
-/// …and **a range stays in the conversion**, which is why the exception above
-/// is narrower than the write branch's.
+/// …and **a range the program computes stays in the conversion**, which is
+/// where `index::at` earns its place over a slice.
 ///
-/// `&text[1..3]` is a slice, and `Get<I> for str` wants a `Range<usize>` that a
-/// bare `Range<{integer}>` does not give it. `index::at` answers one, which is
-/// what it is for — so the literal exception is for a **number** and not for
-/// everything written in literals.
+/// A range written in **literals** settles itself, because
+/// `RangeInclusive<usize>` is the only one of `At`'s candidates that is a
+/// `SliceIndex<str>` — and handing a bare `1..=3` to `at` settles *nothing*,
+/// since `At` is implemented for a range of every signed type and all of them
+/// answer the same `usize`. A range built out of **names** is an `i64` one and
+/// has to be converted, which is [ADR-048](../../../docs/specification/adr/adr-048.md)
+/// D1's whole trade. `examples/k-nucleotide.nika` writes the second shape.
 #[test]
-fn a_slice_of_text_still_goes_through_the_conversion() {
+fn a_slice_of_text_is_converted_where_the_range_is_computed() {
     let printed = ran(
         "a slice of text",
         "fn main() {\n\
          \x20   let text = \"hello\"\n\
          \x20   let part = &text[1..3]\n\
          \x20   println(f\"{part}\")\n\
+         \x20   let at: i64 = 1\n\
+         \x20   println(f\"{text[at..<at + 3]}\")\n\
          }\n",
     );
-    assert_eq!(printed, "ell\n");
+    assert_eq!(printed, "ell\nell\n");
+
+    let rust = lowered(
+        "a computed slice of text",
+        "fn main() {\n\
+         \x20   let text = \"hello\"\n\
+         \x20   let at: i64 = 1\n\
+         \x20   println(f\"{text[at..<at + 3]}\")\n\
+         \x20   println(f\"{text[1..3]}\")\n\
+         }\n",
+    );
+    assert!(
+        rust.contains("nikaia_std::index::at(at..at + 3)")
+            && rust.contains("nikaia_std::index::get(&text, 1..=3)"),
+        "the computed range converts and the written one does not: {rust}"
+    );
+}
+
+/// **A slice of text read as a value did not lower**
+/// ([ADR-182](../../../docs/specification/adr/adr-182.md) D2, which closed
+/// `open-work.md`'s entry for it at 0.0.131).
+///
+/// The read wrapper writes a `*` around every bracket
+/// ([ADR-161](../../../docs/specification/adr/adr-161.md) D6), which is what
+/// makes `xs[0]` the element rather than a view of it. Over a **range** the
+/// read answers a `&str` already, and `*` over one is a `str`: *the size for
+/// values of type `str` cannot be known at compilation time*, about a noun
+/// nobody wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// **Off the shape of what is in the brackets** and not off a type: a range is
+/// a run and a key is not, in this language and in the one below alike.
+#[test]
+fn a_slice_of_text_read_as_a_value_runs() {
+    let printed = ran(
+        "a bare slice of text",
+        "fn main() {\n\
+         \x20   let text = \"hello world\"\n\
+         \x20   println(f\"{text[1..3]}\")\n\
+         \x20   let part = &text[1..3]\n\
+         \x20   println(f\"{part}\")\n\
+         \x20   println(f\"{text[0..<5]}\")\n\
+         }\n",
+    );
+    assert_eq!(printed, "ell\nell\nhello\n");
+}
+
+/// **And a run of a sequence is the same shape**, which is the half that says
+/// this is about the brackets rather than about text: `*&[i64]` is unsized for
+/// the reason `*&str` is.
+#[test]
+fn a_slice_of_a_sequence_read_as_a_value_runs() {
+    let printed = ran(
+        "a bare slice of a sequence",
+        "fn main() {\n\
+         \x20   let xs: Vec[i64] = [1, 2, 3, 4]\n\
+         \x20   println(f\"{xs[1..2].len()}\")\n\
+         \x20   let run = &xs[1..2]\n\
+         \x20   println(f\"{run.len()}\")\n\
+         }\n",
+    );
+    assert_eq!(printed, "2\n2\n");
+}
+
+/// **A read at a number keeps its `*`**, which is the line the rule is drawn
+/// on: `xs[0]` is the element the program asked for and not a view of it.
+#[test]
+fn a_read_at_a_number_is_still_the_element() {
+    let rust = lowered(
+        "a read at a number",
+        "fn main() {\n\
+         \x20   let xs: Vec[i64] = [1, 2, 3]\n\
+         \x20   let first: i64 = xs[0]\n\
+         \x20   println(f\"{first}\")\n\
+         }\n",
+    );
+    assert!(
+        rust.contains("(*nikaia_std::index::get(&xs"),
+        "a number keeps the `*`: {rust}"
+    );
+}
+
+/// **A range that counts from the end reaches run time**
+/// ([ADR-048](../../../docs/specification/adr/adr-048.md) D1,
+/// [ADR-182](../../../docs/specification/adr/adr-182.md) D3).
+///
+/// `xs[-2..-1]` is an access out of bounds and says so — but only if it gets
+/// there. Handed over as written it does not: `-2` against the `usize` a slice
+/// wants is *the trait `Neg` is not implemented for `usize`*, about a type the
+/// program never named. So a negation goes back through the conversion, widened
+/// to the one width this language indexes with.
+#[test]
+fn a_range_that_counts_from_the_end_is_an_access_out_of_bounds() {
+    let rust = lowered(
+        "a negative range",
+        "fn main() {\n\
+         \x20   let xs: Vec[i64] = [1, 2, 3, 4]\n\
+         \x20   println(f\"{xs[-2..-1].len()}\")\n\
+         }\n",
+    );
+    assert!(
+        rust.contains("nikaia_std::index::at(-2i64..=-1i64)"),
+        "widened, or `at` has nothing to read the width off: {rust}"
+    );
+
+    let dir = common::scratch_dir("a negative range");
+    let file = dir.join("main.rs");
+    std::fs::write(&file, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let out = common::compile(&file, &["-o", binary.to_str().expect("utf-8 path")]);
+    assert!(
+        out.status.success(),
+        "it has to compile before it can abort:\n{}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let ran = std::process::Command::new(&binary)
+        .output()
+        .expect("the program runs");
+    assert!(!ran.status.success(), "an index out of bounds aborts");
+    assert!(
+        String::from_utf8_lossy(&ran.stderr).contains("index out of bounds: the index is -2"),
+        "D1's own words: {}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

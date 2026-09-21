@@ -4,6 +4,42 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.131] — 2026-09-21
+
+**A `for` lends, and everything downstream of the binding has to know it** —
+[ADR-182](docs/specification/adr/adr-182.md), closing
+[`open-work.md`](docs/open-work.md) §1.3 and §1.4. Two defects with
+reproductions, and chasing them found **three more** — one of them a wrong
+answer nothing said out loud.
+
+### The two that were written down
+
+- **`for n in NS { n as i64 }`** answered *casting `&i32` as `i64` is invalid*, with *dereference the expression* as the way out: a noun and an instruction about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)), and a way out that cannot be taken is not one ([C.2](docs/specification/30-nikaia-tooling.md)).
+- **`println(f"{text[1..3]}")`** answered *the size for values of type `str` cannot be known at compilation time*. The `&` form was fine, which is what kept it small and is what every program in the corpus writes.
+- **They are one record**, because both are a **view this compiler wrote** meeting a construct that was never told: [ADR-094](docs/specification/adr/adr-094.md) D4 lends at a `for`, [ADR-161](docs/specification/adr/adr-161.md) D6 takes a read apart with a `*`, and over a **range** what it takes apart is already a view. Neither decision is wrong here; what was missing is the sentence that says so at the cast and at the bracket.
+
+### A trait and not a `*`, for the reason `index::at` is one
+
+- **`nikaia_std::num::value(n) as i64`**, the identity for a number that is already a number and the number behind any run of views. A `*` is right at the binding and **wrong one line down**, where `let n = 5` shadows it — and a `*` written onto that is `rustc` about the generated file, which is the very thing this closes, moved rather than removed.
+- **Which operands is the checker's**, because *which name is a view* is a question about the **scope** and the emitter keeps none ([ADR-028](docs/specification/adr/adr-028.md)). It sits on the binding (`Local::lent`) for the reason `immutable` does, and the predicate is the emitter's own, shared, so the two cannot answer differently.
+- **Inside the checked conversion and not around it.** A narrowing cast over a binding is still narrowing, and [ADR-043](docs/specification/adr/adr-043.md) D4's abort is not a thing a view may skip.
+
+### And the read at a range answers a view
+
+- **No `*` at a range** and the `*` kept at a number: `xs[0]` is the element the program asked for, `xs[1..3]` is a run of them. **Off the shape of what is in the brackets** — a range is a run and a key is not — so the emitter still knows no types.
+- **A written `&` over one is the view it already is**, or `&dna[i..<i + k]` becomes a `&&str`: the source's `&` and the read's own view are one claim written twice.
+
+### Four more, found by chasing those two
+
+- **A sequence sliced by a range did not lower either**, with or without the `*`: `at` cannot pin a bare `1..=2`, because `At` is implemented for a range of every signed type and all of them answer the same `usize`, so there was nothing to infer from. Handed over **as written** it settles itself — `RangeInclusive<usize>` is the only candidate that is a `SliceIndex<[V]>` — which is what the literal exception says everywhere else it applies. A range built out of **names** still converts, which is [ADR-048](docs/specification/adr/adr-048.md) D1's trade and `k-nucleotide.nika`'s shape.
+- **A range that counts from the end never reached run time.** `xs[-2..-1]` is an access out of bounds and says so at run time ([ADR-048](docs/specification/adr/adr-048.md) D1) — but `-2` against the `usize` a slice wants is *the trait `Neg` is not implemented for `usize`*, about a type the program never named, and *consider specifying an integer type that can be negative* is a way out that belongs to a file nobody wrote. A negation goes back through the conversion, **widened**, so what the program gets is *index out of bounds: the index is -2* at the line that wrote it.
+- **A `for` over an `Array[T, N]` bound a name of unknown type**, because `element_of` knew `Vec[T]` by its **one** argument and an array has two. Everything downstream went quiet with it — including the abort: `for n in NS { n as u8 }` over an `Array[i64, 2]` **truncated silently**, which is the one thing [ADR-043](docs/specification/adr/adr-043.md) D4 exists to stop. A `&[T]` was the same absence ([ADR-179](docs/specification/adr/adr-179.md) D1).
+- **`let q: i64 = n`** over a binding was a `&i64` where an `i64` was declared. The number is read through the view; **`let copy: Row = r` is not**, because a number is `Copy` and a struct is not, so the same answer there would be a copy the source did not write ([ADR-008](docs/specification/adr/adr-008.md) D5: a copy is written and never inserted). The way out exists and the program can take it, which makes that one a **refusal this compiler owes** rather than a lowering it is missing — [`open-work.md`](docs/open-work.md) §1.6.
+
+### Two questions went to the owner
+
+- **Whether `&[T]` is the spelling to keep**, and **whether the view should be `ref`** — both on [`open-decisions.md`](docs/open-decisions.md) with the measurement that answers them: of the 98 `&`s in the corpus's 2 847 lines, **82 are a type spelling and 53 of those are `&str`**, and only **16** are a borrow the source writes, because [ADR-094](docs/specification/adr/adr-094.md) D1 already took the word out of the place a reader meets it most.
+
 ## [0.0.130] — 2026-09-21
 
 **`--comptime` prints what was unrolled, and the unrolling reaches across the
