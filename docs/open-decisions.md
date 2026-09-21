@@ -71,107 +71,85 @@ surface where getting it wrong is silent. That is the argument for B, and it is
 a real one — which is why the recommendation carries the three-value shape
 rather than the column alone.
 
-### Is `&[T]` the right spelling, or should a run be `&Seq[T]`, an `Array`, or a word?
+### Is a view spelled `ref X`, with `Array[T]` the run and `str` gone?
 
-**What is blocked.** Nothing — [ADR-179](specification/adr/adr-179.md) built
-`&[T]` at 0.0.127 and it works. This is the owner asking whether the *spelling*
-is the one to keep before more programs are written against it, which is the
-cheapest moment to ask.
+**What is blocked.** Nothing is broken — [ADR-179](specification/adr/adr-179.md)
+built `&[T]` at 0.0.127 and it works. This is the owner asking whether the
+*spelling* is the one to keep before more programs are written against it, which
+is the cheapest moment to ask and the one question on this page where **later is
+strictly more expensive than now**.
 
-**Measured**, over the 2 847 lines of Nikaia in this repository:
+**The proposal, which is one and not two.** `ref X` is a view of an `X`, and an
+`Array[T]` with no `N` is the run itself:
 
-| Spelling | Uses | What it is |
+| today | proposed | what it is |
+| :--- | :--- | :--- |
+| `String` | `String` | owned text |
+| **`&str`** | **`ref String`** | a view of text |
+| `Array[T, N]` | `Array[T, N]` | owned, length in the type, laid out inline |
+| **`&[T]`** | **`ref Array[T]`** | a view of a run |
+| `Vec[T]` | `Vec[T]` | owned, growable |
+
+**The strongest argument is not the keyword — it is that `str` disappears.**
+Today `&str` is a view of a `String` spelled with a *different noun*, and `str`
+is not a type a program can otherwise write.
+[ADR-107](specification/adr/adr-107.md) had to explain that away in prose: text
+is one type, `String`, and `&str` is "the assertion that it is a view". Under
+`ref String` the assertion is the word `ref` and the type stays the type it was.
+One rule replaces two nouns and a punctuation mark.
+
+**And `Array[T]` needs no `?`.** The earlier draft of this entry said reusing
+`Array` would mean inventing `Array[T, ?]`; that was wrong. Dropping the `N` is
+the spelling, and what makes it hold together is that it composes with `ref` —
+`Array[T]` is the run, `ref Array[T]` is a view of one, exactly as `[T]` and
+`&[T]` are in the language below.
+
+**The one rule that has to come with it.** A run whose length the type does not
+carry **cannot be owned inline** — it has no size, in this machine model or any
+other — so `Array[T]` exists only under `ref`. `let xs: Array[i64] = …` must be
+a **refusal**, with a way out that names both alternatives: `ref Array[i64]` to
+view one, `Vec[i64]` to own one. Without that rule the change trades one
+[Part III C.1](specification/30-nikaia-tooling.md) hole for another, because
+`[T]` in the generated file is *the size for values of type `[i64]` cannot be
+known at compilation time* — the sentence
+[ADR-182](specification/adr/adr-182.md) D2 has just finished removing.
+
+**Measured — what the change costs**, by counting every site:
+
+| Where | Sites | Notes |
 | :--- | ---: | :--- |
-| `&str` | **53** | a **type**, and the single commonest use of `&` in the language |
-| `&mut` | 15 | [ADR-147](specification/adr/adr-147.md) D1's half |
-| `&Name` (`&Vec`, `&Stats`, `&Response`, `&Json`, `&Entry`, `&Counts`) | 6 | a view of a declared type |
-| `&self` | 4 | a method's receiver |
-| `&[` | 3 | this question's subject |
-| **`&` in expression position** (`&path`, `&out`, `&markup`, `&dna[…]`, …) | **16** | a borrow the source writes |
+| `.nika` corpus | 53 `&str`, 3 `&[`, 15 `&mut`, 16 expression `&` | mechanical |
+| The three specification pages | 43 | mechanical |
+| Rust source — diagnostics and the tests that assert on a printed type | 120 | mechanical, and the tests are what catch a miss |
+| `.contracts` on disk | 21, of which **18** are in the hand-maintained `std.contracts` | 10 files |
+| The word `ref` used as a name today | **0** | the reserved word costs nothing now |
 
-So **82 of 98** `&`s are a *type* spelling, and **53 of those 82 are `&str`**.
+Plus the parser, the type printer, the emitter's view spelling, and the new
+refusal for a bare `Array[T]`. **The ADRs are not rewritten**: a record says what
+was decided when it was decided, so only the living pages move — which is what
+keeps the documentation cost 45 and not 270.
 
-**Why it is the owner's.** It is a question about how the language reads, and
-nothing in the compiler prefers one answer.
+**What this page recommends: take it, with the `Array[T]`-only-under-`ref` rule
+attached.** The earlier recommendation here was *keep `&`*, argued from how often
+`&` is written. That argument was about **cost** and the owner's is about
+**coherence**, and coherence is the right axis for a spelling: `&str` is 54 % of
+all `&`s in the corpus precisely because it is the one a reader meets most, and
+it is the one that teaches the wrong thing — that text has a second type.
 
-**The options.**
+**Two things to settle before the work starts, not after.**
 
-* **A — keep `&[T]`.** It stands beside `&str`, where the `&` means the same
-  thing: *a view of a run that is somewhere else*. `&[u8]` and `&str` are then
-  one rule and not two, which is what [ADR-179](specification/adr/adr-179.md) §1
-  leaned on when it called `&str` "exactly such a run".
-* **B — `&Seq[T]`.** This **collides**: [ADR-105](specification/adr/adr-105.md)
-  D1 already gives `Seq[T]` a meaning, and it is a different one. A `Seq` is
-  produced step by step and **consumed by walking it** — a second walk is
-  refused — while a run is walked as often as a program likes, indexed, and
-  sliced again. `xs.map fn …` and `&data[1..3]` would become one spelling for
-  two things, and the refusal `a_sequence_is_walked` makes would have to stop
-  being about the type.
-* **C — reuse `Array`.** An `Array[T, N]` **carries its length in the type**
-  ([ADR-152](specification/adr/adr-152.md) D4), and the reason `&[T]` was needed
-  at all is a run whose length the type does **not** carry: a field whose run
-  differs per value has no `Array` to be, and that is both corpus grammars'
-  output. Reusing it means inventing `Array[T, ?]`, which is `&[T]` with more
-  syntax and one more thing to explain.
-* **D — a word, `Slice[T]` or `Run[T]`.** The honest version of the question:
-  Nikaia's type language is otherwise words. But then `&str` is the odd one out
-  instead, and renaming *it* is a change to 53 lines and to every page of the
-  specification.
-
-**What this page recommends: A.** The measurement is the argument — `&` in this
-language is overwhelmingly `&str`, and `&[T]` is `&str` with the element named.
-B is the one option that is not merely a preference: it takes a word that
-already means *walked once* and gives it to a thing that is walked many times.
-
-**What it costs if wrong**: three lines in the corpus and one paragraph of
-[ADR-179](specification/adr/adr-179.md). The cost is low **now** and rises with
-every program written, which is why the question is worth answering rather than
-leaving.
-
-### Should the view be spelled `ref` instead of `&`?
-
-**What is blocked.** Nothing. The same moment-of-asking as the entry above, and
-the two are better answered together: a decision to write `ref [T]` is a
-decision about `ref str` first.
-
-**Measured.** The table above is this question's measurement too. `&` occurs 98
-times in 2 847 lines, and **54 %** of all of them are the four characters
-`&str`. Only **16** are a borrow the source writes — because
-[ADR-094](specification/adr/adr-094.md) D1 already made a parameter the body
-only reads a view **without the word**, which is the decision that took the
-`&` out of the place a reader meets it most. [ADR-179](specification/adr/adr-179.md)
-D2 says the same thing from the other side: *a parameter is where the `&` is the
-compiler's*.
-
-**Why it is the owner's.** How a language looks is not a thing a compiler has a
-view about.
-
-**The options.**
-
-* **A — keep `&`.** One character in the spelling this language writes 53 times,
-  and the same character the generated file carries — so
-  [ADR-011](specification/adr/adr-011.md) D2's *the generated file says what the
-  program said* holds at the lowest level there is, the token.
-* **B — `ref`.** `ref str`, `ref [T]`, `ref Response`. It costs a **reserved
-  word**, and `ref` is an ordinary English noun a program might want — the same
-  objection [ADR-088](specification/adr/adr-088.md) D7 weighed for `macro`,
-  `quote` and `with`, and lost there only because those three name constructs
-  this language refuses to have. It also makes the *commonest* spelling in the
-  language three characters longer, in return for clarity at the 16 places a
-  borrow is written by hand.
-* **C — `ref` in expressions only**, keeping `&str` as a type. Two spellings for
-  one idea, which is the option that reads well in isolation and badly in a
-  language: a reader then has to know that `ref x` and `&str` are the same
-  claim.
-
-**What this page recommends: A.** Not because `&` is better in the abstract, but
-because of where this language already spent the change: D1 removed the `&` from
-parameters, so what is left is 53 `&str`s and 16 hand-written borrows. Making
-the 53 longer to make the 16 clearer is the wrong side of that ratio. **If the
-word is wanted anyway**, C is the shape to refuse and B the shape to take, and
-it should be taken **before** `&[T]` spreads rather than after.
+* **`&self`.** `fn mean(ref self)` reads badly. But
+  [ADR-094](specification/adr/adr-094.md) D1 already makes a parameter the body
+  only reads a view **without the word**, so `fn mean(self)` may already say it
+  and `&self` may be a spelling this language can simply drop. That is a
+  measurement over the corpus's 4 sites and not a guess.
+* **`ref` carries baggage.** In Rust it is a *binding mode* in patterns, which
+  means close to the opposite thing. Nikaia has no `ref` in patterns so nothing
+  clashes inside the language, but a reader arriving from Rust may misread it —
+  the same objection `Seq` would have had, named here so the answer is on the
+  record rather than discovered later.
 
 **What it costs if wrong**: a reserved word cannot be given back, and every
-`.nika` file, every page of the specification and every diagnostic that prints a
-type changes together. This is the one question on this page where *later* is
-strictly more expensive than *now*.
+`.nika` file, every living page and every diagnostic that prints a type change
+together. Done now that is one package; done after the language has users it is
+a migration.
