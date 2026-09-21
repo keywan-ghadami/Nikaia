@@ -524,6 +524,25 @@ body that does not terminate hangs the build: worth knowing before starting, and
 not a reason to add one on the way past. A **recursion** that does not terminate
 is bounded, because that one takes this compiler's stack with it.
 
+*And a `comptime` reaches across a file boundary, at 0.0.115.* The **permission**
+was program-wide from the start — it is two ledger columns
+([ADR-075](specification/adr/adr-075.md) D1, D2) and a program's ledger is
+absorbed from its units' — so what was missing was the **body**, and no column
+could carry one: a ledger records what a caller has to know about a function it
+*cannot see the body of*, which is the opposite of what this needs. The
+evaluator is handed the files instead, and a body travels with the `Parsed` that
+owns it, because every `parse_to_ast` builds its own interner and a symbol read
+with the wrong one resolves to nothing or to the wrong text.
+
+*What is left of it, and it is deliberate:* a **free name** in a body read from
+another file is not answered. The checker's scope is the file being checked, and
+a body elsewhere names its own file's constants — answering from the wrong scope
+would be a wrong value rather than a missing one, which is the direction
+[ADR-010](specification/adr/adr-010.md) D1 calls a vulnerability generator. The
+refusal says so and offers the two ways out: pass it in, or move the `comptime`
+beside the body that reads it. What it wants is a per-file constant scope, and
+nothing has asked for one.
+
 *And a method of this program folds, at 0.0.114* — the wall the owner asked
 about. It was never `sync`, which is the **permission**
 ([ADR-075](specification/adr/adr-075.md) D1) and whose ledger check applies to a

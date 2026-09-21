@@ -605,9 +605,15 @@ pub fn lower(
             // whether a *contract* moved, and a contract belongs to the
             // package.
             let newly = newly_throwing(&layout.root, &program.contracts);
+            // Collected once for the whole package, because every unit is
+            // checked against the same program (`ADR-030`) and a `comptime` in
+            // any of them may call into any other.
+            let beside: Vec<&crate::parser::Parsed> =
+                program.units.iter().map(|unit| &unit.parsed).collect();
             let around = Around {
                 foreign: &foreign,
                 newly: &newly,
+                beside: &beside,
             };
             for unit in &program.units {
                 check(
@@ -861,6 +867,14 @@ fn description_at(root: &Path, name: &str) -> Option<Ledger> {
 pub struct Around<'a> {
     pub foreign: &'a Foreign,
     pub newly: &'a check::NewlyThrowing,
+    /// **Every file of the program being built.**
+    ///
+    /// The third fact this carries, and the one that had to be a `Parsed`
+    /// rather than a column: a `comptime` calling across a file boundary needs
+    /// the callee's **body**, and a ledger records what a caller has to know
+    /// about a function it cannot see the body of. Each file owns the interner
+    /// its symbols resolve in, so the AST travels rather than the items.
+    pub beside: &'a [&'a crate::parser::Parsed],
 }
 
 pub fn check(
@@ -872,14 +886,18 @@ pub fn check(
     source: &str,
     user_parallelism: &str,
 ) -> Result<()> {
-    let Around { foreign, newly } = around;
+    let Around {
+        foreign,
+        newly,
+        beside,
+    } = around;
     let library = foreign.library()?;
 
     // A described crate is a package by the spelling rule, which is what
     // `modules` is: a set of words that appear in front of a `::` and are not
     // `std`'s ([`Foreign::packages`]).
     let modules = foreign.packages(modules);
-    let mut all = check::check_against(parsed, own, &library, &modules, newly).findings;
+    let mut all = check::check_against(parsed, beside, own, &library, &modules, newly).findings;
     // A separate walk, for the reason the three inside `check_program` are
     // separate: it asks about the **boundary** of the build rather than about a
     // type, and it needs the manifest rather than a ledger.

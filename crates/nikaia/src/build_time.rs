@@ -175,18 +175,38 @@ pub type Known<'a> = &'a dyn Fn(&str) -> Option<Value>;
 /// The evaluator, over one unit's items.
 pub struct BuildTime<'a> {
     parsed: &'a Parsed,
+    /// **Every file of this program**, because a body is an AST and an AST
+    /// belongs to the file that was parsed into it.
+    ///
+    /// The *permission* to run a callee has been program-wide from the start —
+    /// it is two ledger columns ([ADR-075](../../../docs/specification/adr/adr-075.md)
+    /// D1, D2) and a program's ledger is absorbed from its units'. What was not
+    /// was the **body**, and no column could carry one: a ledger records what a
+    /// caller has to know about a function it *cannot see the body of*, which
+    /// is the opposite of what this needs.
+    beside: &'a [&'a Parsed],
     own: &'a Ledger,
     known: Known<'a>,
     depth: usize,
+    /// Whether the body being read came from a file other than the one being
+    /// checked — see [`BuildTime::call`] for what it costs.
+    foreign: bool,
 }
 
 impl<'a> BuildTime<'a> {
-    pub fn new(parsed: &'a Parsed, own: &'a Ledger, known: Known<'a>) -> Self {
+    pub fn new(
+        parsed: &'a Parsed,
+        beside: &'a [&'a Parsed],
+        own: &'a Ledger,
+        known: Known<'a>,
+    ) -> Self {
         Self {
             parsed,
+            beside,
             own,
             known,
             depth: 0,
+            foreign: false,
         }
     }
 
@@ -210,8 +230,35 @@ impl<'a> BuildTime<'a> {
                 frame
                     .get(name)
                     .cloned()
-                    .or_else(|| (self.known)(name))
-                    .ok_or(Refusal::Unevaluable)
+                    // **A free name is the *checking* file's scope**, so it is
+                    // asked only while the body is that file's. A body read
+                    // from another file names its own file's constants, and
+                    // answering those from this one's scope would be a wrong
+                    // value rather than a missing one — the direction
+                    // [ADR-010](../../../docs/specification/adr/adr-010.md) D1
+                    // calls a vulnerability generator. Unevaluable is the
+                    // fail-closed half, and `open-work.md` carries the rest.
+                    .or_else(|| match self.foreign {
+                        true => None,
+                        false => (self.known)(name),
+                    })
+                    .ok_or_else(|| match self.foreign {
+                        // **Named rather than shrugged at.** A reader looking
+                        // at a `sync` function two files over, whose body reads
+                        // one constant, is owed the reason — and it is not the
+                        // catalogue of what this evaluator reads.
+                        true => Refusal::NotHere {
+                            what: name.to_string(),
+                            why: "it is read by a body in another file, and a free name \
+                                  there is resolved in the file being checked - which \
+                                  is not the one that wrote it. Answering from the \
+                                  wrong scope would be a wrong value rather than a \
+                                  missing one, so it is not answered at all",
+                            way_out: "pass it in as an argument, or move the `comptime` \
+                                      beside the body that reads it",
+                        },
+                        false => Refusal::Unevaluable,
+                    })
             }
             Expr::Unary { op, expr } => {
                 let inner = self.expr(expr, frame)?;
@@ -546,9 +593,9 @@ impl<'a> BuildTime<'a> {
         Refusal::NotHere {
             what: format!(".{}()", self.parsed.text(method)),
             why: "this evaluator has no value to call it on. What it reads is a call to \
-                  a function declared in this file, a method of a `struct` it made \
-                  here, and `len` and `push` over a list it holds - everything else is \
-                  `std`'s or a package's, whose body is Rust. A `comptime` runs what \
+                  a function or a method this **program** declares, and `len` and \
+                  `push` over a list it holds - everything else is `std`'s or a \
+                  package's, whose body is Rust. A `comptime` runs what \
                   this compiler can read the body of, and `sync` says a body *may* run \
                   while the program is built (ADR-075 D1) rather than that this \
                   compiler can run it",
@@ -610,22 +657,18 @@ impl<'a> BuildTime<'a> {
                           the build's own parameters (ADR-075 D2)",
             });
         }
-        let Some((args, body)) = self.body_of(name) else {
-            // **The ledger describes it and this file does not declare it.**
-            // The files of a package share one namespace (Part I 9.1), and this
-            // evaluator reads the one file it was handed — so a `comptime`
-            // calling across a file boundary is a limit of this walk rather
-            // than of the language. `open-work.md` carries it with the hazard
-            // that makes it more than plumbing.
-            //
-            // It is also where a **method** would land if one got this far, and
-            // none does: a method is refused at the expression above.
+        let Some((args, body, owner)) = self.body_of(name) else {
+            // **No file of this program declares it**, which for a name the
+            // ledger describes means a `.contracts` a package shipped: its
+            // body was compiled beside this build rather than parsed into it.
             return Err(Refusal::NotHere {
                 what: name.to_string(),
-                why: "this file does not declare it. The files of a package share one \
-                      namespace (Part I 9.1), and a build-time body is read from the \
-                      file it stands in. A `comptime` runs what this compiler can read the body of, and `sync` says a body *may* run while the program is built (ADR-075 D1) rather than that this compiler can run it",
-                way_out: "move it into this file",
+                why: "no file of this program declares it, so there is no body here to \
+                      run - a package's is compiled beside this build rather than read \
+                      by it. A `comptime` runs what this compiler can read the body of, \
+                      and `sync` says a body *may* run while the program is built \
+                      (ADR-075 D1) rather than that this compiler can run it",
+                way_out: "write the work in Nikaia, in this program, and call that",
             });
         };
         if args.len() != given.len() {
@@ -636,9 +679,19 @@ impl<'a> BuildTime<'a> {
             .map(|name| name.to_string())
             .zip(given.iter().cloned())
             .collect();
+        // **The body is read with the file it came from.** Every
+        // `parse_to_ast` builds its own interner, so a symbol from another file
+        // resolves to nothing — or to the wrong text — when read with this
+        // one's. Swapped for the length of the call and put back after, which
+        // is what makes a nested call across two more files right as well.
+        let outer = std::mem::replace(&mut self.parsed, owner);
+        let elsewhere = self.foreign || !std::ptr::eq(owner, outer);
+        let was_foreign = std::mem::replace(&mut self.foreign, elsewhere);
         self.depth += 1;
         let out = self.block(&body, &mut frame);
         self.depth -= 1;
+        self.parsed = outer;
+        self.foreign = was_foreign;
         // A body that fell off its end has no value, and a `break` or a
         // `continue` outside a loop is not a body this evaluator reads — the
         // checker refuses both long before here, and neither is a value.
@@ -652,18 +705,42 @@ impl<'a> BuildTime<'a> {
     ///
     /// A **receiver** stops it: a method needs a value to be called on, and a
     /// build-time call by name has none.
-    fn body_of(&self, name: &str) -> Option<(Vec<String>, Block)> {
+    /// The parameters, the body, and **the file the body came from**.
+    ///
+    /// The third is what makes a call across a file boundary sound: every
+    /// `parse_to_ast` builds its own interner, so a symbol from another file
+    /// resolves to nothing — or, worse, to the wrong text — when read with this
+    /// one's. So the body travels with its `Parsed` and [`Self::call`] reads it
+    /// with that.
+    ///
+    /// **This file first**, which is not an optimisation: the files of a
+    /// package share one namespace (Part I 9.1) and the checker has already
+    /// refused a duplicate, so the order settles nothing — it just means the
+    /// common case never looks further.
+    fn body_of(&self, name: &str) -> Option<(Vec<String>, Block, &'a Parsed)> {
+        let here = self.parsed;
+        self.in_file(here, name)
+            .map(|(args, body)| (args, body, here))
+            .or_else(|| {
+                self.beside.iter().find_map(|parsed| {
+                    self.in_file(parsed, name)
+                        .map(|(args, body)| (args, body, *parsed))
+                })
+            })
+    }
+
+    fn in_file(&self, parsed: &Parsed, name: &str) -> Option<(Vec<String>, Block)> {
         // `Tag::doubled` is a method's key, and it is the ledger's own — so the
         // split here is the same one `contracts` makes when it writes the
         // entry, and the two cannot drift about which name a call resolves to.
         match name.split_once("::") {
-            Some((target, method)) => self.method_of(target, method),
-            None => self.free_body_of(name),
+            Some((target, method)) => self.method_of(parsed, target, method),
+            None => self.free_body_of(parsed, name),
         }
     }
 
-    fn free_body_of(&self, name: &str) -> Option<(Vec<String>, Block)> {
-        self.parsed.program.items.iter().find_map(|item| {
+    fn free_body_of(&self, parsed: &Parsed, name: &str) -> Option<(Vec<String>, Block)> {
+        parsed.program.items.iter().find_map(|item| {
             let Item::Fn {
                 name: declared,
                 args,
@@ -678,10 +755,10 @@ impl<'a> BuildTime<'a> {
             if receiver.is_some() || !config.is_empty() {
                 return None;
             }
-            if self.parsed.text((*declared)?) != name {
+            if parsed.text((*declared)?) != name {
                 return None;
             }
-            Some((self.parameters(args), body.clone()))
+            Some((self.parameters(parsed, args), body.clone()))
         })
     }
 
@@ -695,8 +772,13 @@ impl<'a> BuildTime<'a> {
     /// A method with **no receiver** is Kap 4.2's constructor and is reached by
     /// its own name (`Stats::new`), so it takes no `self` and is left as the
     /// declaration wrote it.
-    fn method_of(&self, target: &str, method: &str) -> Option<(Vec<String>, Block)> {
-        self.parsed.program.items.iter().find_map(|item| {
+    fn method_of(
+        &self,
+        parsed: &Parsed,
+        target: &str,
+        method: &str,
+    ) -> Option<(Vec<String>, Block)> {
+        parsed.program.items.iter().find_map(|item| {
             let Item::Impl {
                 target: on,
                 methods,
@@ -705,7 +787,7 @@ impl<'a> BuildTime<'a> {
             else {
                 return None;
             };
-            if self.parsed.text(on.name) != target {
+            if parsed.text(on.name) != target {
                 return None;
             }
             methods.iter().find_map(|declared| {
@@ -720,22 +802,22 @@ impl<'a> BuildTime<'a> {
                 else {
                     return None;
                 };
-                if !config.is_empty() || self.parsed.text((*name)?) != method {
+                if !config.is_empty() || parsed.text((*name)?) != method {
                     return None;
                 }
                 let mut parameters = match receiver {
                     Some(_) => vec!["self".to_string()],
                     None => Vec::new(),
                 };
-                parameters.extend(self.parameters(args));
+                parameters.extend(self.parameters(parsed, args));
                 Some((parameters, body.clone()))
             })
         })
     }
 
-    fn parameters(&self, args: &[crate::ast::FnArg]) -> Vec<String> {
+    fn parameters(&self, parsed: &Parsed, args: &[crate::ast::FnArg]) -> Vec<String> {
         args.iter()
-            .map(|arg| self.parsed.text(arg.name).to_string())
+            .map(|arg| parsed.text(arg.name).to_string())
             .collect()
     }
 

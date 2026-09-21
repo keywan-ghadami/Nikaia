@@ -39,7 +39,7 @@ fn findings(source: &str, newly: &[(&str, &[&str])]) -> Vec<Finding> {
             )
         })
         .collect();
-    check::check_against(&parsed, &own, &library, &BTreeSet::new(), &newly).findings
+    check::check_against(&parsed, &[], &own, &library, &BTreeSet::new(), &newly).findings
 }
 
 const HANDLED: &str = "use std::io\n\n\
@@ -181,6 +181,7 @@ fn no_handler_in_the_repository_is_noted_without_a_change() {
         let own = Ledger::infer(&parsed);
         let found = check::check_against(
             &parsed,
+            &[],
             &own,
             &library,
             &BTreeSet::new(),

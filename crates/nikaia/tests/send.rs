@@ -123,6 +123,9 @@ fn refused_at(source: &str, user_parallelism: &str) -> Option<String> {
         nikaia::project::Around {
             foreign: &nikaia::project::Foreign::default(),
             newly: &nikaia::check::NewlyThrowing::new(),
+            // …and one file is the whole program here, so a `comptime` has
+            // nowhere else to call into.
+            beside: &[],
         },
         Path::new("app.nika"),
         source,

@@ -687,3 +687,106 @@ fn a_use_that_brings_a_name_in_says_to_write_the_prefix() {
         nikaia::parser::parse_to_ast(source).unwrap_or_else(|e| panic!("{source}\n{e:#}"));
     }
 }
+
+/// **A `comptime` reaches across a file boundary** (0.0.115).
+///
+/// The *permission* to run a callee had been program-wide from the start — it
+/// is two ledger columns ([ADR-075](../../../docs/specification/adr/adr-075.md)
+/// D1, D2) and a program's ledger is absorbed from its units'. What was not was
+/// the **body**, and no column could carry one: a ledger records what a caller
+/// has to know about a function it *cannot see the body of*, which is the
+/// opposite of what this needs. So the evaluator was handed the files.
+///
+/// **Run and not read**, because the hazard is an interner: every
+/// `parse_to_ast` builds its own, so a symbol from another file resolves to
+/// nothing — or to the wrong text — when read with this one's. A struct
+/// literal, an interpolation and a three-file chain are exactly the shapes
+/// that would show it.
+#[test]
+fn a_comptime_calls_across_a_file_boundary() {
+    let (_, entry) = project(
+        "comptime-across-files",
+        &[
+            (
+                "main.nika",
+                "comptime TOTAL: i64 = Point { x: 3, y: 4 }.doubled().sum()\n\
+                 comptime LABEL: &str = banner(\"nikaia\")\n\
+                 comptime CHAINED: i64 = through(5)\n\
+                 \n\
+                 fn main() {\n\
+                 \x20   println(f\"{TOTAL} {LABEL} {CHAINED}\")\n\
+                 }\n",
+            ),
+            (
+                "geometry.nika",
+                "pub struct Point { pub x: i64, pub y: i64 }\n\
+                 \n\
+                 impl Point {\n\
+                 \x20   pub fn doubled(&self) -> Point sync {\n\
+                 \x20       return Point { x: self.x * 2, y: self.y * 2 }\n\
+                 \x20   }\n\
+                 \x20   pub fn sum(&self) -> i64 sync { return self.x + self.y }\n\
+                 }\n\
+                 \n\
+                 pub fn banner(name: &str) -> String sync { return f\"[{name}]\" }\n",
+            ),
+            (
+                "deep.nika",
+                "pub fn through(n: i64) -> i64 sync { return inner(n) + 1 }\n",
+            ),
+            (
+                "inner.nika",
+                "pub fn inner(n: i64) -> i64 sync { return n * 10 }\n",
+            ),
+        ],
+    );
+    assert_eq!(run(&entry, Build::default()).trim(), "14 [nikaia] 51");
+}
+
+/// **And a free name in a foreign body is not answered from the wrong scope.**
+///
+/// A body read from another file names *that* file's constants, and the
+/// checker's scope is the file being checked. Answering from it would be a
+/// **wrong value** rather than a missing one, which is the direction
+/// [ADR-010](../../../docs/specification/adr/adr-010.md) D1 calls a
+/// vulnerability generator — so it is not answered at all, and the refusal says
+/// which limit it met.
+#[test]
+fn a_constant_a_foreign_body_reads_is_not_guessed_at() {
+    // **A real project**, because `--input` outside one is a single file
+    // (ADR-047 D1) and would meet a different wall: nothing declares `scaled`
+    // at all there.
+    let (dir, _) = project(
+        "comptime-foreign-global",
+        &[
+            (
+                "nikaia.toml",
+                "[package]\nname = \"foreign-global\"\nversion = \"0.1.0\"\n\
+                 \n[build]\nuser-parallelism = \"no\"\n",
+            ),
+            (
+                "src/main.nika",
+                "comptime X: i64 = scaled(2)\n\nfn main() { println(f\"{X}\") }\n",
+            ),
+            (
+                "src/globals.nika",
+                "comptime SCALE: i64 = 7\n\
+                 \n\
+                 pub fn scaled(n: i64) -> i64 sync { return n * SCALE }\n",
+            ),
+        ],
+    );
+    let entry = dir.join("src/main.nika");
+    let out = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .args(["--input", entry.to_str().expect("utf-8"), "--no-cache"])
+        .output()
+        .expect("the compiler runs");
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{said}");
+    assert!(said.contains("NK1127"), "{said}");
+    assert!(
+        said.contains("`SCALE`") && said.contains("resolved in the file being checked"),
+        "it names the constant and the limit:\n{said}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

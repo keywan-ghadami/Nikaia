@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.115] — 2026-09-21
+
+**A `comptime` reaches across a file boundary** — and the ledger needed nothing
+new, which is the part worth saying first.
+
+### The ledger was never the gap
+
+- **The permission has been program-wide from the start.** What a build-time body may call is two ledger columns ([ADR-075](docs/specification/adr/adr-075.md) D1, D2), and a program's ledger is absorbed from its units' — which is why `doubled` two files over passed the *contract* check and died afterwards.
+- **What was missing was the body, and no column could carry one.** A ledger records what a caller has to know about a function it *cannot see the body of*; a build-time call needs exactly the opposite. So the evaluator is handed the **files**, through `Around` beside the two facts it already carried.
+- **And a body travels with the `Parsed` that owns it**, which is the hazard that made this more than plumbing: every `parse_to_ast` builds its own interner, so a symbol from another file resolves to nothing — or to the wrong text — when read with this one's. The file is swapped for the length of the call and put back after, which is what makes a chain across three files right as well.
+
+### Added
+
+- `comptime TOTAL: i64 = Point { x: 3, y: 4 }.doubled().sum()` where `Point` and both methods are declared in another file; `banner("nikaia")` returning an interpolation built there; and `through(5)` calling from file to file to file. The test **runs** the program and reads `14 [nikaia] 51`, because a struct literal, an interpolation and a three-file chain are exactly the shapes an interner mix-up would show.
+- **The emitter is asked the same question the checker was.** What a `comptime` came to is the checker's answer and the emitter writes it, so both now get the program's files — a unit lowered against fewer files than it was checked against would refuse an item the check accepted.
+
+### Not answered, deliberately
+
+- **A free name in a body read from another file.** The checker's scope is the file being checked and a body elsewhere names its own file's constants, so answering from the wrong scope would be a **wrong value** rather than a missing one — the direction [ADR-010](docs/specification/adr/adr-010.md) D1 calls a vulnerability generator. The refusal names the constant and the limit, and offers the two ways out: pass it in, or move the `comptime` beside the body that reads it.
+
 ## [0.0.114] — 2026-09-21
 
 **A `sync` method of this program's own folds now** — the wall the owner asked

@@ -660,7 +660,7 @@ pub fn emit_module_body(
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
 ) -> Result<Lowered> {
-    emit_module_body_at(parsed, build, provenance, contracts, false)
+    emit_module_body_at(parsed, &[], build, provenance, contracts, false)
 }
 
 /// The same, saying whether these items are the crate root's.
@@ -668,14 +668,19 @@ pub fn emit_module_body(
 /// Only the crate root may carry the `fn main` Rust runs, and ADR-038 D4 makes
 /// that one generated function rather than the program's own - so a module is
 /// emitted with `false` and a `main` in it stays as written.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_module_body_at(
     parsed: &Parsed,
+    // **The program's other files**, for the one thing the emitter asks the
+    // checker that needs a body: what a `comptime` came to. See
+    // `check::propagation_against`.
+    beside: &[&Parsed],
     build: Build,
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
     entry: bool,
 ) -> Result<Lowered> {
-    Emitter::with_contracts(parsed, build, provenance, contracts.clone())
+    Emitter::with_contracts(parsed, beside, build, provenance, contracts.clone())
         .for_entry(entry)
         .items_only()
 }
@@ -1837,13 +1842,14 @@ impl<'a> Flow<'a> {
 impl<'p> Emitter<'p> {
     fn new(parsed: &'p Parsed, build: Build, provenance: crate::contracts::Provenance) -> Self {
         let own = crate::contracts::Ledger::infer(parsed);
-        Self::with_contracts(parsed, build, provenance, own)
+        Self::with_contracts(parsed, &[], build, provenance, own)
     }
 
     /// The same, against contracts that already exist - a program's rather than
     /// a file's.
     fn with_contracts(
         parsed: &'p Parsed,
+        beside: &[&Parsed],
         build: Build,
         provenance: crate::contracts::Provenance,
         own_contracts: crate::contracts::Ledger,
@@ -1913,7 +1919,7 @@ impl<'p> Emitter<'p> {
         // `let s = io::lines()` followed by `for line in s`. ADR-028 for the
         // method calls: a receiver's type is the type checker's to know, and
         // there is one type checker (ADR-028).
-        let propagation = crate::check::propagation_against(parsed, &own_contracts);
+        let propagation = crate::check::propagation_against(parsed, beside, &own_contracts);
 
         // ADR-037 D7: which count each `Shared` value gets. Computed over the
         // whole unit, because a count belongs to an allocation and a handle's
@@ -8773,6 +8779,7 @@ pub fn branch_starts_first<'p>(
 ) -> impl Fn(&Spanned<Stmt>) -> bool + 'p {
     let emitter = Emitter::with_contracts(
         parsed,
+        &[],
         build,
         crate::contracts::Provenance::Trusted,
         contracts.clone(),

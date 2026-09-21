@@ -513,7 +513,7 @@ pub fn check_program(
     library: &Ledger,
     modules: &BTreeSet<String>,
 ) -> Checked {
-    check_against(parsed, own, library, modules, &NewlyThrowing::new())
+    check_against(parsed, &[], own, library, modules, &NewlyThrowing::new())
 }
 
 /// The same, told what a callee has newly gained since the committed ledger
@@ -523,16 +523,23 @@ pub fn check_program(
 /// answer is a fact about the *build* — two ledgers, one of them on disk — and
 /// every other caller of `check_program` is handed one program and no history.
 /// An empty map is what they all pass, and an empty map says nothing.
-pub fn check_against(
-    parsed: &Parsed,
-    own: &Ledger,
-    library: &Ledger,
+pub fn check_against<'a>(
+    parsed: &'a Parsed,
+    // **The program's other files**, for the one question that needs a body
+    // rather than a contract: a `comptime` calling across a file boundary
+    // ([ADR-073](../../docs/specification/adr/adr-073.md) D5). Empty for a
+    // caller that has one file, which is every test and every `--input`
+    // outside a project.
+    beside: &'a [&'a Parsed],
+    own: &'a Ledger,
+    library: &'a Ledger,
     modules: &BTreeSet<String>,
-    newly: &NewlyThrowing,
+    newly: &'a NewlyThrowing,
 ) -> Checked {
     let mut checker = Checker {
         newly,
         parsed,
+        beside,
         own,
         library,
         structs: BTreeMap::new(),
@@ -951,16 +958,28 @@ pub fn fallible_loops(parsed: &Parsed) -> BTreeSet<usize> {
 /// The same, against contracts the caller already has - which for a program of
 /// several files is the **program's** ledger and not this file's (Part I, 9.1).
 pub fn fallible_loops_against(parsed: &Parsed, own: &Ledger) -> BTreeSet<usize> {
-    propagation_against(parsed, own).loops
+    propagation_against(parsed, &[], own).loops
 }
 
 /// Both halves of ADR-023 D8's propagation, against contracts the caller
 /// already has.
-pub fn propagation_against(parsed: &Parsed, own: &Ledger) -> Propagation {
+pub fn propagation_against(parsed: &Parsed, beside: &[&Parsed], own: &Ledger) -> Propagation {
     let Ok(library) = Ledger::parse(crate::contracts::STD) else {
         return Propagation::default();
     };
-    let checked = check(parsed, own, &library);
+    // **The same walk the refusal ran**, `beside` included: a `comptime` that
+    // calls across a file boundary is answered by the checker, and what the
+    // emitter writes is that answer. Handing it fewer files than the check had
+    // would make the emitter refuse an item the checker accepted, which is the
+    // two halves disagreeing about one program.
+    let checked = check_against(
+        parsed,
+        beside,
+        own,
+        &library,
+        &BTreeSet::new(),
+        &NewlyThrowing::new(),
+    );
     Propagation {
         loops: checked.fallible_loops,
         pausing_loops: checked.pausing_loops,
@@ -1225,6 +1244,13 @@ struct Checker<'a> {
     /// there is nothing to compare, which says nothing.
     newly: &'a NewlyThrowing,
     parsed: &'a Parsed,
+    /// **The program's other files**, for the one question that needs a body
+    /// rather than a contract — a `comptime` calling across a file boundary.
+    ///
+    /// Empty for a caller that has one file, which is every test and every
+    /// `--input` outside a project. It carries `Parsed` and not just items,
+    /// because each one owns the interner its symbols resolve in.
+    beside: &'a [&'a Parsed],
     /// This unit's own contracts, inferred from the source being checked.
     own: &'a Ledger,
     /// `std`'s, as `std` ships them.
@@ -8117,7 +8143,7 @@ impl<'a> Checker<'a> {
                     .clone()
                     .or_else(|| held.constant.map(build_time::Value::Int))
             };
-            build_time::BuildTime::new(self.parsed, self.own, &known).evaluate(value)
+            build_time::BuildTime::new(self.parsed, self.beside, self.own, &known).evaluate(value)
         };
         match outcome {
             Ok(value) => (Some(value), false),
@@ -10090,9 +10116,8 @@ impl<'a> Checker<'a> {
                     "what it evaluates today is an integer, a `bool`, **text** or a \
                          **list** - a literal, `f\"… {n} …\"`, arithmetic and \
                          comparisons over literals and over other constants, `+`, `==` and \
-                         `.len()` over text, an `if`, a **call** to a function declared **in this \
-                         file** or a **method** of a `struct` declared here, whose body \
-                         is made of those, a `for` over a range or a `while` \
+                         `.len()` over text, an `if`, a **call** to a function or a **method** \
+                         this **program** declares, whose body is made of those, a `for` over a range or a `while` \
                          inside such a body, and `xs[i]`, `xs[i] = …`, `xs.push(…)` and \
                          `xs.len()` over a list it holds (ADR-073 D5's second stage). \
                          What a build-time value owns, the program gets a view of: a \

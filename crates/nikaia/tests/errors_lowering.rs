@@ -630,6 +630,9 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
         nikaia::project::Around {
             foreign: &nikaia::project::Foreign::default(),
             newly: &nikaia::check::NewlyThrowing::new(),
+            // One file is the whole program here, so a `comptime` has
+            // nowhere else to call into.
+            beside: &[],
         },
         &path,
         source,
