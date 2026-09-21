@@ -1078,6 +1078,18 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
                 }
             }
         }
+        // **`with` names its operand too** — the fields it does not write come
+        // from there, so a read of the copy is a read of the value it copied
+        // ([ADR-118](../../../docs/specification/adr/adr-118.md) D3).
+        Expr::With { base, fields, .. } => {
+            names_in(parsed, base, out);
+            for field in fields {
+                out.insert(parsed.text(field.name).to_string());
+                if let Some(value) = &field.value {
+                    names_in(parsed, value, out);
+                }
+            }
+        }
         Expr::Block(block)
         | Expr::Unsafe(block)
         | Expr::Overlap(block)

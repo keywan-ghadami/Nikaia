@@ -26,7 +26,7 @@
 10-nikaia-light.md #26 refused (a body) [NK1117]  // If find_user returns null, 'name' becomes null.
 10-nikaia-light.md #27 lowered (as written)  // file: users.nika
 10-nikaia-light.md #28 refused (as written) [NK1135]  // file: users.nika
-10-nikaia-light.md #29 fragment (as written)  let moved = p with { x: p.x + 1 }
+10-nikaia-light.md #29 refused (a body) [NK1117,NK1173]  let moved = p with { x: p.x + 1 }
 10-nikaia-light.md #30 lowered (as written) [about-a-refusal]  // file: main.nika
 10-nikaia-light.md #31 lowered (as written)  // Defining behavior for the User struct
 10-nikaia-light.md #32 lowered (as written)  enum Message {

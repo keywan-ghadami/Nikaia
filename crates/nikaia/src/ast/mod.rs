@@ -472,6 +472,26 @@ pub enum Expr {
         fields: Vec<FieldInit>,
     },
 
+    /// `p with { x: p.x + 1 }` — a **copy of a value with named fields
+    /// changed** ([ADR-118](../../../docs/specification/adr/adr-118.md) D1).
+    ///
+    /// The braces are the literal's, with its field list and its shorthand, so
+    /// `fields` is the same `Vec<FieldInit>` a `StructLit` carries and every
+    /// rule about naming a field is the one a literal already has.
+    ///
+    /// **`at` is here because the language below needs a name this node does
+    /// not carry.** Rust's functional update is `Point { x: 1, ..p }` — the
+    /// type is written — and the operand's type is the checker's answer rather
+    /// than the parser's. So the checker records it under this byte and the
+    /// emitter reads it back, which is the handover a `comptime`'s value
+    /// already makes ([ADR-011](../../../docs/specification/adr/adr-011.md) D2:
+    /// the emitter is told, it does not work it out).
+    With {
+        base: Box<Expr>,
+        fields: Vec<FieldInit>,
+        at: usize,
+    },
+
     // Kap 5.2: `fn(acc, m) { … }`. One form, and its arguments are the ones it
     // names - the automatic `a`, `b`, `c` are withdrawn (ADR-049), so `fn { … }`
     // is a lambda of no arguments and nothing is read off the body.

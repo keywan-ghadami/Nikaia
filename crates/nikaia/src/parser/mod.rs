@@ -780,6 +780,10 @@ pub enum Postfix {
     SafeMethod(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Method(Symbol, Vec<ast::Expr>, Vec<ast::ConfigArg>),
     Index(Box<ast::Expr>),
+    /// `with { x: 1 }` — [ADR-118](../../../docs/specification/adr/adr-118.md)
+    /// D1. The `usize` is the byte the `with` stands at, which is the key the
+    /// checker records the operand's type under.
+    With(Vec<ast::FieldInit>, usize),
 }
 
 /// A declaration's parameters, with the config zone split into its two shapes.
@@ -849,6 +853,11 @@ pub fn fold_postfix(base: ast::Expr, tail: Vec<Postfix>) -> ast::Expr {
         Postfix::Index(index) => ast::Expr::Index {
             base: Box::new(recv),
             index,
+        },
+        Postfix::With(fields, at) => ast::Expr::With {
+            base: Box::new(recv),
+            fields,
+            at,
         },
     })
 }
@@ -2497,7 +2506,33 @@ grammar! {
           // `t.0` - a tuple's parts are numbered, and the number is a field
           // name like any other, so nothing downstream has to know.
           | "." index:digits -> { Postfix::Field(_state.intern(&index)) }
+          // **`value with { field: … }`**
+          // ([ADR-118](../../../../docs/specification/adr/adr-118.md) D1): a
+          // copy of a value with named fields changed. A postfix rather than a
+          // binary operator, because D1's left operand is *any expression of a
+          // struct type* - a name, a field, a call - which is exactly what
+          // stands to the left of a postfix tail, and because it nests: D2's
+          // `p with { pos: p.pos with { x: 1 } }` is this rule twice.
+          //
+          // The braces are the literal's and so is `field_inits`, which is why
+          // the shorthand `user with { name }` costs nothing here.
+          | t:with_tail -> { t }
 
+
+        // `@=` for the byte: the checker records the operand's type under it and
+        // the emitter reads it back, because Rust's functional update needs a
+        // name this node does not carry.
+        //
+        // **An empty `{ }` parses and the checker refuses it**, with `NK1174`.
+        // D1's reason is about meaning — a copy that changes nothing is a line
+        // the reader would puzzle over — so it belongs where meaning is read;
+        // and a `fail` here put its caret on the line *after* the braces,
+        // because the parser had already consumed them and the implicit
+        // whitespace behind them.
+        rule with_tail -> Postfix @=
+            KW_WITH "{" fields:field_inits? "}" -> {
+                Postfix::With(fields.unwrap_or_default(), _span.start)
+            }
 
         // The lambda `closure_expr` reads, in the position where it follows
         // the call instead of sitting inside its parentheses. Its arguments are

@@ -1169,18 +1169,6 @@ language's words, where the old spelling was a parse fragment.
 table with the `dsl X from e` message matching the bare word; `asset("…")`
 when the second stage of `comptime` lands; the two `fs` entries.
 
-### 2.27. `with` is a copy of a value with named fields changed
-
-[ADR-118](specification/adr/adr-118.md). `p with { x: p.x + 1 }` is a new
-value of the same type; the braces are the literal's, only the top level, the
-unnamed fields are moved, and across a package only `pub` fields may be
-named. **Nothing of it is built**: `with` is a reserved word without a rule.
-
-*What it needs, in the record's order (§5):* the grammar rule and AST node;
-the checker's field resolution and refusals, the enum operand refused; the
-lowering to a struct expression with a base; `examples/1brc.nika`'s `Stats`
-and a test.
-
 ### 2.28. A target without an operating system
 
 [ADR-119](specification/adr/adr-119.md). A bare-metal target with

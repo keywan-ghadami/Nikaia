@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.120 (Draft)
+**Version:** 0.0.121 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -1091,7 +1091,13 @@ The braces are the struct literal's, with its field list and its shorthand.
 afterwards, the refusal names the copy to write. Across a package, `with` names
 `pub` fields only, as a literal does.
 
-> **Implementation status:** Not implemented ([ADR-118](adr/adr-118.md) §5).
+> **Implementation status:** Implemented ([ADR-118](adr/adr-118.md) §5). A field
+> the type does not have is `NK1107` and a private one `NK1110`, both the
+> literal's own refusals; a field named twice is `NK1172`, here and in a plain
+> literal; a `with` that names none is `NK1174`. `NK1173` is the operand: an
+> `enum`, a **view** — what `with` does not name it takes by move, and there is
+> nothing to move out of a view — a type with no fields, or a value whose type
+> this compiler did not work out.
 
 **Usage Example**
 Another package reaches `User` through its constructor.

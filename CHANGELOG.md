@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.121] — 2026-09-21
+
+**`with` — a copy of a value with named fields changed** —
+[ADR-118](docs/specification/adr/adr-118.md), Part I 4.2. A word that had been
+reserved since 0.0.8 and had no rule.
+
+### Added
+
+- **`p with { x: p.x + 1 }`** is a new value of the same type, with the named fields changed and the rest taken from `p`. One postfix rule, so D1's *any expression of a struct type* is exactly what stands to the left of one, and D2's `p with { pos: p.pos with { x: 1 } }` is that rule twice.
+- **The braces are the struct literal's**, and so is everything about naming a field: the list, the shorthand (`user with { name }`), and the refusals. A field the type does not have is `NK1107` and a private one `NK1110`, both reused rather than written again.
+- **Below it is one struct expression with a base** — `Point { x: 4, ..p }`, and never `..p.clone()`: no copy is inserted that the program did not write ([ADR-107](docs/specification/adr/adr-107.md) D3).
+
+### Refused
+
+- **`NK1173` is the operand**, which is the whole of what is new. One claim, four reasons, each with a way out that can be taken: an **enum**, whose fields depend on a variant the type does not say — and the way out names `match`, where a variant *is* known, which is the decision [ADR-118](docs/specification/adr/adr-118.md) §4 deliberately left open; a **view**, because the unnamed fields are taken by move and there is nothing to move out of one; a type with no fields; and a value whose type this compiler did not work out.
+- **That last one is why the refusal has to exist at all.** The lowering writes the type's name and the node carries none, so the checker records what it worked out and the emitter reads it back — the handover a `comptime`'s value already makes ([ADR-011](docs/specification/adr/adr-011.md) D2). A `with` with no entry never reaches the emitter, because `NK1173` refused it first.
+- **`NK1174`** is a `with` that names no field. D1's reason is about meaning — a copy that changes nothing is a line the reader would puzzle over — so it is read by the checker. The parser could refuse `{ }` and did for an afternoon; its caret landed on the line *after* the braces, because by then it had consumed them and the whitespace behind them.
+
+### Fixed, one construct over
+
+- **`Point { x: 1, x: 2 }` used to lower**, and `rustc` answered about the generated file — [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class. The rule is the literal's and the record only restates it for `with`; `NK1172` is written once and both come to it, because one rule written twice is two rules waiting to disagree.
+
+### Measured: the corpus example moved
+
+- **[ADR-118](docs/specification/adr/adr-118.md) §5 named `examples/1brc.nika`'s `Stats`.** Reading it says no: `Stats` changes in place through `&mut self` — `add` and `merge` are written that way because they run inside `par_iter` — and a `with` there would mean returning a new `Stats` from each, which reads worse and moves a benchmark's call sites. Nothing else in the corpus copies a struct with one field changed.
+- **What moved instead is Part I 4.2's own block**, which was a fragment nothing could parse and is a program this compiler reads now. That is one line of the specification baseline, and it is the kind of progress that file exists to show.
+
 ## [0.0.120] — 2026-09-21
 
 **The two bounds that ask what a type *is*** —

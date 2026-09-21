@@ -873,6 +873,13 @@ fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e 
         Expr::StructLit { fields, .. } => {
             children.extend(fields.iter().filter_map(|f| f.value.as_ref()))
         }
+        // A copy carries what it did not name, so the operand is a part of it
+        // exactly as the written fields are
+        // ([ADR-118](../../docs/specification/adr/adr-118.md) D3).
+        Expr::With { base, fields, .. } => {
+            children.push(base);
+            children.extend(fields.iter().filter_map(|f| f.value.as_ref()));
+        }
         Expr::Match { value, arms } => {
             children.push(value);
             children.extend(arms.iter().map(|a| &a.body));

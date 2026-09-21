@@ -1101,6 +1101,14 @@ struct Emitter<'p> {
     /// knows what `PAGE` is. A statement with no entry never arrives, because
     /// the checker refused it as `NK1127` first.
     comptime_values: std::collections::BTreeMap<usize, (String, String)>,
+    /// **The type each `with` copies**, by the byte the word stands at
+    /// (`check::Checked::with_types`,
+    /// [ADR-118](../../docs/specification/adr/adr-118.md) D1).
+    ///
+    /// Rust's functional update writes the name — `Point { x: 1, ..p }` — and
+    /// this walk has no types, so it is told. A `with` with no entry never
+    /// arrives: the checker refused it as `NK1173` first.
+    with_types: std::collections::BTreeMap<usize, String>,
     /// Part I 3.5: the `?.` reaches whose field is itself nullable and which
     /// therefore flatten (`check::Checked::flattened_reaches`).
     flattened_reaches: std::collections::BTreeSet<(usize, String)>,
@@ -1966,6 +1974,7 @@ impl<'p> Emitter<'p> {
             lent_lets: propagation.lent_lets,
             array_literals: propagation.array_literals,
             comptime_values: propagation.comptime_values,
+            with_types: propagation.with_types,
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
             lent_args: propagation.lent_args,
@@ -5175,6 +5184,37 @@ impl<'p> Emitter<'p> {
                         out.push(&format!(": Some({name})"));
                     }
                 }
+                out.push(" }");
+            }
+            // **`p with { x: p.x + 1 }`** is Rust's functional update
+            // ([ADR-118](../../docs/specification/adr/adr-118.md) D1, D3): the
+            // named fields, then `..base`, from which every field the program
+            // did not name comes **by move**. No copy is inserted that the
+            // program did not write ([ADR-107](../../docs/specification/adr/adr-107.md)
+            // D3), which is why this is `..base` and not `..base.clone()`.
+            //
+            // The type is the checker's answer, read back under the byte the
+            // `with` stands at. There is always one, because a `with` this
+            // compiler could not name a type for was refused with `NK1173`.
+            Expr::With { base, fields, at } => {
+                let Some(owner) = self.with_types.get(at).cloned() else {
+                    return Err(refused_at!(
+                        *at,
+                        "this `with` has no type to copy, which `NK1173` reports - \
+                         so it should not have reached the emitter"
+                    ));
+                };
+                out.push(&format!("{owner} {{ "));
+                for field in fields {
+                    out.push(&self.name(field.name));
+                    if let Some(value) = &field.value {
+                        out.push(": ");
+                        self.expr(out, value, depth, flow)?;
+                    }
+                    out.push(", ");
+                }
+                out.push("..");
+                self.expr(out, base, depth, flow)?;
                 out.push(" }");
             }
             // A lambda's arguments are the ones it names (ADR-049): nothing is

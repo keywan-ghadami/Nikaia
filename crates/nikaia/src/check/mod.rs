@@ -168,6 +168,16 @@ pub struct Checked {
     /// Both are spelled in the language below, so the emitter writes the pair
     /// and decides nothing.
     pub comptime_values: BTreeMap<usize, (String, String)>,
+    /// **The type each `with` copies**, by the byte the word stands at
+    /// ([ADR-118](../../docs/specification/adr/adr-118.md) D1).
+    ///
+    /// Rust's functional update writes the struct's name — `Point { x: 1, ..p }`
+    /// — and the operand's type is this walk's answer rather than the parser's.
+    /// So the emitter is **told**, the way it is told a `comptime`'s value:
+    /// [ADR-011](../../docs/specification/adr/adr-011.md) D2 keeps it a walk
+    /// that knows no types, and a second inference living in it would be the
+    /// two halves free to disagree about one program.
+    pub with_types: BTreeMap<usize, String>,
     /// The `for` statements whose **step can fail** (ADR-025 D1), by the byte
     /// the statement starts at.
     ///
@@ -935,6 +945,8 @@ pub struct Propagation {
     pub task_handles: BTreeSet<(usize, String)>,
     /// [`Checked::comptime_values`].
     pub comptime_values: BTreeMap<usize, (String, String)>,
+    /// [`Checked::with_types`].
+    pub with_types: BTreeMap<usize, String>,
     /// [`Checked::concatenations`].
     pub concatenations: BTreeSet<usize>,
     /// [`Checked::lent_lets`].
@@ -997,6 +1009,7 @@ pub fn propagation_against(parsed: &Parsed, beside: &[&Parsed], own: &Ledger) ->
         nullable_in_args: checked.nullable_args,
         task_handles: checked.task_handles,
         comptime_values: checked.comptime_values,
+        with_types: checked.with_types,
         concatenations: checked.concatenations,
         lent_lets: checked.lent_lets,
         array_literals: checked.array_literals,
@@ -1156,6 +1169,19 @@ fn rust_array_value(items: &[build_time::Value]) -> Option<String> {
         });
     }
     Some(format!("[{}]", written.join(", ")))
+}
+
+/// Why a `with` was refused — the four shapes
+/// [ADR-118](../../docs/specification/adr/adr-118.md) gives one claim.
+enum Copyable {
+    /// An `enum`: which fields a copy carries depends on the variant (§4).
+    AnEnum,
+    /// A view: there is nothing here to move out of (D3).
+    AView,
+    /// A type with no fields this compiler has read.
+    NotAStruct,
+    /// A type this compiler could not name, and the lowering writes one.
+    Unnamed,
 }
 
 /// A name in scope: what it is called, the type it holds, and - where this
@@ -4975,8 +5001,16 @@ impl<'a> Checker<'a> {
                 // else says so: the declaration writes `first: $T` and the
                 // value is an `i64`, which is one `bind` per field.
                 let mut bound: BTreeMap<String, Ty> = BTreeMap::new();
+                // **A field named twice** is `NK1172`, here and in a `with` for
+                // one reason ([ADR-118](../../docs/specification/adr/adr-118.md)
+                // D1 restates the literal's rule): `Point { x: 1, x: 2 }` used
+                // to lower, and `rustc` answered about the generated file.
+                let mut seen: BTreeSet<String> = BTreeSet::new();
                 for init in fields {
                     let field = self.parsed.text(init.name).to_string();
+                    if !seen.insert(field.clone()) {
+                        self.a_field_written_twice(&name, &field, span);
+                    }
                     // `Reading { name, temp }` is shorthand for `name: name`.
                     let found = match &init.value {
                         Some(value) => self.expr(value, span),
@@ -5046,6 +5080,90 @@ impl<'a> Checker<'a> {
                     }
                     None => Ty::named(name),
                 }
+            }
+
+            // **`value with { field: … }`**
+            // ([ADR-118](../../docs/specification/adr/adr-118.md) D1): a copy of
+            // a value with named fields changed, of the same type. Every rule
+            // about *naming* a field is the literal's — the braces are the
+            // literal's — so what is new here is the **operand**: it has to be
+            // a struct this compiler can name, because what it lowers to is
+            // Rust's `Point { x: 1, ..p }` and the type is written there.
+            Expr::With { base, fields, at } => {
+                let found = self.expr(base, span);
+                let Ty::Named {
+                    name,
+                    view,
+                    args: _,
+                } = &found
+                else {
+                    self.a_with_over_something_else(&found.text(), Copyable::Unnamed, span);
+                    return Ty::Unknown;
+                };
+                let name = self.parsed.unaliased(name);
+                // **An enum is refused with a message naming `match`**
+                // (ADR-118 §4): `m with { x: 1 }` cannot be typed without
+                // knowing the variant, and inside a `match` arm it is known —
+                // which is a decision that record deliberately left open.
+                if self.enums.contains_key(&name) {
+                    self.a_with_over_something_else(&name, Copyable::AnEnum, span);
+                    return found;
+                }
+                // **A view is not something to move from** (D3): what `with`
+                // does not name it takes from the operand *by move*, and no
+                // copy is inserted that the program did not write (ADR-107 D3).
+                if *view {
+                    self.a_with_over_something_else(&name, Copyable::AView, span);
+                    return Ty::named(name);
+                }
+                let Some(declared) = self.fields_of(&name) else {
+                    self.a_with_over_something_else(&name, Copyable::NotAStruct, span);
+                    return found;
+                };
+                // **A copy that changes nothing is the value** (D1).
+                if fields.is_empty() {
+                    self.a_with_that_changes_nothing(&name, span);
+                }
+                let mut seen: BTreeSet<String> = BTreeSet::new();
+                for init in fields {
+                    let field = self.parsed.text(init.name).to_string();
+                    if !seen.insert(field.clone()) {
+                        self.a_field_written_twice(&name, &field, span);
+                    }
+                    // `user with { name }` — the shorthand is the literal's.
+                    let given = match &init.value {
+                        Some(value) => self.expr(value, span),
+                        None => self.lookup(&field).unwrap_or(Ty::Unknown),
+                    };
+                    match declared.iter().find(|f| f.name == field) {
+                        Some(held) => {
+                            // **D4: a field may be named only where a literal
+                            // could name it.** The private field a copy merely
+                            // *carries* is never named, so it never reaches
+                            // this.
+                            self.field_is_reachable(&name, held, span);
+                            let want = held.ty.clone();
+                            let owner = name.clone();
+                            let field = field.clone();
+                            self.expect(
+                                &given,
+                                &want,
+                                span.clone(),
+                                "field",
+                                move |given, want| {
+                                    format!("`{owner}.{field}` is `{want}`, and this is `{given}`")
+                                },
+                            );
+                        }
+                        None => self.no_such_field(&name, &field, &declared, span),
+                    }
+                }
+                // **The type, for the emitter** (ADR-011 D2): Rust writes the
+                // struct's name in a functional update and this node does not
+                // carry one, so the answer travels under the byte the `with`
+                // stands at rather than being worked out twice.
+                self.checked.with_types.insert(*at, name.clone());
+                found
             }
 
             // A lambda's arguments are the ones it names (ADR-049). There is
@@ -9692,6 +9810,123 @@ impl<'a> Checker<'a> {
                     .to_string(),
             ],
             help: Some("write the expression as a statement, or bind it to a name".to_string()),
+        });
+    }
+
+    /// **`NK1172`: one field, named twice.**
+    ///
+    /// `Point { x: 1, x: 2 }` lowered, and `rustc` answered about the
+    /// **generated file** — [Part III
+    /// C.1](../../docs/specification/30-nikaia-tooling.md)'s class. The rule is
+    /// the literal's and [ADR-118](../../docs/specification/adr/adr-118.md) D1
+    /// restates it for `with`, which borrows the braces; both come here, because
+    /// one rule written twice is two rules waiting to disagree.
+    fn a_field_written_twice(&mut self, ty: &str, field: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1172",
+            message: format!("`{field}` is named twice here, and `{ty}` has one of it"),
+            notes: vec![
+                "a field list gives each field its value once - there is no meaning a \
+                 compiler may pick between, and the later one silently winning is the \
+                 reading this language does not offer (Part I, 4.2)"
+                    .to_string(),
+            ],
+            help: Some(format!("take one of the two `{field}` out")),
+        });
+    }
+
+    /// **`NK1174`: a `with` that names no field**
+    /// ([ADR-118](../../docs/specification/adr/adr-118.md) D1).
+    ///
+    /// *A copy that changes nothing is a line the reader would puzzle over* —
+    /// which is the record's own reason, and it is about **meaning** rather
+    /// than syntax, so it is read here. The parser could refuse `{ }` and did
+    /// for an afternoon; its caret landed on the line *after* the braces,
+    /// because by then it had consumed them and the whitespace behind them.
+    fn a_with_that_changes_nothing(&mut self, ty: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1174",
+            message: format!("this `with` names no field, so it is the `{ty}` it copies"),
+            notes: vec![
+                "`with` is read as *this value, with these fields different* (ADR-118 D1) \
+                 - and one that names none says nothing a reader can act on, which is a \
+                 line they would stop at looking for what it does"
+                    .to_string(),
+            ],
+            help: Some("name the fields that change, or drop the `with`".to_string()),
+        });
+    }
+
+    /// **`NK1173`: a `with` over a value it cannot copy**
+    /// ([ADR-118](../../docs/specification/adr/adr-118.md) D1, D3, §4).
+    ///
+    /// One claim — *this is not a value `with` copies* — and four reasons, each
+    /// with a way out that can be taken
+    /// ([Part III C.2](../../docs/specification/30-nikaia-tooling.md)). The
+    /// enum's is the one the record names by hand: `m with { x: 1 }` cannot be
+    /// typed without knowing the variant, and `match` is where a variant is
+    /// known.
+    fn a_with_over_something_else(&mut self, ty: &str, why: Copyable, span: &Span) {
+        let (note, way_out) = match why {
+            Copyable::AnEnum => (
+                format!(
+                    "`{ty}` is an `enum`, and which fields a copy would carry depends on the \
+                     variant - which the type does not say (ADR-118 §4)"
+                ),
+                "match on it first, and build the variant's value in the arm where it is \
+                 known"
+                    .to_string(),
+            ),
+            Copyable::AView => (
+                format!(
+                    "`with` takes the fields it does not name from the value **by move** \
+                     (ADR-118 D3), and `&{ty}` is a view - there is nothing here to move \
+                     out of, and a copy this compiler inserted would be one the program \
+                     did not write (ADR-107 D3)"
+                ),
+                format!(
+                    "take the value rather than a view of it, or write a `{ty} {{ … }}` \
+                     naming every field"
+                ),
+            ),
+            Copyable::NotAStruct => (
+                format!(
+                    "`with` copies a **struct**, field by field, and `{ty}` is not one this \
+                     program declares with fields (Part I, 4.1)"
+                ),
+                "write the value the type's own constructor takes".to_string(),
+            ),
+            Copyable::Unnamed => (
+                "`with` lowers to a copy that **writes the type's name** - `Point { x: 1, \
+                 ..p }` - so a value whose type this compiler has not worked out has \
+                 nothing to write"
+                    .to_string(),
+                "write the type on the binding this reads, or name every field in a \
+                 literal"
+                    .to_string(),
+            ),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1173",
+            message: match why {
+                // A type this compiler could not work out prints as `?`, which
+                // is a headline about nothing. What the reader needs to know is
+                // that it is the *type* that is missing, not the value.
+                Copyable::Unnamed => {
+                    "`with` copies a struct, and this compiler could not work out what type \
+                     this is"
+                        .to_string()
+                }
+                _ => format!("`with` copies a struct, and this is `{ty}`"),
+            },
+            notes: vec![note],
+            help: Some(way_out),
         });
     }
 
