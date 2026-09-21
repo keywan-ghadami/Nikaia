@@ -118,7 +118,7 @@ fn an_argument_of_the_wrong_type_is_reported() {
     assert_eq!(code, "NK1102");
     assert_eq!(
         message,
-        "`greet` takes `who: String`, and this call passes `&str`"
+        "`greet` takes `who: String`, and this call passes `ref String`"
     );
 }
 
@@ -137,7 +137,7 @@ fn a_return_of_the_wrong_type_is_reported() {
     assert_eq!(code, "NK1104");
     assert_eq!(
         message,
-        "this returns `&str`, and the function declares `i32`"
+        "this returns `ref String`, and the function declares `i32`"
     );
 }
 
@@ -145,7 +145,7 @@ fn a_return_of_the_wrong_type_is_reported() {
 /// answers to the declared type exactly as a `return` does.
 #[test]
 fn a_tail_expression_of_the_wrong_type_is_reported() {
-    let (code, _) = one("fn label(name: &str) -> i32 {\n\
+    let (code, _) = one("fn label(name: ref String) -> i32 {\n\
          \x20   name\n\
          }");
     assert_eq!(code, "NK1104");
@@ -171,20 +171,23 @@ fn a_struct_field_of_the_wrong_type_is_reported() {
     let (code, message) = one("struct Reading { name: String, temp: i32 }\n\
          fn main() { let r = Reading { name: \"Hamburg\", temp: 12 } }");
     assert_eq!(code, "NK1106");
-    assert_eq!(message, "`Reading.name` is `String`, and this is `&str`");
+    assert_eq!(
+        message,
+        "`Reading.name` is `String`, and this is `ref String`"
+    );
 }
 
 /// A field that is not there, with the one that was probably meant.
 #[test]
 fn a_field_that_does_not_exist_is_reported() {
-    let (code, message) = one("struct Reading { name: &str, temp: i32 }\n\
-         fn label(r: &Reading) -> &str { return r.nmae }");
+    let (code, message) = one("struct Reading { name: ref String, temp: i32 }\n\
+         fn label(r: ref Reading) -> ref String { return r.nmae }");
     assert_eq!(code, "NK1107");
     assert_eq!(message, "`Reading` has no field `nmae`");
     assert_eq!(
         findings(
-            "struct Reading { name: &str, temp: i32 }\n\
-                  fn label(r: &Reading) -> &str { return r.nmae }"
+            "struct Reading { name: ref String, temp: i32 }\n\
+                  fn label(r: ref Reading) -> ref String { return r.nmae }"
         )[0]
         .help
         .as_deref(),
@@ -195,7 +198,7 @@ fn a_field_that_does_not_exist_is_reported() {
 /// …and one in a struct literal, which is the same mistake in the other place.
 #[test]
 fn a_field_that_does_not_exist_in_a_literal_is_reported() {
-    let (code, message) = one("struct Reading { name: &str }\n\
+    let (code, message) = one("struct Reading { name: ref String }\n\
          fn main() { let r = Reading { nmae: \"Hamburg\" } }");
     assert_eq!(code, "NK1107");
     assert_eq!(message, "`Reading` has no field `nmae`");
@@ -209,7 +212,7 @@ fn a_while_condition_that_is_not_a_bool_is_reported() {
          \x20   while name { }\n\
          }");
     assert_eq!(code, "NK1108");
-    assert_eq!(message, "this is `&str`, and a condition is a `bool`");
+    assert_eq!(message, "this is `ref String`, and a condition is a `bool`");
     assert_eq!(
         findings(
             "fn main() {\n\
@@ -230,14 +233,14 @@ fn a_condition_that_is_not_a_bool_is_reported() {
          \x20   if name { }\n\
          }");
     assert_eq!(code, "NK1108");
-    assert_eq!(message, "this is `&str`, and a condition is a `bool`");
+    assert_eq!(message, "this is `ref String`, and a condition is a `bool`");
 }
 
 /// A grammar's action builds the rule's value, so it answers to the rule's
 /// declared type - and a struct literal in one is checked like any other.
 #[test]
 fn a_grammar_action_is_checked_against_its_rule() {
-    let (code, message) = one("struct Reading { name: &str, temp: i32 }\n\
+    let (code, message) = one("struct Reading { name: ref String, temp: i32 }\n\
          grammar Measurements {\n\
          \x20   rule LINE -> Reading = name:until(\";\") \";\" temp:digit\n\
          \x20       -> { Reading { nmae: name, temp: temp } }\n\
@@ -255,7 +258,7 @@ fn a_grammar_action_of_the_wrong_type_is_reported() {
     assert_eq!(code, "NK1104");
     assert_eq!(
         message,
-        "this action builds `&str`, and its rule declares `i32`"
+        "this action builds `ref String`, and its rule declares `i32`"
     );
 }
 
@@ -275,13 +278,13 @@ fn a_loop_binds_the_element_type_of_a_list() {
 /// An option the callee does not have, with the one that was probably meant.
 #[test]
 fn an_option_that_does_not_exist_is_reported() {
-    let (code, message) = one("fn request(url: &str; timeout: i32 = 30) { }\n\
+    let (code, message) = one("fn request(url: ref String; timeout: i32 = 30) { }\n\
          fn main() { request(\"x\"; timout: 5) }");
     assert_eq!(code, "NK1109");
     assert_eq!(message, "`request` has no option `timout`");
     assert_eq!(
         findings(
-            "fn request(url: &str; timeout: i32 = 30) { }\n\
+            "fn request(url: ref String; timeout: i32 = 30) { }\n\
              fn main() { request(\"x\"; timout: 5) }"
         )[0]
         .help
@@ -301,12 +304,12 @@ fn an_option_on_a_function_that_takes_none_is_reported() {
 /// An option is checked by type like anything else.
 #[test]
 fn an_option_of_the_wrong_type_is_reported() {
-    let (code, message) = one("fn request(url: &str; timeout: i32 = 30) { }\n\
+    let (code, message) = one("fn request(url: ref String; timeout: i32 = 30) { }\n\
          fn main() { request(\"x\"; timeout: \"soon\") }");
     assert_eq!(code, "NK1106");
     assert_eq!(
         message,
-        "`request` takes `timeout: i32`, and this passes `&str`"
+        "`request` takes `timeout: i32`, and this passes `ref String`"
     );
 }
 
@@ -315,7 +318,7 @@ fn an_option_of_the_wrong_type_is_reported() {
 #[test]
 fn options_are_not_counted_as_arguments() {
     assert!(findings(
-        "fn request(url: &str; timeout: i32 = 30, method: &str = \"GET\") { }\n\
+        "fn request(url: ref String; timeout: i32 = 30, method: ref String = \"GET\") { }\n\
          fn main() {\n\
          \x20   request(\"x\")\n\
          \x20   request(\"x\"; timeout: 5)\n\
@@ -346,11 +349,11 @@ fn an_option_of_a_library_function_is_checked_from_its_ledger() {
 fn an_interpolated_string_is_a_string_and_a_plain_one_is_a_view() {
     assert!(findings("fn label(n: i32) -> String { return f\"{n} rows\" }").is_empty());
 
-    let (code, message) = one("fn label(n: i32) -> &str { return f\"{n} rows\" }");
+    let (code, message) = one("fn label(n: i32) -> ref String { return f\"{n} rows\" }");
     assert_eq!(code, "NK1104");
     assert_eq!(
         message,
-        "this returns `String`, and the function declares `&str`"
+        "this returns `String`, and the function declares `ref String`"
     );
 }
 
@@ -541,7 +544,8 @@ fn a_generic_parameter_is_not_a_type() {
 #[test]
 fn a_field_of_an_unknown_type_says_nothing() {
     assert!(
-        findings("use std::fs\n\nfn label(r: &fs::Mapped) -> &str { return r.nmae }").is_empty()
+        findings("use std::fs\n\nfn label(r: ref fs::Mapped) -> ref String { return r.nmae }")
+            .is_empty()
     );
 }
 
@@ -677,9 +681,9 @@ fn an_f_string_is_never_warned_about() {
 /// a brace in it is a `&str` rather than becoming a `String` by accident.
 #[test]
 fn the_type_of_a_literal_is_read_off_its_first_character() {
-    let (code, _) = one("fn label(n: i32) -> &str { return f\"{n} rows\" }");
+    let (code, _) = one("fn label(n: i32) -> ref String { return f\"{n} rows\" }");
     assert_eq!(code, "NK1104");
-    assert!(findings("fn label() -> &str { return \"{ a brace }\" }").is_empty());
+    assert!(findings("fn label() -> ref String { return \"{ a brace }\" }").is_empty());
 }
 
 // --- a written call that can fail (ADR-023 D8, ADR-025 D1) -------------------
@@ -765,7 +769,7 @@ fn a_method_that_can_fail_is_the_same_rule() {
     let (code, message) = one("enum ZuVoll { Voll }\n\
          struct Stats { n: i64 }\n\
          impl Stats {\n\
-             fn add(&self, v: i64) throws { if self.n > 100 { throw ZuVoll::Voll } }\n\
+             fn add(ref self, v: i64) throws { if self.n > 100 { throw ZuVoll::Voll } }\n\
          }\n\
          fn record(s: Stats) { s.add(1) }");
     assert_eq!(code, "NK2605");
@@ -787,7 +791,7 @@ fn the_refusal_does_not_weaken_when_the_method_call_propagates() {
     let body = "enum ZuVoll { Voll }\n\
                 struct Stats { n: i64 }\n\
                 impl Stats {\n\
-                    fn add(&self, v: i64) -> i64 throws {\n\
+                    fn add(ref self, v: i64) -> i64 throws {\n\
                         if self.n + v > 100 { throw ZuVoll::Voll }\n\
                         return self.n + v\n\
                     }\n\
@@ -821,15 +825,15 @@ fn the_checker_says_which_method_calls_can_fail() {
     let source = "enum ZuVoll { Voll }\n\
                   struct A { n: i64 }\n\
                   impl A {\n\
-                      fn add(&self, v: i64) -> i64 throws {\n\
+                      fn add(ref self, v: i64) -> i64 throws {\n\
                           if self.n > 100 { throw ZuVoll::Voll }\n\
                           return self.n + v\n\
                       }\n\
                   }\n\
                   struct B { n: i64 }\n\
                   impl B {\n\
-                      fn add(&self, v: i64) -> i64 { return self.n + v }\n\
-                      fn plain(&self) -> i64 { return self.n }\n\
+                      fn add(ref self, v: i64) -> i64 { return self.n + v }\n\
+                      fn plain(ref self) -> i64 { return self.n }\n\
                   }\n\
                   fn one_of_them(a: A) -> i64 throws { return a.add(1) }\n\
                   fn neither(b: B) -> i64 { return b.plain() }\n\
@@ -940,10 +944,10 @@ fn a_lambda_that_declares_what_it_uses_is_not_refused() {
 /// thing Part III C.1 forbids.
 #[test]
 fn a_view_of_a_generic_type_is_checked_by_this_compiler() {
-    let (code, message) = one("fn count(text: &str) -> i64 { return 1 }\n\
-         fn probe(xs: Vec[i64]) -> i64 { return count(&xs) }");
+    let (code, message) = one("fn count(text: ref String) -> i64 { return 1 }\n\
+         fn probe(xs: Vec[i64]) -> i64 { return count(ref xs) }");
     assert_eq!(code, "NK1102");
-    assert!(message.contains("&Vec[i64]"), "{message}");
+    assert!(message.contains("ref Vec[i64]"), "{message}");
 }
 
 /// And the matching case is accepted, so the rule above is a rule and not a
@@ -952,7 +956,7 @@ fn a_view_of_a_generic_type_is_checked_by_this_compiler() {
 fn a_view_of_a_generic_type_fits_the_same_view() {
     assert!(
         findings(
-            "fn total(xs: &Vec[i64]) -> i64 { return 1 }\n\
+            "fn total(xs: ref Vec[i64]) -> i64 { return 1 }\n\
              fn probe(xs: Vec[i64]) -> i64 { return total(xs) }"
         )
         .is_empty(),
@@ -968,7 +972,7 @@ fn a_view_of_a_generic_type_fits_the_same_view() {
 fn a_view_of_a_transparent_container_fits_what_it_derefs_to() {
     assert!(
         findings(
-            "use std::fs\n\nfn count(text: &str) -> i64 { return 1 }\n\
+            "use std::fs\n\nfn count(text: ref String) -> i64 { return 1 }\n\
              fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(m) }"
         )
         .is_empty(),
@@ -981,10 +985,10 @@ fn a_view_of_a_transparent_container_fits_what_it_derefs_to() {
 /// words.
 #[test]
 fn a_transparent_container_does_not_fit_just_anything() {
-    let (code, message) = one("use std::fs\n\nfn count(n: &i64) -> i64 { return 1 }\n\
-         fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(&m) }");
+    let (code, message) = one("use std::fs\n\nfn count(n: ref i64) -> i64 { return 1 }\n\
+         fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(ref m) }");
     assert_eq!(code, "NK1102");
-    assert!(message.contains("&Mapped"), "{message}");
+    assert!(message.contains("ref Mapped"), "{message}");
 }
 
 /// A view of a view is the view. `&&str` is not a type this language has.
@@ -992,8 +996,8 @@ fn a_transparent_container_does_not_fit_just_anything() {
 fn a_view_of_a_view_is_the_view() {
     assert!(
         findings(
-            "fn count(text: &str) -> i64 { return 1 }\n\
-             fn probe(text: &str) -> i64 { return count(text) }"
+            "fn count(text: ref String) -> i64 { return 1 }\n\
+             fn probe(text: ref String) -> i64 { return count(text) }"
         )
         .is_empty(),
         "a view of a view must still fit"
@@ -1096,7 +1100,7 @@ fn a_view_of_a_shared_value_is_a_view_of_what_it_holds() {
     assert!(
         findings(
             "struct Conn { host: String }\n\
-             fn serve(db: &Conn) { }\n\
+             fn serve(db: ref Conn) { }\n\
              fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
              fn main() { let db = Shared(connect())\n serve(db) }"
         )
@@ -1110,11 +1114,11 @@ fn a_view_of_a_shared_value_is_a_view_of_what_it_holds() {
 #[test]
 fn a_shared_value_does_not_fit_a_view_of_just_anything() {
     let (code, message) = one("struct Conn { host: String }\n\
-         fn count(n: &i64) { }\n\
+         fn count(n: ref i64) { }\n\
          fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
-         fn main() { let db = Shared(connect())\n count(&db) }");
+         fn main() { let db = Shared(connect())\n count(ref db) }");
     assert_eq!(code, "NK1102");
-    assert!(message.contains("&Shared[Conn]"), "{message}");
+    assert!(message.contains("ref Shared[Conn]"), "{message}");
 }
 
 // --- a literal that does not fit its type (Part I 2.2) -----------------------
@@ -1294,7 +1298,7 @@ fn table(rows: Vec[Row]) -> String {
 "#,
         // A config option, which is `examples/tally.nika`'s.
         r#"
-fn summary(lines: i64; separator: &str = " ") -> String {
+fn summary(lines: i64; separator: ref String = " ") -> String {
     return f"{lines}{separator}"
 }
 "#,
@@ -1495,7 +1499,7 @@ fn a_name_something_declares_is_not_refused() {
         // a struct declared here
         "struct Conn { id: i64 }\n\nfn f() {\n    Conn\n}",
         // `error`, which a `catch` block binds
-        "use std::fs\n\nfn f(p: &str) {\n    fs::read_to_string(p) catch { println(f\"{error}\") }\n}",
+        "use std::fs\n\nfn f(p: ref String) {\n    fs::read_to_string(p) catch { println(f\"{error}\") }\n}",
     ] {
         assert!(
             findings(source).is_empty(),
@@ -1516,14 +1520,14 @@ fn a_name_something_declares_is_not_refused() {
 /// called `a`.
 #[test]
 fn a_declared_a_is_an_ordinary_name() {
-    let found = findings("fn f(s: &str) {\n    s.map(fn { a })\n}");
+    let found = findings("fn f(s: ref String) {\n    s.map(fn { a })\n}");
     assert!(
         found.iter().any(|f| f.code == "NK1117"),
         "nothing declares `a` here: {found:#?}"
     );
 
     assert!(
-        findings("fn f(s: &str) {\n    s.map(fn (a) { a })\n}").is_empty(),
+        findings("fn f(s: ref String) {\n    s.map(fn (a) { a })\n}").is_empty(),
         "and here it is the argument"
     );
 }
@@ -1576,7 +1580,7 @@ fn a_parameter_called_self_is_refused_by_the_grammar() {
         parse_to_ast("fn f(self: i64) -> i64 { return 1 }").expect_err("refused")
     );
     assert!(message.contains("`self` is a reserved word"), "{message}");
-    assert!(message.contains("`&mut self`"), "{message}");
+    assert!(message.contains("`ref mut self`"), "{message}");
 }
 
 /// And *referring* to `self` is untouched, which is the half that had to keep
@@ -1586,7 +1590,7 @@ fn referring_to_self_is_not_refused() {
     let source = "\
 struct Tally { n: i64 }
 impl Tally {
-    pub fn bump(&mut self) { self.n += 1 }
+    pub fn bump(ref mut self) { self.n += 1 }
 }
 ";
     let found = findings(source);

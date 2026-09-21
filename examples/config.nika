@@ -27,7 +27,7 @@
 //     is right here and wrong at a billion rows; that is the same choice
 //     `1brc.nika` makes in the other direction with `par_fold`, and seeing
 //     both is the point.
-//   * **Nesting.** `Section` holds a `Vec[Setting]` whose `&str`s are slices
+//   * **Nesting.** `Section` holds a `Vec[Setting]` whose `ref String`s are slices
 //     of the input, so the whole tree is views into one buffer and the
 //     compiler ties `Section` to it through the `Vec` (Part II, 10.6).
 
@@ -57,7 +57,7 @@ grammar Config {
     rule setting -> Setting =
         key:NAME "=" value:VALUE -> { Setting { key, value } }
 
-    rule NAME -> &str = s:raw_ident -> { s }
+    rule NAME -> ref String = s:raw_ident -> { s }
 
     // Lexical: a value may contain blanks, dots and colons, so the only things
     // that end it are the end of the line and a comment. Naming both in the
@@ -67,7 +67,7 @@ grammar Config {
     //
     // The price, stated rather than hidden: a `#` inside a value is a comment
     // here. A format that needs one needs quoting, and quoting is a rule.
-    rule VALUE -> &str = s:until("#" | line_ending) -> { s.trim() }
+    rule VALUE -> ref String = s:until("#" | line_ending) -> { s.trim() }
 
     pub rule file -> Vec[Section] =
         sections:section* -> { sections }
@@ -75,8 +75,8 @@ grammar Config {
 
 @borrowed
 pub struct Setting {
-    key: &str,
-    value: &str,
+    key: ref String,
+    value: ref String,
 }
 
 // `Section` never says `&`, and is tied to the input all the same: it holds a
@@ -84,7 +84,7 @@ pub struct Setting {
 // Part II, 10.6, and it is inferred rather than declared.
 @borrowed
 pub struct Section {
-    name: &str,
+    name: ref String,
     settings: Vec[Setting],
 }
 
@@ -94,7 +94,7 @@ fn main() throws {
     // `read_to_string` rather than `map`: a configuration file is small, and
     // the text has to outlive nothing here. `fs::map` is the other half of the
     // same module and what 1BRC needs (Part III, 17.1).
-    let text = fs::read_to_string(&path) catch {
+    let text = fs::read_to_string(ref path) catch {
         eprintln(f"cannot read {path}: {error}")
         return
     }

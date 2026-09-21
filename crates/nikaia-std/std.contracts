@@ -46,7 +46,7 @@
 #
 # **A parameter whose Rust type is a bound rather than a type is recorded `?`.**
 # `fs::write(path: impl AsRef<Path>, data: impl AsRef<[u8]>)` accepts a `String`
-# and a `&str` and a buffer, so writing `&str` here would make the type checker
+# and a `ref String` and a buffer, so writing `ref String` here would make the type checker
 # reject `fs::write(path, text)` for a `String` - a correct program, refused.
 # `?` is the absence of a claim (ADR-024 D1) and it is the true one: the arity
 # is still checked, and the type is not claimed because there is no one type.
@@ -155,7 +155,7 @@ sync = true
 mutates = true
 touches = ["args read"]
 provenance = "trusted"
-signature = "(&Args, at: i64) -> String?"
+signature = "(ref Args, at: i64) -> String?"
 doc = "The argument at a position, or nothing where there is none.\n\nThere may not be one, which is why this hands back a `String?`: the shape the\nexamples write is `cli::args().nth(1) ?? some_default`."
 
 [fn."eprint"]
@@ -191,7 +191,7 @@ sync = true
 # `[]` would claim an `fs::write` to the same file may be reordered across it.
 touches = ["file read"]
 returns = "borrows(self)"
-signature = "(&Mapped) -> &str"
+signature = "(ref Mapped) -> ref String"
 doc = "The mapped file, as text.\n\nIt is a **view** of the mapping and not a copy, so it lives as long as the\nmapping does and costs nothing to take."
 
 [fn."fs::read"]
@@ -238,7 +238,7 @@ pub = true
 sync = true
 touches = []
 returns = "borrows(text)"
-signature = "(text: &str) -> ?"
+signature = "(text: ref String) -> ?"
 doc = "The same text, with the five characters HTML reads as markup written as\nentities.\n\nWhat comes back **borrows** its argument where nothing had to change, so text\nwith no markup in it costs no allocation."
 
 [fn."io::read"]
@@ -599,7 +599,7 @@ sync = true
 mutates = true
 touches = []
 keeps = ["key"]
-signature = "(&collections::HashMap[$K, $V], key: ?) -> Entry[$V]"
+signature = "(ref collections::HashMap[$K, $V], key: ?) -> Entry[$V]"
 doc = "The place in the map this key names, whether or not anything is there yet.\n\nOne lookup rather than two: `or_insert` puts a value in where there is none,\nand `and_modify` changes the one that is. The map **keeps** the key."
 
 # `key: ?` and not `key: $K`, deliberately. Rust's `get` takes anything the key
@@ -619,21 +619,21 @@ doc = "The place in the map this key names, whether or not anything is there yet
 pub = true
 sync = true
 touches = []
-signature = "(&collections::HashMap[$K, $V], key: ?) -> $V?"
+signature = "(ref collections::HashMap[$K, $V], key: ?) -> $V?"
 doc = "What this key names, or nothing where the key is not there.\n\nA key is data and may be absent, which is why this hands back a `$V?`: the\nshape a program writes is `counts.get(k) ?? 0`, or `counts.get(k)?.field`."
 
 [fn."collections::HashMap::keys"]
 pub = true
 sync = true
 touches = []
-signature = "(&collections::HashMap[$K, $V]) -> Seq[$K] sync"
+signature = "(ref collections::HashMap[$K, $V]) -> Seq[$K] sync"
 doc = "The keys, one at a time.\n\nA map has no order of its own, so a program that prints one says which order\nit means."
 
 [fn."collections::HashMap::len"]
 pub = true
 sync = true
 touches = []
-signature = "(&collections::HashMap[?, ?]) -> i64"
+signature = "(ref collections::HashMap[?, ?]) -> i64"
 doc = "How many pairs the map holds."
 
 [fn."collections::HashMap::new"]
@@ -647,7 +647,7 @@ doc = "A map with nothing in it. It is written `HashMap()`."
 pub = true
 sync = true
 touches = []
-signature = "(&collections::HashMap[$K, $V]) -> Seq[$V] sync"
+signature = "(ref collections::HashMap[$K, $V]) -> Seq[$V] sync"
 doc = "The values, one at a time, in the order the keys come out in."
 
 # Runs the lambda it is given, so what it does is what the lambda does - which
@@ -657,7 +657,7 @@ doc = "The values, one at a time, in the order the keys come out in."
 [fn."Entry::and_modify"]
 pub = true
 sync = "from(f)"
-signature = "(Entry[$V], f: fn(&$V)) -> Entry[$V]"
+signature = "(Entry[$V], f: fn(ref $V)) -> Entry[$V]"
 doc = "Change the value that is already there, and leave an empty place alone.\n\nWhether this pauses is the lambda's answer and not its own."
 
 [fn."Entry::or_insert"]
@@ -665,14 +665,14 @@ pub = true
 sync = true
 touches = []
 keeps = ["value"]
-signature = "(Entry[$V], value: ?) -> &$V"
+signature = "(Entry[$V], value: ?) -> ref $V"
 doc = "The value that is there, putting this one in first where there is none.\n\nThe map **keeps** the value, so it is given away rather than lent."
 
 # Also runs its lambda, before it returns.
 [fn."Entry::or_insert_with"]
 pub = true
 sync = "from(f)"
-signature = "(Entry[$V], f: fn()) -> &$V"
+signature = "(Entry[$V], f: fn()) -> ref $V"
 doc = "The same as `or_insert`, with the value built only where one is needed.\n\nWhether this pauses is the lambda's answer and not its own."
 
 # `Shared[T]` is the type several parts of a program own at once (Part I 6.2).
@@ -690,7 +690,7 @@ doc = "The same as `or_insert`, with the value built only where one is needed.\n
 # because a handle handed on by value is duplicated and there is nothing to call
 # (ADR-040 D1).
 #
-# `deref` is the one entry, and it is what makes `serve(&db)` mean something.
+# `deref` is the one entry, and it is what makes `serve(ref db)` mean something.
 # ADR-042 D2 sees a container through to what it holds wherever its ledger
 # records a `deref`, and D2's own note says `Shared` is seen through "the moment
 # it has a `deref` entry, with no further decision". This is that entry. `$T` is
@@ -701,8 +701,8 @@ pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
-signature = "(&Shared[$T]) -> &$T"
-doc = "What the handle holds.\n\nIt is what makes a `&Shared[Connection]` reach a parameter declared\n`&Connection`: a caller is not meant to notice the handle."
+signature = "(ref Shared[$T]) -> ref $T"
+doc = "What the handle holds.\n\nIt is what makes a `ref Shared[Connection]` reach a parameter declared\n`ref Connection`: a caller is not meant to notice the handle."
 
 # `String()` reaches nothing and hands back an empty one. Four adjacent pairs in
 # `examples/` named it as the callee nobody had described, which is what asked
@@ -721,14 +721,14 @@ pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
-signature = "(&String) -> Seq[char] sync"
+signature = "(ref String) -> Seq[char] sync"
 doc = "The characters, one at a time.\n\nThey are **characters** and not bytes: a character outside ASCII is more than\none byte, and this walks one of it rather than several."
 
 [fn."String::len"]
 pub = true
 sync = true
 touches = []
-signature = "(&String) -> i64"
+signature = "(ref String) -> i64"
 doc = "How many **bytes** the text is.\n\nNot how many characters: text is UTF-8, so a character outside ASCII is more\nthan one byte. `chars().count()` is the other question."
 
 [fn."String::push"]
@@ -737,7 +737,7 @@ sync = true
 mutates = true
 touches = []
 keeps = ["c"]
-signature = "(&String, c: char)"
+signature = "(ref String, c: char)"
 doc = "Add one character to the end of the text."
 
 [fn."String::push_str"]
@@ -745,21 +745,21 @@ pub = true
 sync = true
 mutates = true
 touches = []
-signature = "(&String, text: ?)"
+signature = "(ref String, text: ?)"
 doc = "Add text to the end of this text."
 
 [fn."Vec::is_empty"]
 pub = true
 sync = true
 touches = []
-signature = "(&Vec[?]) -> bool"
+signature = "(ref Vec[?]) -> bool"
 doc = "Whether the list holds nothing."
 
 [fn."Vec::len"]
 pub = true
 sync = true
 touches = []
-signature = "(&Vec[?]) -> i64"
+signature = "(ref Vec[?]) -> i64"
 doc = "How many elements the list holds."
 
 # **An array knows its own length, and nothing said so.** `Array[T, N]` carries
@@ -781,48 +781,48 @@ doc = "How many elements the list holds."
 [type."Fixed"]
 pub = true
 crosses = true
-doc = "A map whose keys were known while the program was built.\n\nWritten as a list of pairs — `comptime ROUTES: Fixed[&str, i64] = [(\"get\", 1)]` —\nand crossed as static tables. There is nothing to build one from at run time:\nwhat makes it fixed is that the key set closed at the build."
+doc = "A map whose keys were known while the program was built.\n\nWritten as a list of pairs — `comptime ROUTES: Fixed[ref String, i64] = [(\"get\", 1)]` —\nand crossed as static tables. There is nothing to build one from at run time:\nwhat makes it fixed is that the key set closed at the build."
 
 [fn."Fixed::get"]
 pub = true
 sync = true
 touches = []
-signature = "(&Fixed[$K, $V], key: ?) -> $V?"
+signature = "(ref Fixed[$K, $V], key: ?) -> $V?"
 doc = "What this key names, or nothing where the key is not there.\n\nA key is data and may be absent, which is why this hands back a `$V?` - the\nsame shape `collections::HashMap::get` has, and the same `?? 0` after it."
 
 [fn."Fixed::has"]
 pub = true
 sync = true
 touches = []
-signature = "(&Fixed[$K, $V], key: ?) -> bool"
+signature = "(ref Fixed[$K, $V], key: ?) -> bool"
 doc = "Whether this key is one of the table's."
 
 [fn."Fixed::len"]
 pub = true
 sync = true
 touches = []
-signature = "(&Fixed[$K, $V]) -> i64"
+signature = "(ref Fixed[$K, $V]) -> i64"
 doc = "How many pairs the table holds."
 
 [fn."Fixed::is_empty"]
 pub = true
 sync = true
 touches = []
-signature = "(&Fixed[$K, $V]) -> bool"
+signature = "(ref Fixed[$K, $V]) -> bool"
 doc = "Whether the table holds nothing."
 
 [fn."Array::len"]
 pub = true
 sync = true
 touches = []
-signature = "(&Array[?, ?]) -> i64"
+signature = "(ref Array[?, ?]) -> i64"
 doc = "How many elements the array holds. It is the length in its type."
 
 [fn."Array::is_empty"]
 pub = true
 sync = true
 touches = []
-signature = "(&Array[?, ?]) -> bool"
+signature = "(ref Array[?, ?]) -> bool"
 doc = "Whether the array holds nothing."
 
 [fn."Vec::new"]
@@ -898,7 +898,7 @@ doc = "The element at a position, or nothing where the sequence is shorter than 
 pub = true
 sync = true
 touches = []
-signature = "(Seq[$T], sep: &str) -> String"
+signature = "(Seq[$T], sep: ref String) -> String"
 doc = "Everything the sequence produces, written one after another with this text\nbetween them."
 
 # `sync = "from(f)"` for the reason `list::ListExt::map` has it: the step is the
@@ -928,7 +928,7 @@ sync = true
 mutates = true
 touches = []
 keeps = ["value"]
-signature = "(&Vec[$T], value: ?)"
+signature = "(ref Vec[$T], value: ?)"
 doc = "Add a value to the end of the list.\n\nThe list **keeps** the value, so what is handed over is given away rather\nthan lent."
 
 [fn."Vec::sort"]
@@ -936,7 +936,7 @@ pub = true
 sync = true
 mutates = true
 touches = []
-signature = "(&Vec[?])"
+signature = "(ref Vec[?])"
 doc = "Put the elements in their natural order, in place.\n\nIt is **stable**: elements the order does not separate keep the order they\nhad, which is what lets two passes express a compound order."
 
 # Part II 12.2's four doors ([ADR-059](../../docs/specification/adr/adr-059.md)).
@@ -959,7 +959,7 @@ pub = true
 touches = ["lock read"]
 sync = true
 locks = true
-signature = "(&Locked[$T]) -> Seen[$T]"
+signature = "(ref Locked[$T]) -> Seen[$T]"
 doc = "A copy of what the lock holds.\n\nWhat comes back is **stamped**: it carries where it came from, so a `set`\nthat means *only if nothing changed since* can say which reading it means."
 
 [fn."Locked::set"]
@@ -968,7 +968,7 @@ touches = ["lock write"]
 sync = true
 keeps = ["value"]
 locks = true
-signature = "(&Locked[$T], value: $T)"
+signature = "(ref Locked[$T], value: $T)"
 doc = "Put a value in, whatever is there now.\n\nThe lock **keeps** the value. Where the new value is worked out from the old\none, `update` is the door that does not lose a change made in between."
 
 
@@ -984,7 +984,7 @@ doc = "Put a value in, whatever is there now.\n\nThe lock **keeps** the value. W
 # program reads, and a caller that has to declare `throws` is owed it.
 #
 # **The witness is a view and the value is not.** The value is stored and the
-# witness is only read, so `seen: &$T` - a witness taken by value would be moved
+# witness is only read, so `seen: ref $T` - a witness taken by value would be moved
 # out of the caller, and reading what was seen after asking whether it still
 # holds is an ordinary thing to write. `keeps = ["value"]` says the same thing
 # from the other side.
@@ -995,7 +995,7 @@ sync = true
 throws = ["Overtaken"]
 keeps = ["value"]
 locks = true
-signature = "(&Locked[$T], value: $T, seen: &$T)"
+signature = "(ref Locked[$T], value: $T, seen: ref $T)"
 doc = "Put a value in **only if** what the lock holds is still what was seen.\n\nIt is written `lock.set(value; after: seen)`, and it fails with `Overtaken`\nwhere something changed in between - which is the answer a read-modify-write\nthrough two doors needs."
 
 # **Reads in place and may not change what it is handed** (ADR-059 D1): the one
@@ -1005,7 +1005,7 @@ pub = true
 touches = ["lock read"]
 sync = "from(f)"
 locks = true
-signature = "(&Locked[$T], f: fn(&$T)) -> ?"
+signature = "(ref Locked[$T], f: fn(ref $T)) -> ?"
 doc = "Read what the lock holds, in place, without copying it.\n\nThe block may not change it. Whether the call pauses is the block's answer\nand not the door's; waiting to open the lock is not pausing."
 
 # **Where locked data changes** (D2). The old value goes in by value and the new
@@ -1020,7 +1020,7 @@ sync = "from(f)"
 # lambda, which is a limit of the ledger rather than of the door. What it is read
 # for here is the arity and the `sync` column.
 locks = true
-signature = "(&Locked[$T], f: fn($T))"
+signature = "(ref Locked[$T], f: fn($T))"
 doc = "Change what the lock holds: the old value goes in and the new one comes back.\n\nNo handle into the inside ever exists, which is what makes this the door for\na change that depends on what is there. Whether the call pauses is the\nblock's answer."
 
 # `SharedMut[T]` is the shared mutable type (Part I 6.2, ADR-039 D9): a value
@@ -1043,7 +1043,7 @@ pub = true
 touches = ["lock read"]
 sync = true
 locks = true
-signature = "(&SharedMut[$T]) -> Seen[$T]"
+signature = "(ref SharedMut[$T]) -> Seen[$T]"
 doc = "A copy of what this value holds.\n\nWhat comes back is **stamped**: it carries where it came from, so a `set`\nthat means *only if nothing changed since* can say which reading it means."
 
 [fn."SharedMut::set"]
@@ -1052,7 +1052,7 @@ touches = ["lock write"]
 sync = true
 keeps = ["value"]
 locks = true
-signature = "(&SharedMut[$T], value: $T)"
+signature = "(ref SharedMut[$T], value: $T)"
 doc = "Put a value in, whatever is there now.\n\nIt **keeps** the value. Where the new value is worked out from the old one,\n`update` is the door that does not lose a change made in between."
 
 [fn."SharedMut::set(after)"]
@@ -1062,7 +1062,7 @@ sync = true
 throws = ["Overtaken"]
 keeps = ["value"]
 locks = true
-signature = "(&SharedMut[$T], value: $T, seen: &$T)"
+signature = "(ref SharedMut[$T], value: $T, seen: ref $T)"
 doc = "Put a value in **only if** what is held is still what was seen.\n\nIt is written `value.set(next; after: seen)`, and it fails with `Overtaken`\nwhere something changed in between."
 
 [fn."SharedMut::access"]
@@ -1070,14 +1070,14 @@ pub = true
 touches = ["lock read"]
 sync = "from(f)"
 locks = true
-signature = "(&SharedMut[$T], f: fn(&$T)) -> ?"
+signature = "(ref SharedMut[$T], f: fn(ref $T)) -> ?"
 doc = "Read what this value holds, in place, without copying it.\n\nThe block may not change it. Whether the call pauses is the block's answer\nand not the door's."
 
 [fn."SharedMut::update"]
 pub = true
 touches = ["lock write"]
 sync = "from(f)"
-signature = "(&SharedMut[$T], f: fn($T))"
+signature = "(ref SharedMut[$T], f: fn($T))"
 doc = "Change what this value holds: the old one goes in and the new one comes back.\n\nWhether the call pauses is the block's answer."
 
 # **The two doors over several locks** (Part II 12.3, ADR-065). They take the
@@ -1107,7 +1107,7 @@ doc = "Change several locked values at once.\n\nThe locks are taken in one order
 pub = true
 sync = "from(f)"
 mutates = true
-signature = "(&Vec[$T], f: fn(&$T)) -> ?"
+signature = "(ref Vec[$T], f: fn(ref $T)) -> ?"
 doc = "Put the elements in the order of what the function returns, in place.\n\nIt is **stable**, so a sort by one key after a sort by another leaves the\nfirst as the tie-breaker."
 
 [fn."str::chars"]
@@ -1115,14 +1115,14 @@ pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
-signature = "(&str) -> ?"
+signature = "(ref String) -> ?"
 doc = "The characters, one at a time.\n\nThey are **characters** and not bytes: a character outside ASCII is more than\none byte, and this walks one of it rather than several."
 
 [fn."str::len"]
 pub = true
 sync = true
 touches = []
-signature = "(&str) -> i64"
+signature = "(ref String) -> i64"
 doc = "How many **bytes** the text is.\n\nNot how many characters: text is UTF-8, so a character outside ASCII is more\nthan one byte. `chars().count()` is the other question."
 
 # `n` is the `i64` a program can hold, not the `usize` Rust counts in
@@ -1133,21 +1133,21 @@ doc = "How many **bytes** the text is.\n\nNot how many characters: text is UTF-8
 pub = true
 sync = true
 touches = []
-signature = "(&str, n: i64) -> String"
+signature = "(ref String, n: i64) -> String"
 doc = "The text written `n` times, one after another.\n\n`n` is an ordinary `i64`, and a negative one aborts with *a count cannot be\nnegative* rather than with anything about the language below."
 
 [fn."str::starts_with"]
 pub = true
 sync = true
 touches = []
-signature = "(&str, prefix: ?) -> bool"
+signature = "(ref String, prefix: ?) -> bool"
 doc = "Whether the text begins with this."
 
 [fn."str::to_string"]
 pub = true
 sync = true
 touches = []
-signature = "(&str) -> String"
+signature = "(ref String) -> String"
 doc = "The same text, owned rather than borrowed."
 
 # Written down because the corpus asks for it - `line.to_uppercase()` in
@@ -1161,28 +1161,28 @@ doc = "The same text, owned rather than borrowed."
 pub = true
 sync = true
 touches = []
-signature = "(&str) -> String"
+signature = "(ref String) -> String"
 doc = "The same text with every character in upper case, as owned text.\n\nIt follows Unicode rather than ASCII, so a character whose upper case is more\nthan one character becomes all of them."
 
 [fn."str::to_lowercase"]
 pub = true
 sync = true
 touches = []
-signature = "(&str) -> String"
+signature = "(ref String) -> String"
 doc = "The same text with every character in lower case, as owned text.\n\nIt follows Unicode rather than ASCII."
 
 [fn."String::to_uppercase"]
 pub = true
 sync = true
 touches = []
-signature = "(&String) -> String"
+signature = "(ref String) -> String"
 doc = "The same text with every character in upper case, as new text.\n\nIt follows Unicode rather than ASCII."
 
 [fn."String::to_lowercase"]
 pub = true
 sync = true
 touches = []
-signature = "(&String) -> String"
+signature = "(ref String) -> String"
 doc = "The same text with every character in lower case, as new text.\n\nIt follows Unicode rather than ASCII."
 
 # **The way out `NK1131` names, so it has to be described here**
@@ -1198,15 +1198,15 @@ doc = "The same text with every character in lower case, as new text.\n\nIt foll
 pub = true
 sync = true
 touches = []
-signature = "(&String) -> String"
+signature = "(ref String) -> String"
 doc = "A copy of the text, owned by whoever asked for it.\n\nIt is the way out of handing a field of a borrowed subject away by value: the\ncopy is the caller's and the field stays where it is."
 
-# The same for a view, which is what a `&str` field or a literal is cloned from.
+# The same for a view, which is what a `ref String` field or a literal is cloned from.
 [fn."str::clone"]
 pub = true
 sync = true
 touches = []
-signature = "(&str) -> String"
+signature = "(ref String) -> String"
 doc = "A copy of the text, owned by whoever asked for it.\n\nThe same way out one type over: a view is copied into text of its own."
 
 [fn."str::trim"]
@@ -1214,7 +1214,7 @@ pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
-signature = "(&str) -> &str"
+signature = "(ref String) -> ref String"
 doc = "The same text with the white space at both ends left off.\n\nWhat comes back is a **view** into the text it was given, so it costs no\nallocation and lives as long as that text does."
 
 # --- Inferred from `src/*.nika` ----------------------------------------------
@@ -1280,7 +1280,7 @@ pub = true
 # `touches` on. It neither suspends nor takes a lock, which is why neither
 # `NK2202` nor `NK2203` has anything to say about it and `NK2201` does.
 touches = ["file read"]
-doc = "A file held as memory: the pages arrive as they are touched rather than being\nread up front, which is what makes a file larger than memory workable.\n\nIt reads as text through the ordinary `&str` surface."
+doc = "A file held as memory: the pages arrive as they are touched rather than being\nread up front, which is what makes a file larger than memory workable.\n\nIt reads as text through the ordinary `ref String` surface."
 
 # A step of this one can **fail**, and that is a fact a caller cannot get from
 # anywhere else: a `for` over it is a place the enclosing function can fail
@@ -1315,7 +1315,7 @@ doc = "Standard input, one line at a time.\n\nA **step** of it can fail, because
 
 # The type several parts of a program own at once (Part I 6.2), and the one type
 # here whose `deref` entry above a caller is not meant to notice: a function that
-# takes `&Connection` accepts a `&Shared[Connection]`, which is ADR-042 D2's
+# takes `ref Connection` accepts a `ref Shared[Connection]`, which is ADR-042 D2's
 # rescue rather than a rule of this file's own.
 #
 # No `crosses` line, deliberately, and its absence is not "nobody said" here.
@@ -1379,7 +1379,7 @@ doc = "Stop the task.\n\nIt stops at its current pause point and its values are 
 
 [type."Shared"]
 pub = true
-doc = "A value several parts of a program own at once.\n\nA caller is not meant to notice it: a function taking `&Connection` accepts a\n`&Shared[Connection]`. Handing a handle on by value makes a second one rather\nthan taking the first away."
+doc = "A value several parts of a program own at once.\n\nA caller is not meant to notice it: a function taking `ref Connection` accepts a\n`ref Shared[Connection]`. Handing a handle on by value makes a second one rather\nthan taking the first away."
 
 # --- A span of time (ADR-150) ------------------------------------------------
 #
@@ -1526,7 +1526,7 @@ doc = "The receiving end of a channel.\n\n`recv` hands back a `T?`, and `null` m
 # whatever the other end does with the value.
 [fn."channel::Sender::send"]
 pub = true
-signature = "(&channel::Sender[$T], value: ?)"
+signature = "(ref channel::Sender[$T], value: ?)"
 doc = "Put a value in, waiting for room where there is none.\n\nIt gives the thread up rather than holding it, so other work runs while this\nwaits."
 
 # **`-> $T?`**, and the `?` is D3: a closed channel is the ordinary **end** of a
@@ -1534,7 +1534,7 @@ doc = "Put a value in, waiting for room where there is none.\n\nIt gives the thr
 # nothing here `throws`.
 [fn."channel::Receiver::recv"]
 pub = true
-signature = "(&channel::Receiver[$T]) -> $T?"
+signature = "(ref channel::Receiver[$T]) -> $T?"
 doc = "The next value, or `null` where every sender is gone.\n\nA closed channel is the ordinary end of a stream and not a failure, so `??`\nis what reads it. It gives the thread up rather than holding it."
 
 # --- The collections outside the prelude (ADR-154 D3) ------------------------

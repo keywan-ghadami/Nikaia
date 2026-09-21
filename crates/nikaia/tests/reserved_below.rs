@@ -28,8 +28,8 @@ use nikaia::parser::parse_to_ast;
 /// an entry.
 const RESERVED_BELOW: &[&str] = &[
     "abstract", "async", "await", "become", "box", "const", "do", "dyn", "final", "loop", "macro",
-    "mod", "move", "override", "priv", "ref", "static", "try", "type", "typeof", "unsized",
-    "virtual", "where", "yield",
+    "mod", "move", "override", "priv", "static", "try", "type", "typeof", "unsized", "virtual",
+    "where", "yield",
 ];
 
 /// The words that have left the sweep since: reserved words of **this** language
@@ -46,6 +46,16 @@ const RESERVED_BELOW: &[&str] = &[
 /// *below* reserves, which is still true of all of them, and un-reserving here
 /// is the free direction ([ADR-050](../../../docs/specification/adr/adr-050.md) D7).
 ///
+/// **`ref` joined them at 0.0.133**
+/// ([ADR-184](../../../docs/specification/adr/adr-184.md) D1), and this test is
+/// what decided it. Counting the word over every `.nika` file in the repository
+/// gave **zero** uses, which says it is free to reserve or to leave — and it is
+/// not free to leave: `ref(x)` is a borrow of `(x)` to the grammar and a call to
+/// a function named `ref` to its author, in the same characters. A word that is
+/// a name in one position and an operator in the next is worse than a reserved
+/// one, because the reading nobody meant is the silent one. The corpus could not
+/// see that; a program that writes the word in **every** position could.
+///
 /// **`macro` went the other way and is in the sweep again**
 /// ([ADR-117](../../../docs/specification/adr/adr-117.md) D1). It had been
 /// reserved *against* a construct rather than for one, which is the ground
@@ -53,7 +63,7 @@ const RESERVED_BELOW: &[&str] = &[
 /// leaving the list is what put it back where a Nikaia name can be one — so the
 /// escape can fire for it again. `const` and `loop` joined it there, and `quote`
 /// is a keyword in neither language and needs nothing.
-const RESERVED_HERE_TOO: &[&str] = &["trait", "extern", "unsafe"];
+const RESERVED_HERE_TOO: &[&str] = &["trait", "extern", "unsafe", "ref"];
 
 /// The words Rust takes as identifiers, which must therefore **not** be escaped.
 ///

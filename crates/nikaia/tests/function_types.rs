@@ -117,7 +117,7 @@ fn the_ledger_carries_the_type_and_its_two_promises() {
     );
     for written in [
         "fn()",
-        "fn(&Stats)",
+        "fn(ref Stats)",
         "fn(Request) -> Response",
         "fn() sync",
         "fn(Path) -> Bytes throws",

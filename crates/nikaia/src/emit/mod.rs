@@ -4427,6 +4427,18 @@ impl<'p> Emitter<'p> {
         if ty.is_view {
             out.push_str(lifetimes.reference);
         }
+        // **A view of text is a `&str`**
+        // ([ADR-184](../../docs/specification/adr/adr-184.md) D2). Text is one
+        // type and `ref String` is what a program writes for a view of it; the
+        // language below spells that view with a noun of its own, and this is
+        // the one place the two names differ. `&String` would compile and would
+        // be the wrong thing: every `std` entry that takes text takes a `&str`,
+        // and a `&String` at a call is a borrow of a borrow at the first one
+        // that does not coerce.
+        if ty.is_view && self.text(ty.name) == "String" && ty.generics.is_empty() {
+            out.push_str("str");
+            return out;
+        }
         // **`SharedMut[T]` is one name and two hulls**
         // ([ADR-064](../../../docs/specification/adr/adr-064.md) D1). It is
         // expanded here and nowhere earlier, so the checker, the ledger and every
@@ -5516,9 +5528,16 @@ impl<'p> Emitter<'p> {
                     // **Off the shape of what is in the brackets**, which is
                     // the one place this needs no type: a range is a run and a
                     // key is not, in this language and in the one below alike.
+                    //
+                    // **And no parentheses around a slice read.** They are
+                    // what makes `*get(…).len()` mean the deref of the length
+                    // rather than the length of the deref; a read with no `*`
+                    // is a call and a call binds tighter than anything, so the
+                    // pair would be a `rustc` warning about a file nobody
+                    // wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
                     let slicing = matches!(&**index, Expr::Range { .. });
                     match slicing {
-                        true => out.push("(nikaia_std::index::get(&"),
+                        true => out.push("nikaia_std::index::get(&"),
                         false => out.push("(*nikaia_std::index::get(&"),
                     }
                     self.postfix_base(out, base, depth, flow)?;
@@ -5571,7 +5590,10 @@ impl<'p> Emitter<'p> {
                             out.push(")");
                         }
                     }
-                    out.push("))");
+                    match slicing {
+                        true => out.push(")"),
+                        false => out.push("))"),
+                    }
                     return Ok(());
                 }
                 self.postfix_base(out, base, depth, flow)?;

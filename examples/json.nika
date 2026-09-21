@@ -20,7 +20,7 @@
 //   * **An enum is the tree.** A JSON value is one of six things, which is
 //     what a sum type says (Part I, 4.4). Every walk over the document below
 //     is a `match` with six arms, and the compiler is the one that checks none
-//     is missing - the check a `kind: &str` field cannot have.
+//     is missing - the check a `kind: ref String` field cannot have.
 //   * **Mutual recursion between a rule and a type.** `value` reaches `value`
 //     again through `[` and `{`, and `Json` holds a `Vec[Json]` and a
 //     `Vec[Member]` that holds a `Json`. Both cycles are fine and neither is
@@ -44,7 +44,7 @@ enum Json {
     Null,
     Bool(bool),
     Number(f64),
-    Text(&str),
+    Text(ref String),
     Array(Vec[Json]),
     Object(Vec[Member]),
 }
@@ -53,7 +53,7 @@ enum Json {
 // raw body like any other string.
 @borrowed
 pub struct Member {
-    key: &str,
+    key: ref String,
     value: Json,
 }
 
@@ -117,7 +117,7 @@ grammar Json_ {
     //
     // `text(…)` hands back the input the repetition covered instead of a list
     // of what it matched - a view, one slice, no allocation.
-    rule TEXT -> &str = "\"" s:text((ESC | PLAIN)*) "\"" -> { s }
+    rule TEXT -> ref String = "\"" s:text((ESC | PLAIN)*) "\"" -> { s }
 
     rule ESC = "\\" any -> { }
     rule PLAIN = not("\"") not("\\") any -> { }
@@ -127,7 +127,7 @@ grammar Json_ {
 //
 // Six arms, no default: a variant added to `Json` above makes this a compile
 // error rather than a document that silently prints nothing. That is the check
-// a `kind: &str` field cannot have, and the reason the tree is an enum.
+// a `kind: ref String` field cannot have, and the reason the tree is an enum.
 //
 // The two string cases print the **raw** body back, unchanged. That is the
 // second half of holding it raw: re-escaping a decoded string would be a
@@ -187,7 +187,7 @@ fn show(value: Json, indent: i64) {
 // `\u` is not here, and this says so rather than pretending: four hex digits,
 // a surrogate pair rule, and a decision about what a lone surrogate is worth
 // are a specification of their own.
-fn unescape(raw: &str) -> String {
+fn unescape(raw: ref String) -> String {
     let mut out = String()
     let mut escaped = false
 
@@ -215,7 +215,7 @@ fn unescape(raw: &str) -> String {
 // here that has to decode. It takes the tree by reference because `main` still
 // wants to print it afterwards; `show` takes it by value, being the last to
 // look.
-fn longest(value: &Json) -> i64 {
+fn longest(value: ref Json) -> i64 {
     match value {
         Json::Text(raw) => return unescape(raw).chars().count() as i64
 
@@ -244,7 +244,7 @@ fn longest(value: &Json) -> i64 {
 fn main() throws {
     let path = cli::args().nth(1) ?? "data.json"
 
-    let text = fs::read_to_string(&path) catch {
+    let text = fs::read_to_string(ref path) catch {
         eprintln(f"cannot read {path}: {error}")
         return
     }

@@ -15,7 +15,7 @@
 use std::cli
 use std::html
 
-fn page(title: &str, body: &str) -> String {
+fn page(title: ref String, body: ref String) -> String {
     return dsl html {
         <!DOCTYPE html>
         <html lang="en">

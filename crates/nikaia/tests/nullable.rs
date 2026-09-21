@@ -207,7 +207,7 @@ fn main() {
 /// (Part III, 15.2).
 #[test]
 fn a_nullable_type_round_trips_through_its_text() {
-    for text in ["i64?", "&str?", "String?", "Vec[i64]?", "Vec[i64?]"] {
+    for text in ["i64?", "ref String?", "String?", "Vec[i64]?", "Vec[i64?]"] {
         let parsed = Ty::parse(text);
         assert_eq!(parsed.text(), text, "{text} does not come back as itself");
     }

@@ -50,7 +50,7 @@ to a row, the row says so.
 
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
-| A1 | `struct S { name: &str` ⏎ `temp: i32 }` | `,` or `}` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, `,` in the note |
+| A1 | `struct S { name: ref String` ⏎ `temp: i32 }` | `,` or `}` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, `,` in the note |
 | A2 | `fn f(a: i32 b: i32) {}` | `,` or `)` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `)` ``, `,` in the note |
 | A3 | `fn f() {` ⏎ `let x = 1` | `}` at end of input | ⚠️ 17 tokens | ✅ ``expected `}` `` |
 | A4 | `let xs = [1, 2` | `,` or `]` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `]` ``, `,` in the note |
@@ -104,7 +104,7 @@ any ranking, so no label helps.
 
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
-| C1 | `struct S { name &str }` | `:` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `:` `` |
+| C1 | `struct S { name ref String }` | `:` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `:` `` |
 | C2 | `rule A -> i32 = n:digit1 { n }` | `->` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `->` `` |
 | C3 | `fn main( {` | `)` or a parameter | ⚠️ `` `//`, whitespace `` | ✅ ``expected `)` `` |
 | C4 | `let 5 = x` | a name | ○ **parses** | ⚠️ refused, ``expected `mut` `` |

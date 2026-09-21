@@ -44,7 +44,7 @@ impl Response {
 // Written here rather than left to the server, because it is the half of
 // HTTP/1.1 that is pure text handling and needs nothing from the runtime - so
 // it is the half that can be built, tested and read today.
-pub fn render(response: &Response) -> String {
+pub fn render(response: ref Response) -> String {
     let status = status_line(response.status)
     return f"HTTP/1.1 {status}\r\ncontent-type: {response.content_type}\r\ncontent-length: {response.body.len()}\r\n\r\n{response.body}"
 }

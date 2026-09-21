@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.132 (Draft)
+**Version:** 0.0.133 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -229,10 +229,17 @@ reserved word ([ADR-051](adr/adr-051.md) D1). The reserved words are:
 ```text
 as        break     catch     comptime  continue  dsl       else      enum
 extern    false     fn        for       grammar   if        impl      in
-let       match     mut       null      overlap   pub       return    select
-self      spawn     struct    sync      throw     throws    trait     true
-unsafe    use       while     with
+let       match     mut       null      overlap   pub       ref       return
+select    self      spawn     struct    sync      throw     throws    trait
+true      unsafe    use       while     with
 ```
+
+**`ref` is reserved for the view it writes** ([ADR-184](adr/adr-184.md) D1),
+and it is the one word on this list the corpus had a use for: counting it over
+every `.nika` file gave **zero**, which says a word is free to leave
+unreserved — and it is not free here. `ref(x)` is a borrow of `(x)` to the
+grammar and a call to a function named `ref` to its author, in the same
+characters, and the reading nobody meant would be the silent one.
 
 **`comptime` is reserved for its construct**: a statement inside a function
 body (Part II, 10.2).
@@ -316,7 +323,7 @@ Nikaia provides basic types to represent simple values.
       already there, or text of its own, is the compiler's decision per use
       (6.6, [ADR-107](adr/adr-107.md)). A literal is a view of the program's
       own text and allocates nothing.
-    * `&str`: the same text with a promise attached: *this is a borrowed
+    * `ref String`: the same text with a promise attached: *this is a borrowed
       view, no copy and no handle*. The compiler holds the program to the
       promise. It is written where allocating would be a mistake.
     * `char`: one character, a Unicode scalar value, not a byte. It is
@@ -325,13 +332,13 @@ Nikaia provides basic types to represent simple values.
       and a `match` over one compares against it (3.4). A text is not a list
       of `char`; turning one into the other is written in the program.
 * **A run of elements:**
-    * `&[T]`: a **view** of a run of `T`, with the same promise `&str` carries
+    * `ref [T]`: a **view** of a run of `T`, with the same promise `ref String` carries
       one type over — *this points at elements somebody else keeps, no copy
       and no handle* ([ADR-179](adr/adr-179.md)). It is read with `.len()`,
       `xs[i]` and `for`, and it is what a `Vec[T]` **crosses as** when a build
       hands one to the program (10.2, [ADR-079](adr/adr-079.md) D1): a
-      `comptime` declared `&[T]` is a `const` the program reads and nothing
-      allocates. `&[u8]` is the byte buffer that follows from it.
+      `comptime` declared `ref [T]` is a `const` the program reads and nothing
+      allocates. `ref [u8]` is the byte buffer that follows from it.
     * A value a body **built** does not go into one, because a view of a run
       is gone when whatever owns the run is. Where the program builds the run
       while it runs, the type is `Vec[T]`; a **parameter** is the one place
@@ -505,7 +512,7 @@ absence of a value is written with a trailing question mark `?`.
 let strictly_string: String = "Hello".to_string()
 // strictly_string = null // Error!
 
-let mut maybe_string: &str? = null // Valid
+let mut maybe_string: ref String? = null // Valid
 maybe_string = "World"             // Valid (`mut`, as in 2.1)
 ```
 
@@ -514,7 +521,7 @@ A literal is a **view** of text the program was compiled with (6.6,
 writes one. A literal stands wherever a `String` is wanted, because a `String`
 may be a view ([ADR-107](adr/adr-107.md)); `.to_owned()` makes a copy.
 
-> **Implementation status:** Not implemented. `String` and `&str` are two types
+> **Implementation status:** Not implemented. `String` and `ref String` are two types
 > in the checker today, and a literal in a `String` slot is refused with
 > `NK1106` ([ADR-107](adr/adr-107.md) §5).
 
@@ -546,7 +553,7 @@ time. A type is rarely written. The compiler uses **type inference** to deduce
 the type from the value.
 
 ```nika
-let name = "Nikaia"  // Compiler knows this is a &str - a view of static text
+let name = "Nikaia"  // Compiler knows this is a ref String - a view of static text
 let count = 42       // an i32, because nothing here asks for anything else
 ```
 
@@ -1145,7 +1152,7 @@ Nikaia has no **classes**. Data and behavior are declared apart:
 ```nika
 // Defining behavior for the User struct
 impl User {
-    fn login(&self) {
+    fn login(ref self) {
         println(f"{self.username} logged in.")
     }
 }
@@ -1188,7 +1195,7 @@ The standard library provides types for groups of values.
 * **Tuple:** a fixed number of values of *different* types, with no name for
     the group and no names for the parts. It is written and read by position:
     ```nika
-    let pair = ("*", 3)          // (&str, i64)
+    let pair = ("*", 3)          // (ref String, i64)
     let op = pair.0
     ```
     A tuple is the type for values that belong together for one step of a
@@ -1317,11 +1324,11 @@ A **trait** declares a set of methods that different types can share.
 
 ```nika
 trait Summarize {
-    fn summary(&self) -> String
+    fn summary(ref self) -> String
 }
 
 impl Summarize for User {
-    fn summary(&self) -> String {
+    fn summary(ref self) -> String {
         return f"User: {self.username}"
     }
 }
@@ -1335,7 +1342,7 @@ body something it may do (4.6):
 
 ```nika
 trait Summarize {
-    fn summary(&self) -> String
+    fn summary(ref self) -> String
 }
 
 fn shout[T: Summarize](x: T) -> String {
@@ -1353,7 +1360,7 @@ may take a path, `[H: http::Handler]`, and the ledger records a trait and each
 `sync` it may pause; without `throws` it cannot fail. An implementation is
 checked against the declaration: a body that pauses under a `sync` declaration
 is refused, and a body that does less than the declaration allows is accepted.
-A trait can therefore describe I/O, `fn load(&self) -> String throws`, and a
+A trait can therefore describe I/O, `fn load(ref self) -> String throws`, and a
 call through its bound pauses where the declaration says it may.
 
 An `impl` owes its trait the declared methods and no others: a method the trait
@@ -1392,7 +1399,7 @@ Parameters *after* the semicolon are options, flags, or modifiers.
 
 ```nika
 // Definition
-fn request(url: &str; timeout: i32 = 30, method: &str = "GET") { ... }
+fn request(url: ref String; timeout: i32 = 30, method: ref String = "GET") { ... }
 
 // Valid calls
 request("https://api.com")                              // both options defaulted
@@ -1536,7 +1543,7 @@ context the lambda is used in. The rule is the same at both values of
 #### A. Immediate Context (`@immediate`)
 A function that runs the callback to completion before it returns is an
 **immediate context**.
-* **Behavior:** implicit borrow (`&T`).
+* **Behavior:** implicit borrow (`ref T`).
 * **Examples:** `map`, `filter`, `for_each`, `sort_by`.
 
 ```nika
@@ -1662,10 +1669,10 @@ view of the value *inside* it, so a function that only uses the value takes an
 ordinary view and never mentions sharing:
 
 ```nika
-fn serve(db: &Connection) { … }
+fn serve(db: ref Connection) { … }
 
 let db = Shared(postgres::connect("…"))
-serve(&db)          // a view; no handle is made, and the count is untouched
+serve(ref db)          // a view; no handle is made, and the count is untouched
 ```
 
 Whether the value is shared is the caller's decision, and `serve` does not know
@@ -1752,7 +1759,7 @@ the message names `SharedMut[T]`: one type, one spelling.
 
 > **Implementation status:** Partially implemented. `Shared[T]` is built: the
 > type, its ledger entry, the constructor wherever an expression may stand, and
-> `serve(&db)` through the `deref` entry ([ADR-042](adr/adr-042.md) D2). A call
+> `serve(ref db)` through the `deref` entry ([ADR-042](adr/adr-042.md) D2). A call
 > that wants a shared value and is given a plain one is refused with `NK1115`
 > (Part III, C.3). `SharedMut[T]` and `Locked[T]` are not built: writing either
 > names a type that does not exist, the backend has no lowering for one, and
@@ -1845,7 +1852,7 @@ struct FileHandle {
 }
 
 impl Drop for FileHandle {
-    fn drop(&mut self) {
+    fn drop(ref mut self) {
         println("Closing file descriptor...")
         // Native close call would go here
     }
@@ -1863,14 +1870,14 @@ impl Cleanup for BufferedFile {
     // Pausable teardown. May pause, may fail.
     // The compiler calls it automatically at the end of the scope —
     // on normal exit AND while an error is bubbling up.
-    fn cleanup(&mut self) throws {
+    fn cleanup(ref mut self) throws {
         self.flush()
     }
 
     // Synchronous last resort. Must not pause, must not fail.
     // Runs after cleanup(), or alone if cleanup() cannot run
     // (see "When cleanup cannot run" below).
-    fn drop(&mut self) {
+    fn drop(ref mut self) {
         // release the handle — nothing that waits
     }
 }
@@ -1936,8 +1943,21 @@ runs `drop` for every variable in scope, so no resource leaks during a failure.
 ### 6.5. References and Borrowing
 
 A function that only *looks at* a value, and does not own it, takes a
-**reference** (written `&T`, or `&str` for text). The owner keeps the value,
-the borrower may read it, and the loan ends on its own.
+**view** of it. The owner keeps the value, the borrower may read it, and the
+loan ends on its own.
+
+**`ref X` is a view of an `X`, and that is the whole rule**
+([ADR-184](adr/adr-184.md) D1). It is one word and one meaning wherever a type
+may stand: `ref String` is a view of text, `ref Array[T]` a view of a run,
+`ref Reading` a view of a struct, `ref self` a method's view of its receiver.
+There is no second noun for the view of a type — text is `String` and a view of
+it is `ref String`, which is what a reader who has seen the rule once already
+knows.
+
+**`ref` is reserved** ([ADR-051](adr/adr-051.md)'s list, 2.1). It looks free —
+no program in this repository had ever used the word — and it is not: `ref(x)`
+is a borrow of `(x)` and a call to a function named `ref` in the same
+characters, and the reading nobody meant would be the silent one.
 
 **Nikaia source contains no lifetime annotations.** There is no syntax for
 them. Everything described below happens inside the compiler
@@ -1953,14 +1973,14 @@ Two things are guaranteed:
     ```nika
 use std::fs
 
-    fn report(config: &Config) {
-        let name = &config.name       // borrow
+    fn report(config: ref Config) {
+        let name = ref config.name       // borrow
         let data = fs::read("log")    // the function pauses here (I/O)...
         println(f"{name}: {data}")     // ...and the borrow is still valid.
     }
     ```
 
-2.  **Returning a borrowed value from a function.** `fn first_word(s: &str) -> &str`
+2.  **Returning a borrowed value from a function.** `fn first_word(s: ref String) -> ref String`
     needs no annotation. Where the result could come from *several* inputs,
     the compiler infers the connection, across function boundaries and through
     the whole program (6.7).
@@ -1977,7 +1997,7 @@ and `fs::map(path)`, and the compiler writes the reference the callee asked
 for, as it writes the pause and the failure a call carries (7.1, 8.1). A `&` in
 a parameter type is an assertion, *this is a view*, as `sync` is (Part II,
 12.1). A parameter the function changes in place says `mut` in the declaration,
-`fn fill(mut out: Vec[i64])`; that is `&mut self`'s rule for every parameter,
+`fn fill(mut out: Vec[i64])`; that is `ref mut self`'s rule for every parameter,
 and the call shows nothing, as `xs.push(1)` shows nothing. A `for` **lends**
 its list, so the list is still there after the loop; iteration that takes the
 elements away is written `for x in xs.drain()`. Nothing here inserts a copy: a
@@ -1993,9 +2013,9 @@ a **method's** argument.
 > place (`config.name`, `totals.stations[name]`) is a view of it where the value
 > would otherwise have to move; the `keeps` column is inferred and recorded for
 > every function; and the compiler writes the `&` at the call off that column,
-> so `serve(&db)` is refused with `NK1137` (Part III, C.3). `mut` is read:
-> `fn fill(mut out: Vec[i64])` lowers to `&mut Vec<i64>`, `fill(xs)` gains its
-> `&mut`, and a parameter a body changes without the word is refused with
+> so `serve(ref db)` is refused with `NK1137` (Part III, C.3). `mut` is read:
+> `fn fill(mut out: Vec[i64])` lowers to `ref mut Vec<i64>`, `fill(xs)` gains its
+> `ref mut`, and a parameter a body changes without the word is refused with
 > `NK1138`. A method's argument is passed owned because the compiler cannot yet
 > resolve which entry the call goes to. Not built: the ledger diff that
 > narrates a kept value's moved cleanup point, and the refusal of a `&` written
@@ -2011,7 +2031,7 @@ alive as long as the view does.
 
 > **Transient = borrow. Escaping = tether. Copying = yours to ask for.**
 
-Every view (`&str`, `&[u8]`) is in one of three states. The compiler picks the
+Every view (`ref String`, `ref [u8]`) is in one of three states. The compiler picks the
 cheapest one that works, and the states are never written in the source:
 
 | State | What it is | Cost |
@@ -2036,7 +2056,7 @@ Two rules keep this cheap on large data:
 
 ```nika
 struct Token {
-    text: &str,   // a view into someone else's buffer
+    text: ref String,   // a view into someone else's buffer
 }
 
 fn tokenize(source: String) -> Vec[Token] {
@@ -2056,7 +2076,7 @@ the struct:
 
 ```nika
 @borrowed
-struct Reading { name: &str, temp: i32 }
+struct Reading { name: ref String, temp: i32 }
 ```
 
 Nothing about the program changes, except that an escape is a compile error
@@ -2072,9 +2092,9 @@ possible. The compiler refuses the program and names the ways out,
 *Design rationale:* an invisible copy in a loop over a billion rows is the kind
 of surprise the language refuses to produce ([ADR-008](adr/adr-008.md)).
 
-**A parameter written `&str` may not be kept past its call.** A view inside a
+**A parameter written `ref String` may not be kept past its call.** A view inside a
 struct carries the buffer it points into, because the struct's declaration says
-it holds a view. A parameter written `&str` on its own says only that the call
+it holds a view. A parameter written `ref String` on its own says only that the call
 may look at one. A function that stores such a parameter, into a field of its
 subject, into a struct it hands back, or into a task, is refused with `NK2302`
 (Part III, C.3). Such a function puts the view in a struct and takes the
@@ -2082,15 +2102,15 @@ struct:
 
 ```nika
 @borrowed
-struct Reading { name: &str, temp: i32 }
+struct Reading { name: ref String, temp: i32 }
 
 impl Summary {
-    fn record(&mut self, m: Reading) { … }     // and not `name: &str`
+    fn record(ref mut self, m: Reading) { … }     // and not `name: ref String`
 }
 ```
 
 Handing a view back out of the buffer it came from is **not** this rule:
-`fn count(seq: &str, k: i64) -> HashMap[&str, Tally]` returns views of `seq`,
+`fn count(seq: ref String, k: i64) -> HashMap[ref String, Tally]` returns views of `seq`,
 and the result points into `seq` and nothing else. A parameter has no buffer of
 its own to name, because the language has no syntax for one
 ([ADR-005](adr/adr-005.md) D1); a struct carries its buffer instead
@@ -2099,8 +2119,8 @@ its own to name, because the language has no syntax for one
 Where the destination **already carries a buffer**, there is nothing to refuse.
 A method of a struct that holds a view has that struct's buffer in hand, so
 storing the parameter into one of its fields is accepted, and the parameter is
-a view of *that* buffer. `fn note(&mut self, name: &str)` on a `Summary`
-holding `label: &str` compiles, and `name` is a view of the buffer `label`
+a view of *that* buffer. `fn note(ref mut self, name: ref String)` on a `Summary`
+holding `label: ref String` compiles, and `name` is a view of the buffer `label`
 points into. That narrows what a caller may pass, which is why the signature
 changes rather than the body.
 
@@ -2230,11 +2250,11 @@ the source ([ADR-005](adr/adr-005.md) D3, [ADR-023](adr/adr-023.md) D1).
 enum ConfigError {
     NotFound(Path),
     Unreadable(Path),
-    BadSyntax { line: i64, expected: &str },
+    BadSyntax { line: i64, expected: ref String },
 }
 
 impl Error for ConfigError {
-    fn message(&self) -> String {
+    fn message(ref self) -> String {
         match self {
             ConfigError::NotFound(p)   => f"no config at {p}"
             ConfigError::Unreadable(p) => f"cannot read {p}"

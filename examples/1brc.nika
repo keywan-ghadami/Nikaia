@@ -29,7 +29,7 @@
 // compiled into `std` by this compiler (D1).
 //
 // Where this file says something explicitly that a later Nikaia will infer -
-// `as i64`, `&path`, `fn { … }` instead of `fn:` - the reason is in ADR-013 D7,
+// `as i64`, `ref path`, `fn { … }` instead of `fn:` - the reason is in ADR-013 D7,
 // and that last rewrite is why the `fn:` form is gone entirely (ADR-022).
 // The compiler checks types (ADR-024) but converts nothing on its own: a
 // printer that guessed would be worse than a source that says what it means.
@@ -67,7 +67,7 @@ grammar Measurements {
     // be said: a plain `until(";")` would run through a newline, and the
     // compiler rejects that under a frame rather than quietly fixing it
     // (ADR-009 D1). Either way it is one machine-word-at-a-time scan.
-    rule NAME -> &str = s:until(";" | frame_end) -> { s }
+    rule NAME -> ref String = s:until(";" | frame_end) -> { s }
 
     // Temperatures always carry exactly one decimal, so they are parsed as
     // tenths and the whole aggregation stays in integer arithmetic. Floating
@@ -135,7 +135,7 @@ grammar Measurements {
 // (ADR-008, D6).
 @borrowed
 pub struct Reading {
-    name: &str,
+    name: ref String,
     temp: i32,
 }
 
@@ -158,21 +158,21 @@ impl Stats {
     // `sync` (Part II, 12.1): pure computation, cannot pause, cannot do I/O.
     // This is what lets the parser run inside `par_iter` below - the compiler
     // checks it, rather than us remembering it.
-    fn add(&mut self, temp: i32) sync {
+    fn add(ref mut self, temp: i32) sync {
         if temp < self.min { self.min = temp }
         if temp > self.max { self.max = temp }
         self.sum += temp as i64
         self.count += 1
     }
 
-    fn merge(&mut self, other: &Stats) sync {
+    fn merge(ref mut self, other: ref Stats) sync {
         if other.min < self.min { self.min = other.min }
         if other.max > self.max { self.max = other.max }
         self.sum += other.sum
         self.count += other.count
     }
 
-    fn mean(&self) -> f64 sync {
+    fn mean(ref self) -> f64 sync {
         return ((self.sum as f64) / (self.count as f64)) / 10.0
     }
 }
@@ -183,7 +183,7 @@ impl Stats {
 // past the mapping, the *map* would take one handle on the buffer and the keys
 // would stay offsets - never one handle per key (ADR-008, D4).
 pub struct Summary {
-    stations: collections::HashMap[&str, Stats],
+    stations: collections::HashMap[ref String, Stats],
 }
 
 impl Summary {
@@ -191,18 +191,18 @@ impl Summary {
         return Summary { stations: collections::HashMap() }
     }
 
-    fn record(&mut self, m: Reading) sync {
+    fn record(ref mut self, m: Reading) sync {
         self.stations
             .entry(m.name)
             .and_modify fn (stats) { stats.add(m.temp) }
             .or_insert_with fn { Stats(m.temp) }
     }
 
-    fn merge(&mut self, other: Summary) sync {
+    fn merge(ref mut self, other: Summary) sync {
         for (name, stats) in other.stations.drain() {
             self.stations
                 .entry(name)
-                .and_modify fn (into) { into.merge(&stats) }
+                .and_modify fn (into) { into.merge(ref stats) }
                 .or_insert(stats)
         }
     }
@@ -227,7 +227,7 @@ fn main() throws {
     // constant-memory alternative. Parallelism is asked for here so the
     // grammar's `par_fold` uses every core, not for the mapping - and at
     // `user_parallelism = no` the same program still runs, on one core.
-    let data = fs::map(&path) catch {
+    let data = fs::map(ref path) catch {
         eprintln(f"cannot open {path}: {error}")
         return
     }

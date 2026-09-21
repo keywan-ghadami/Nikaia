@@ -17,8 +17,8 @@ use std::html
 
 @borrowed
 pub struct Row {
-    name: &str,
-    note: &str,
+    name: ref String,
+    note: ref String,
 }
 
 fn table(rows: Vec[Row]) -> String {

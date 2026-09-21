@@ -58,18 +58,18 @@ grammar Fasta {
     rule section -> Section =
         ">" header:LINE body:body_line* -> { Section { header, lines: body } }
 
-    rule body_line -> &str = not(">") l:LINE -> { l }
+    rule body_line -> ref String = not(">") l:LINE -> { l }
 
     // `until` stops before the terminator, so the line ending is consumed
     // explicitly. A file that does not end in one is not FASTA, and saying so
     // here is better than accepting it and losing the last line silently.
-    rule LINE -> &str = s:until(line_ending) line_ending -> { s }
+    rule LINE -> ref String = s:until(line_ending) line_ending -> { s }
 }
 
 @borrowed
 pub struct Section {
-    header: &str,
-    lines: Vec[&str],
+    header: ref String,
+    lines: Vec[ref String],
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ impl Tally {
         return Tally { n: first }
     }
 
-    fn bump(&mut self) sync {
+    fn bump(ref mut self) sync {
         self.n += 1
     }
 }
@@ -100,15 +100,15 @@ impl Tally {
 // pointers and lengths rather than a million small strings. That is the same
 // claim `1brc.nika` makes about station names (Part II, 10.6), on a buffer the
 // program owns rather than one it mapped.
-fn count(dna: &str, k: i64) -> collections::HashMap[&str, Tally] {
-    let mut counts: collections::HashMap[&str, Tally] = collections::HashMap()
+fn count(dna: ref String, k: i64) -> collections::HashMap[ref String, Tally] {
+    let mut counts: collections::HashMap[ref String, Tally] = collections::HashMap()
 
     if dna.len() < k {
         return counts
     }
 
     for i in 0..<dna.len() - k + 1 {
-        let fragment = &dna[i..<i + k]
+        let fragment = ref dna[i..<i + k]
         counts
             .entry(fragment)
             .and_modify fn (tally) { tally.bump() }
@@ -123,7 +123,7 @@ fn count(dna: &str, k: i64) -> collections::HashMap[&str, Tally] {
 // Two stable sorts state the compound order the benchmark asks for, which is
 // what Part I 4.5 says they are for: by fragment ascending, then by count
 // descending, and the second keeps the order of the first among equals.
-fn report_frequencies(dna: &str, k: i64) {
+fn report_frequencies(dna: ref String, k: i64) {
     let counts = count(dna, k)
 
     let mut rows = Vec()
@@ -145,7 +145,7 @@ fn report_frequencies(dna: &str, k: i64) {
 
 // One named fragment, and how often it occurs. `k` is the fragment's own
 // length, so the table is built for exactly the width being asked about.
-fn report_fragment(dna: &str, fragment: &str) {
+fn report_fragment(dna: ref String, fragment: ref String) {
     let counts = count(dna, fragment.len())
     // `get` hands back a `Tally?`, because a key may not be there - so the
     // reach is `?.` and the fallback is `??`, which is Part I 3.5's own pair.
@@ -182,7 +182,7 @@ fn main() throws {
     for section in sections {
         if section.header.starts_with(wanted.as_str()) {
             for line in section.lines {
-                dna.push_str(&line.to_uppercase())
+                dna.push_str(ref line.to_uppercase())
             }
         }
     }

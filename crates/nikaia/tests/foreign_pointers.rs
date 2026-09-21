@@ -121,15 +121,26 @@ fn what_a_caller_may_hand_a_run() {
 /// declaration ship in the ledger (Part III 13.5).
 #[test]
 fn the_boundary_types_round_trip_through_their_text() {
-    for written in ["&[u8]", "&mut [u8]", "&mut i32"] {
+    for written in ["ref [u8]", "ref mut [u8]", "ref mut i32"] {
         let ty = Ty::parse(written);
         assert_eq!(ty.text(), written);
         assert_eq!(Ty::parse(&ty.text()), ty);
         assert!(matches!(ty, Ty::Pointed { .. }), "{ty:?}");
     }
-    // A plain `&T` is the view every declaration in this language writes, and
+    // **And the spelling `ref` replaces reads back as the same type**
+    // ([ADR-184](../../../docs/specification/adr/adr-184.md) D1, D4), which is
+    // what lets a ledger written before 0.0.133 still be read.
+    for (old, new) in [
+        ("&[u8]", "ref [u8]"),
+        ("&mut [u8]", "ref mut [u8]"),
+        ("&mut i32", "ref mut i32"),
+    ] {
+        assert_eq!(Ty::parse(old), Ty::parse(new), "{old}");
+        assert_eq!(Ty::parse(old).text(), new, "{old}");
+    }
+    // A plain view is the one every declaration in this language writes, and
     // it stays what it was: one type, one spelling.
-    assert!(matches!(Ty::parse("&str"), Ty::Named { .. }));
+    assert!(matches!(Ty::parse("ref String"), Ty::Named { .. }));
 }
 
 /// **A `&mut [u8]` is not a `&[u8]`**, because the second promises not to
@@ -222,7 +233,7 @@ fn a_declaration_ships_in_this_languages_words() {
     .expect("the source parses");
     let written = Ledger::infer(&parsed).render();
     assert!(
-        written.contains("signature = \"(fd: i32, buf: &mut [u8], count: usize) -> i64\""),
+        written.contains("signature = \"(fd: i32, buf: ref mut [u8], count: usize) -> i64\""),
         "{written}"
     );
 }
@@ -779,16 +790,17 @@ fn a_nullable_handle_is_one_machine_word() {
 /// `&mut T` and `&[T]`. A plain `&T?` stays a nullable view.
 #[test]
 fn the_question_mark_binds_to_the_pointee() {
-    let out = Ty::parse("&mut sqlite3?");
-    assert_eq!(out.text(), "&mut sqlite3?");
+    let out = Ty::parse("ref mut sqlite3?");
+    assert_eq!(out.text(), "ref mut sqlite3?");
     assert_eq!(Ty::parse(&out.text()), out);
+    assert_eq!(Ty::parse("&mut sqlite3?"), out, "the spelling it replaces");
     let Ty::Pointed { item, .. } = &out else {
         panic!("{out:?}")
     };
     assert!(matches!(item.as_ref(), Ty::Nullable(_)), "{out:?}");
 
-    // Untouched: `let mut m: &str? = null` is Part I 2.3's own example.
-    assert!(matches!(Ty::parse("&str?"), Ty::Nullable(_)));
+    // Untouched: `let mut m: ref String? = null` is Part I 2.3's own example.
+    assert!(matches!(Ty::parse("ref String?"), Ty::Nullable(_)));
 }
 
 /// **`there is no text` stopped being a failure and became a value** (D4), so

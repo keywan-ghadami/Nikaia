@@ -39,7 +39,7 @@ fn main() throws {
     let path = cli::args().nth(1) ?? "stock.csv"
     let out = cli::args().nth(2) ?? "report.html"
 
-    let data = fs::map(&path) catch {
+    let data = fs::map(ref path) catch {
         eprintln(f"cannot open {path}: {error}")
         return
     }
@@ -55,7 +55,7 @@ fn main() throws {
     let count = entries.len()
     let markup = render(entries, total)
 
-    fs::write(&out, &markup) catch {
+    fs::write(ref out, ref markup) catch {
         eprintln(f"cannot write {out}: {error}")
         return
     }

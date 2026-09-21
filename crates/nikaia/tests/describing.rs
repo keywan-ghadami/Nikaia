@@ -101,7 +101,7 @@ fn a_signature_is_translated_by_the_table() {
     // `&T` is a view, and a view is not kept.
     assert!(
         text.contains(
-            "[fn.\"fremd::lent\"]\npub = true\nsync = true\nsignature = \"(text: &str) -> bool\"\n"
+            "[fn.\"fremd::lent\"]\npub = true\nsync = true\nsignature = \"(text: ref String) -> bool\"\n"
         ),
         "{text}"
     );

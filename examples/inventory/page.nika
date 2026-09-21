@@ -7,7 +7,7 @@
 use std::html
 
 // The title is a Kap 5.1 option: after the `;`, named at the call, defaulted.
-pub fn render(entries: Vec[Entry], total: i64; title: &str = "Stock") -> String {
+pub fn render(entries: Vec[Entry], total: i64; title: ref String = "Stock") -> String {
     return dsl html {
         <html>
         <head><title>{title}</title></head>

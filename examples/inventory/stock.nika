@@ -7,7 +7,7 @@
 
 grammar Stock {
 
-    rule FIELD -> &str = s:until(";" | frame_end) -> { s }
+    rule FIELD -> ref String = s:until(";" | frame_end) -> { s }
 
     rule COUNT -> i64 = n:dec[i64](digit+) -> { n }
 
@@ -24,8 +24,8 @@ grammar Stock {
 // either way.
 @borrowed
 pub struct Entry {
-    pub category: &str,
-    pub item: &str,
+    pub category: ref String,
+    pub item: ref String,
     pub count: i64,
 }
 
@@ -36,18 +36,18 @@ pub struct Entry {
 // file it is emitting - one namespace or not. That is a limit of this compiler
 // and not of the language, and it points the right way here: the file about
 // reading a stock list is where reading a stock list belongs.
-pub fn read(data: &str) -> Vec[Entry] throws {
+pub fn read(data: ref String) -> Vec[Entry] throws {
     return Stock::file(data)
 }
 
 // Not public: nothing outside this package needs it, and Part I 9.3's point is
 // that privacy is what forces an interface rather than a pile of exposed parts.
-fn weight(entry: &Entry) -> i64 {
+fn weight(entry: ref Entry) -> i64 {
     return entry.count
 }
 
 // The total, in one place. `pub` because the page prints it.
-pub fn total(entries: &Vec[Entry]) -> i64 {
+pub fn total(entries: ref Vec[Entry]) -> i64 {
     let mut sum = 0
     for e in entries { sum += weight(e) }
     return sum

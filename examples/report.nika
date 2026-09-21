@@ -42,7 +42,7 @@ grammar Stock {
     // The second alternative is what makes this safe inside a frame: a line
     // missing its last field stops at the newline instead of eating the line
     // after it.
-    rule FIELD -> &str = s:until(";" | frame_end) -> { s }
+    rule FIELD -> ref String = s:until(";" | frame_end) -> { s }
 
     rule COUNT -> i64 = n:dec[i64](digit+) -> { n }
 
@@ -67,8 +67,8 @@ grammar Stock {
 // built while the file is still mapped.
 @borrowed
 pub struct Entry {
-    category: &str,
-    item: &str,
+    category: ref String,
+    item: ref String,
     count: i64,
 }
 
@@ -97,7 +97,7 @@ fn main() throws {
     let path = cli::args().nth(1) ?? "stock.csv"
     let out = cli::args().nth(2) ?? "report.html"
 
-    let data = fs::map(&path) catch {
+    let data = fs::map(ref path) catch {
         eprintln(f"cannot open {path}: {error}")
         return
     }
@@ -120,7 +120,7 @@ fn main() throws {
     // The one line that did not exist before this example. A failure to write
     // is an ordinary failure: the page is worth nothing if it did not land, so
     // the program says so and stops rather than reporting success.
-    fs::write(&out, &markup) catch {
+    fs::write(ref out, ref markup) catch {
         eprintln(f"cannot write {out}: {error}")
         return
     }

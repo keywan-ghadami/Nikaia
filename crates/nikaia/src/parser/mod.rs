@@ -555,9 +555,9 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 36] = [
+pub const RESERVED_WORDS: [&str; 37] = [
     "as", "break", "catch", "comptime", "continue", "dsl", "else", "enum", "extern", "false", "fn",
-    "for", "grammar", "if", "impl", "in", "let", "match", "mut", "null", "overlap", "pub",
+    "for", "grammar", "if", "impl", "in", "let", "match", "mut", "null", "overlap", "pub", "ref",
     "return", "select", "self", "spawn", "struct", "sync", "throw", "throws", "trait", "true",
     "unsafe", "use", "while", "with",
 ];
@@ -1315,7 +1315,8 @@ grammar! {
             ) -> { () }
           | KW_THROWS -> { () }
 
-        // Kap 4.2: `&mut self`, `&self`, `self` - the subject, when there is one.
+        // Kap 4.2: `ref mut self`, `ref self`, `self` - the subject, when there
+        // is one.
         rule fn_params -> FnParams =
             "(" body:fn_params_body? ")" -> {
                 body.unwrap_or_default()
@@ -1438,7 +1439,11 @@ grammar! {
           | i:int_lit -> { i }
 
         rule receiver -> Receiver =
-            "&" KW_MUT KW_SELF -> {
+            KW_REF KW_MUT KW_SELF -> {
+                Receiver { is_ref: true, is_mut: true }
+            }
+          | KW_REF KW_SELF -> { Receiver { is_ref: true, is_mut: false } }
+          | "&" KW_MUT KW_SELF -> {
                 Receiver { is_ref: true, is_mut: true }
             }
           | "&" KW_SELF -> { Receiver { is_ref: true, is_mut: false } }
@@ -1460,8 +1465,8 @@ grammar! {
           | KW_SELF ":" fail(
                 "`self` is a reserved word, so a parameter may not be called \
                  that (Part I, 2.1). It already names one thing - the value a \
-                 method was called on - and that is written `self`, `&self` or \
-                 `&mut self`, with no type beside it"
+                 method was called on - and that is written `self`, `ref self` or \
+                 `ref mut self`, with no type beside it"
             ) -> { Receiver { is_ref: false, is_mut: false } }
           | KW_SELF -> { Receiver { is_ref: false, is_mut: false } }
 
@@ -1779,7 +1784,13 @@ grammar! {
         // place this language writes one: a parameter's mutability is otherwise
         // the word in front of its *name*
         // ([ADR-094](../../../../docs/specification/adr/adr-094.md) D3).
-        rule amp -> bool = "&" m:kw_mut? -> { m.is_some() }
+        //
+        // **`ref` is the word and `&` is the spelling it replaces**
+        // ([ADR-184](../../../../docs/specification/adr/adr-184.md) D1). Both
+        // parse while the corpus moves; D4 is where the second one leaves.
+        rule amp -> bool =
+            KW_REF m:kw_mut? -> { m.is_some() }
+          | "&" m:kw_mut? -> { m.is_some() }
 
         // Part I 2.3: the trailing `?` that makes a type nullable. It comes
         // last, after the arguments, so `Vec[i64]?` is a nullable list and not
@@ -2531,6 +2542,12 @@ grammar! {
         rule unary_op -> UnaryOp =
             "-" -> { UnaryOp::Neg }
           | "!" -> { UnaryOp::Not }
+          // **`ref x` is a view of `x`**
+          // ([ADR-184](../../../../docs/specification/adr/adr-184.md) D1), and
+          // `&x` is the spelling it replaces. A bare `ref` with no expression
+          // after it is not this arm at all, which is what leaves `ref` an
+          // ordinary name.
+          | KW_REF -> { UnaryOp::Ref }
           | "&" -> { UnaryOp::Ref }
 
         rule postfix_expr -> Expr =
@@ -3290,6 +3307,22 @@ grammar! {
         rule KW_UNCHECKED = "unchecked" not(ident)
         rule KW_UNSAFE = "unsafe" not(ident)
 
+        // **`ref X` is a view of an `X`**
+        // ([ADR-184](../../../../docs/specification/adr/adr-184.md) D1), which
+        // is the word this language writes where the one below writes `&`.
+        //
+        // **In `RESERVED`, and the corpus is not what decided it.** Counting
+        // `ref` over every `.nika` file gave **zero** uses, which says the word
+        // is free — and it is not: a call written `ref(x)` is a borrow of `(x)`
+        // to this grammar and a call to a function named `ref` to its author,
+        // and the two are the same characters. A word that is a name in one
+        // position and an operator in the next is worse than a reserved one,
+        // because the reading nobody meant is the **silent** one
+        // ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1's
+        // polarity). `crates/nikaia/tests/reserved_below.rs` is what found it,
+        // by writing the word in every position a name may stand.
+        rule KW_REF = "ref" not(ident)
+
         // The four words of `opaque type T released by f`
         // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D3). They
         // are **not** in `RESERVED`: each is a name everywhere else, and this
@@ -3340,6 +3373,7 @@ grammar! {
 
         rule RESERVED_A -> u8 =
             KW_AS -> { 0 }
+          | KW_REF -> { 0 }
           | KW_CATCH -> { 0 }
           | KW_DSL -> { 0 }
           | KW_ELSE -> { 0 }

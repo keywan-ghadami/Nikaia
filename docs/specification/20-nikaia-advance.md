@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.132 (Draft)
+**Version:** 0.0.133 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -125,9 +125,9 @@ not exhaust the compiler's stack.
 
 **What crosses from build time to run time** is decided
 ([ADR-079](adr/adr-079.md)). A result arrives in its **view** form: `Vec[T]` as
-a `&[T]` — or as an `Array[T, N]` where the program writes the length into the
+a `ref [T]` — or as an `Array[T, N]` where the program writes the length into the
 type ([ADR-152](adr/adr-152.md), [ADR-179](adr/adr-179.md) D1) — and `String` as
-a `&str`. A value built with `push` is fixed once
+a `ref String`. A value built with `push` is fixed once
 it has crossed. A value that owns memory is refused by what it *is* and never by
 its parse — by its **type** for a `struct`, and for an `enum` by the **variant
 the value is**, because `Shape::Empty` is a `const` and `Shape::Many([1, 2])` is
@@ -139,10 +139,10 @@ hasher is.
 says it is a map ([ADR-176](adr/adr-176.md) D1). There is no map literal:
 
 ```nika
-comptime ROUTES: Fixed[&str, i64] = [("get", 1), ("post", 2)]
+comptime ROUTES: Fixed[ref String, i64] = [("get", 1), ("post", 2)]
 ```
 
-`Fixed[&str, V]` is the fixed map, a type in `std`. `ROUTES.get(k)` is a `V?`.
+`Fixed[ref String, V]` is the fixed map, a type in `std`. `ROUTES.get(k)` is a `V?`.
 Keys are text; a key of any other type is refused with `NK1170`, and a key
 written twice with `NK1169` — a table has one value per key, and there is no
 meaning a compiler may pick between. **A value may be a `struct` or an `enum`
@@ -150,7 +150,7 @@ this program declares**, and what the program then reads is a **view** of the
 row ([ADR-180](adr/adr-180.md) D1): the row lives in the binary, so there is
 nothing to copy it out of. `TABLE.get(k)?.field ?? …` is how a field of one is
 reached, which is what a `T?` asks for anywhere (2.3). A list of text crosses as an array of
-views, `[&str; N]`, which is the same rule read over both shapes at once.
+views, `[ref String; N]`, which is the same rule read over both shapes at once.
 
 **Reading a file while the program is built** ([ADR-072](adr/adr-072.md)). A
 build given no allowlist reads nothing (D1). A file the build reads is named
@@ -158,7 +158,7 @@ three times: in the source, as the `asset("…")` literal; in an allowlist file,
 one path per line; and in the invocation that puts the list in effect,
 `--allow-read-from-list=…` (D3). The path may not be computed (D4). There are no
 patterns (D5). What `asset("…")` comes to is the file's **text**, which crosses
-to the program as the `&str` a `const` holds
+to the program as the `ref String` a `const` holds
 ([ADR-079](adr/adr-079.md) D1); bytes that are not UTF-8 are refused rather than
 converted. The list binds the whole build, a dependency's read included (D6).
 
@@ -175,7 +175,7 @@ switched off without editing anything ([ADR-072](adr/adr-072.md) D3).
 > included — and so is the crossing of [ADR-079](adr/adr-079.md)
 > ([ADR-175](adr/adr-175.md), [ADR-176](adr/adr-176.md)). **`asset("…")` and
 > the allowlist are implemented** ([ADR-072](adr/adr-072.md) §4):
-> `comptime CONFIG: &str = asset("config.txt")` is a `const` holding the file's
+> `comptime CONFIG: ref String = asset("config.txt")` is a `const` holding the file's
 > text, `NK1175` says which of the three namings a refused read is missing,
 > `NK1176` refuses a path the build worked out, and `NK1177` refuses an `asset`
 > written outside a `comptime` with the name of the run-time read.
@@ -187,7 +187,7 @@ switched off without editing anything ([ADR-072](adr/adr-072.md) D3).
 > in the parser's own words. What A's own example still meets is the
 > **crossing**: a build-time value is a whole number, a float, a `bool`, text, a
 > list, a `struct` and an `enum` variant, and a rule whose result is one of the
-> seven crosses and runs — including into a `&[T]`, which is what a run of
+> seven crosses and runs — including into a `ref [T]`, which is what a run of
 > `struct`s arrives as ([ADR-179](adr/adr-179.md) D1, D3). What a rule may
 > **not** hand back is a value it built into a position that views a run, and
 > `NK1179` says so on the action's own line.
@@ -463,7 +463,7 @@ A parser that reads a file end to end uses one core. For a multi-gigabyte input 
 // Up to ";" - or to the end of the frame, whichever comes first. `frame_end`
 // is the boundary of the frame this rule is reached from: written once, in
 // the attribute below, and referenced here.
-rule NAME -> &str = s:until(";" | frame_end) { s }
+rule NAME -> ref String = s:until(";" | frame_end) { s }
 
 @frame(boundary: "\n")
 rule MEASUREMENT -> Reading =
@@ -715,7 +715,7 @@ body:
 ```nika
 fn bonus(score: i32) -> i32 { score * 2 + 1 }   // no `sync`, and cannot pause
 
-fn total(p: &Player) -> i32 sync {
+fn total(p: ref Player) -> i32 sync {
     return p.score + bonus(p.score)             // fine: `bonus` provably cannot pause
 }
 ```

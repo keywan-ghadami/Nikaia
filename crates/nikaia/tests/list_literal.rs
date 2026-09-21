@@ -139,7 +139,7 @@ fn two_types_that_do_not_agree_are_both_named() {
     .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
     assert!(found[0].message.contains("`i64`"), "{found:#?}");
-    assert!(found[0].message.contains("`&str`"), "{found:#?}");
+    assert!(found[0].message.contains("`ref String`"), "{found:#?}");
 }
 
 /// **Once per literal.** Three elements that disagree with the first are one

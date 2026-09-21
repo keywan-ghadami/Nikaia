@@ -45,7 +45,7 @@ grammar Log {
     // The second alternative is what makes this safe inside a frame: a line
     // missing its last field stops at the newline instead of eating the line
     // after it.
-    rule FIELD -> &str = s:until(" " | frame_end) -> { s }
+    rule FIELD -> ref String = s:until(" " | frame_end) -> { s }
 
     // Three digits, exactly. The format says a status is three digits, so the
     // grammar says it too - and a line carrying "20" fails here, where the
@@ -78,7 +78,7 @@ grammar Log {
 // report and a second copy of the log.
 @borrowed
 pub struct Hit {
-    path: &str,
+    path: ref String,
     status: i32,
     bytes: i64,
 }
@@ -93,19 +93,19 @@ impl Counts {
         return Counts { hits: 1, bytes: bytes }
     }
 
-    fn add(&mut self, bytes: i64) sync {
+    fn add(ref mut self, bytes: i64) sync {
         self.hits += 1
         self.bytes += bytes
     }
 
-    fn merge(&mut self, other: &Counts) sync {
+    fn merge(ref mut self, other: ref Counts) sync {
         self.hits += other.hits
         self.bytes += other.bytes
     }
 }
 
 pub struct Report {
-    paths: collections::HashMap[&str, Counts],
+    paths: collections::HashMap[ref String, Counts],
     requests: i64,
     failures: i64,
 }
@@ -118,7 +118,7 @@ impl Report {
     // `sync`: pure computation, no I/O, cannot pause - which is what lets the
     // fold run on every core. The compiler checks it here rather than trusting
     // the author to remember it at the call site.
-    fn record(&mut self, e: Hit) sync {
+    fn record(ref mut self, e: Hit) sync {
         self.requests += 1
         if e.status >= 400 { self.failures += 1 }
         self.paths
@@ -127,13 +127,13 @@ impl Report {
             .or_insert_with fn { Counts(e.bytes) }
     }
 
-    fn merge(&mut self, other: Report) sync {
+    fn merge(ref mut self, other: Report) sync {
         self.requests += other.requests
         self.failures += other.failures
         for (path, counts) in other.paths.drain() {
             self.paths
                 .entry(path)
-                .and_modify fn (into) { into.merge(&counts) }
+                .and_modify fn (into) { into.merge(ref counts) }
                 .or_insert(counts)
         }
     }
@@ -142,7 +142,7 @@ impl Report {
 fn main() throws {
     let path = cli::args().nth(1) ?? "access.log"
 
-    let data = fs::map(&path) catch {
+    let data = fs::map(ref path) catch {
         eprintln(f"cannot open {path}: {error}")
         return
     }

@@ -1,4 +1,4 @@
 struct S {
-    name: &str
+    name: ref String
     temp: i32
 }

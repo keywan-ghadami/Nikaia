@@ -243,6 +243,20 @@ pub const ARRAY: &str = "Array";
 /// descriptor to be at run time.
 pub const FIELD: &str = "$Field";
 
+/// **The one type text has** ([ADR-107](../../../docs/specification/adr/adr-107.md)),
+/// under the name a program writes it with.
+///
+/// The compiler's own noun for a view of it stays `str`, because that is the
+/// word the language below uses and the emitter writes name for name
+/// ([ADR-011](../../../docs/specification/adr/adr-011.md) D2). What
+/// [ADR-184](../../../docs/specification/adr/adr-184.md) D2 changed is the
+/// **surface**: `ref String` is what is written and what is printed, and `str`
+/// is not a type a program may name.
+pub const TEXT: &str = "String";
+
+/// The compiler's own noun for a view of [`TEXT`], which no program writes.
+pub(crate) const TEXT_VIEW: &str = "str";
+
 /// A type's own name, with the module it lives in taken off.
 ///
 /// **Since [ADR-154](../../../docs/specification/adr/adr-154.md) D3 a `std`
@@ -671,7 +685,7 @@ impl Ty {
                 parallel,
             };
         }
-        let (view, rest) = match text.strip_prefix('&') {
+        let (view, rest) = match a_view_of(text) {
             Some(rest) => (true, rest.trim()),
             None => (false, text),
         };
@@ -692,6 +706,14 @@ impl Ty {
                     .collect(),
                 view,
             },
+            // **A view of `String` is a view of text**
+            // ([ADR-184](../../../docs/specification/adr/adr-184.md) D2), and
+            // that is the whole of what the second noun was for: `str` is not
+            // a type a program may write, so `ref String` and the `&str` it
+            // replaces are read back as one thing. Without this they were two,
+            // and a call that passed one where the other was declared was
+            // `NK1102` about a distinction the language does not have.
+            _ if view && rest == TEXT => Ty::view(TEXT_VIEW),
             _ => Ty::Named {
                 name: rest.to_string(),
                 args: Vec::new(),
@@ -934,14 +956,27 @@ impl Ty {
             };
             return Ty::Nullable(Box::new(Ty::from_ast(parsed, &inner)));
         }
+        // `unaliased`, because a type may be written with this file's own
+        // name for the package that declares it - `h::Request` where the file
+        // wrote `use http as h`
+        // ([ADR-046](../../../../docs/specification/adr/adr-046.md) D3). One
+        // call here rather than one at every reader of a type, which is why the
+        // map is on `Parsed` and not on a pass of its own.
+        let name = parsed.unaliased(parsed.text(ty.name));
+        // **A view of `String` is a view of text**
+        // ([ADR-184](../../../docs/specification/adr/adr-184.md) D2), the same
+        // normalisation [`Ty::parse`] makes at the other door. Text is one type
+        // ([ADR-107](../../../docs/specification/adr/adr-107.md)) and `str` is
+        // the compiler's own noun for a view of it — so `ref String` written in
+        // a signature and `ref String` printed for a literal have to arrive as
+        // one thing, or the message is *this is `ref String`, and the `let`
+        // says `ref String`*.
+        let name = match (ty.is_view, name.as_str()) {
+            (true, TEXT) => TEXT_VIEW.to_string(),
+            _ => name,
+        };
         Ty::Named {
-            // `unaliased`, because a type may be written with this file's own
-            // name for the package that declares it - `h::Request` where the
-            // file wrote `use http as h`
-            // ([ADR-046](../../../../docs/specification/adr/adr-046.md) D3). One
-            // call here rather than one at every reader of a type, which is why
-            // the map is on `Parsed` and not on a pass of its own.
-            name: parsed.unaliased(parsed.text(ty.name)),
+            name,
             args: ty
                 .generics
                 .iter()
@@ -966,7 +1001,7 @@ impl fmt::Display for Ty {
                 slice,
                 mutable,
             } => {
-                f.write_str("&")?;
+                f.write_str("ref ")?;
                 if *mutable {
                     f.write_str("mut ")?;
                 }
@@ -1005,7 +1040,7 @@ impl fmt::Display for Ty {
             }
             Ty::Var { name, view } => {
                 if *view {
-                    f.write_str("&")?;
+                    f.write_str("ref ")?;
                 }
                 write!(f, "${name}")
             }
@@ -1014,8 +1049,19 @@ impl fmt::Display for Ty {
             Ty::Nullable(inner) => write!(f, "{inner}?"),
             Ty::Named { name, args, view } => {
                 if *view {
-                    f.write_str("&")?;
+                    f.write_str("ref ")?;
                 }
+                // **`str` is the compiler's noun and `String` is the
+                // language's** ([ADR-184](../../../docs/specification/adr/adr-184.md)
+                // D2). A message that named `str` would name a type its reader
+                // cannot write, which is
+                // [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)
+                // about this compiler's own vocabulary rather than about the
+                // file below.
+                let name = match (*view, name.as_str()) {
+                    (true, TEXT_VIEW) => TEXT,
+                    _ => name.as_str(),
+                };
                 f.write_str(name)?;
                 if !args.is_empty() {
                     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
@@ -1062,8 +1108,22 @@ impl fmt::Display for Ty {
 /// A trailing `?` belongs to the **pointee**
 /// ([ADR-155](../../../docs/specification/adr/adr-155.md) D5), which is why
 /// this is read before `parse` strips one.
+/// **The view marker off the front of a written type**
+/// ([ADR-184](../../../docs/specification/adr/adr-184.md) D1).
+///
+/// `ref T` is what this language writes and `&T` is the spelling it replaces —
+/// both are read while the corpus moves, and D4 is where the second one leaves.
+/// The **word** needs the space after it, for the reason `mut ` does one line
+/// down: without it `reference` would be read as a view of `erence`.
+pub(crate) fn a_view_of(text: &str) -> Option<&str> {
+    if let Some(rest) = text.strip_prefix("ref ") {
+        return Some(rest.trim_start());
+    }
+    text.strip_prefix('&').map(str::trim_start)
+}
+
 fn pointed_at(text: &str) -> Option<Ty> {
-    let rest = text.strip_prefix('&').map(str::trim_start)?;
+    let rest = a_view_of(text)?;
     // The space after `mut` is what keeps `mutable` from being read as a type
     // whose name begins with those three letters.
     let (mutable, rest) = match rest.strip_prefix("mut ") {
@@ -1151,17 +1211,40 @@ mod tests {
     fn a_type_round_trips_through_its_text() {
         for text in [
             "i32",
-            "&str",
+            "ref String",
             "String",
             "Vec[Row]",
-            "HashMap[&str, Stats]",
+            "HashMap[ref String, Stats]",
             "(Op, i64)",
-            "Vec[(＆str, i64)]".replace('＆', "&").as_str(),
+            "Vec[(ref String, i64)]",
             "?",
         ] {
             let ty = Ty::parse(text);
             assert_eq!(ty.text(), text, "{text}");
             assert_eq!(Ty::parse(&ty.text()), ty, "{text}");
+        }
+    }
+
+    /// **The spelling `ref` replaces still reads back, and reads back as the
+    /// same type** ([ADR-184](../../../docs/specification/adr/adr-184.md) D1,
+    /// D4). Both parse while the corpus and the pages move; what comes out is
+    /// the new spelling, because there is one and a ledger carries it.
+    ///
+    /// `&String` is here for D2: a view of text written either way is one
+    /// type, and it was two until the normalisation stood at **both** doors.
+    #[test]
+    fn the_spelling_it_replaces_reads_back_as_the_same_type() {
+        for (old, new) in [
+            ("&str", "ref String"),
+            ("&String", "ref String"),
+            ("&Stats", "ref Stats"),
+            ("&mut sqlite3", "ref mut sqlite3"),
+            ("&[u8]", "ref [u8]"),
+            ("&$V", "ref $V"),
+            ("HashMap[&str, Stats]", "HashMap[ref String, Stats]"),
+        ] {
+            assert_eq!(Ty::parse(old), Ty::parse(new), "{old} and {new}");
+            assert_eq!(Ty::parse(old).text(), new, "{old}");
         }
     }
 
@@ -1203,7 +1286,7 @@ mod fn_type_tests {
     /// A function type reads back the way it was written (ADR-029).
     #[test]
     fn a_function_type_round_trips() {
-        for text in ["fn()", "fn(&Stats)", "fn(&str, i64)", "fn(?)"] {
+        for text in ["fn()", "fn(ref Stats)", "fn(ref String, i64)", "fn(?)"] {
             assert_eq!(Ty::parse(text).text(), text, "{text}");
         }
     }
@@ -1533,10 +1616,10 @@ mod variable_tests {
                 view: false
             }
         );
-        assert_eq!(Ty::parse("&$V").text(), "&$V");
+        assert_eq!(Ty::parse("ref $V").text(), "ref $V");
         assert_eq!(Ty::parse("$V").text(), "$V");
         assert_eq!(Ty::parse("Entry[$V]").text(), "Entry[$V]");
-        assert_eq!(Ty::parse("fn(&$V)").text(), "fn(&$V)");
+        assert_eq!(Ty::parse("fn(ref $V)").text(), "fn(ref $V)");
         // A type genuinely called `V` is still a type called `V`.
         assert_eq!(Ty::parse("V"), Ty::named("V"));
     }

@@ -32,9 +32,9 @@ use std::html
 
 @borrowed
 pub struct Row {
-    name: &str,
-    note: &str,
-    shade: &str,
+    name: ref String,
+    note: ref String,
+    shade: ref String,
 }
 
 // The whole table, in one template. `<for row in :rows>` is written as an
@@ -63,12 +63,12 @@ fn table(rows: Vec[Row]) -> String {
 // A row whose second cell is *markup* the program built itself. `Raw` is the
 // promise, and `escaped` is how text becomes markup safely - so what is emitted
 // here is escaped exactly once, by the call that says so.
-fn emphasised(name: &str) -> String {
+fn emphasised(name: ref String) -> String {
     // Text becomes markup by being escaped, and the type records that it was.
     // `Raw` is the promise; `html::escape` is what makes it true here.
     let mut built = String()
     built.push_str("<em>")
-    built.push_str(&html::escape(name))
+    built.push_str(ref html::escape(name))
     built.push_str("</em>")
     let markup = html::Raw::new(built)
     return dsl html {

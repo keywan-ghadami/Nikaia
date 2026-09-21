@@ -49,7 +49,7 @@ use std::cli
 // `separator` is a Kap 5.1 **option**: it stands after the `;`, it is named at
 // the call, and it has a default - which is what makes it an option rather than
 // an argument. Nothing that calls this has to know it exists.
-fn summary(lines: i64, blank: i64; separator: &str = " ") -> String {
+fn summary(lines: i64, blank: i64; separator: ref String = " ") -> String {
     return f"{lines}{separator}{blank}"
 }
 
@@ -85,7 +85,7 @@ fn main() throws {
     let log = cli::args().nth(1) ?? ""
     if log.len() > 0 {
         let row = summary(lines, blank; separator: "\t")
-        fs::write(&log, f"{row}\n"; append: true) catch {
+        fs::write(ref log, f"{row}\n"; append: true) catch {
             eprintln(f"cannot append to {log}: {error}")
             return
         }

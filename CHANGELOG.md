@@ -4,6 +4,37 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.133] — 2026-09-21
+
+**A view is spelled `ref X`, and text has one noun** —
+[ADR-184](docs/specification/adr/adr-184.md) D1 and D2, the owner's answer to
+the two questions 0.0.131 put on [`open-decisions.md`](docs/open-decisions.md).
+That page is empty of spelling questions now.
+
+### What the measurement said, and what it was about
+
+- **`&` appears 98 times in the corpus's 2 847 lines, and 82 of them are a *type* spelling — 53 of those 82 are `&str`.** Only 16 are a borrow a program writes, because [ADR-094](docs/specification/adr/adr-094.md) D1 already made a parameter the body only reads a view **without the word**.
+- **So the character a reader meets most is not a borrow operator.** It is part of `&str`, and `&str` is the one place this language had **two nouns for one type**: text is `String` ([ADR-107](docs/specification/adr/adr-107.md)), `str` is not a type a program may write anywhere else, and that record had to explain the gap in prose.
+- **The first recommendation here was to keep `&`**, argued from how often it is written. That was an argument about **cost** where the question was about **coherence**, and coherence is the right axis for a spelling.
+
+### One rule, stated once
+
+- **`ref X` is a view of an `X`**, wherever a type may stand: `ref String`, `ref Array[T]`, `ref Reading`, `ref mut T`, `ref self`, and `ref value` for the borrow an expression writes. [Part I 6.5](docs/specification/10-nikaia-light.md) says it once and every case follows.
+- **Text has one noun.** `str` stays the **compiler's** word for what the language below calls a view of text — the emitter writes `&str` and name for name is [ADR-011](docs/specification/adr/adr-011.md) D2 — and it reaches no program, no signature, no ledger and no message.
+- **Normalised at both doors and not at one.** A type arrives from the AST (what a signature declares) or from text (what a ledger carries), and a view of `String` becomes the text view in both. With it at one only, the checker held `ref String` and `ref String` as two types and **said so**: *`greet` takes `name: ref String`, and this call passes `ref String`* — a message that prints one spelling twice and claims they differ, which is worse than the `rustc` sentence it replaced.
+
+### `ref` is reserved, and the corpus is not what decided that
+
+- **Counting `ref` over every `.nika` file gave zero uses**, which says the word is free. It is not: `ref(x)` is a borrow of `(x)` to the grammar and a call to a function named `ref` to its author, **in the same characters**. A word that is a name in one position and an operator in the next is worse than a reserved one, because the reading nobody meant is the silent one ([ADR-010](docs/specification/adr/adr-010.md) D1's polarity).
+- **A test found it, not a reading.** The record was first written claiming `ref` needed no reserving, on the argument that every position wanting a type or an expression after it makes the word safe. `crates/nikaia/tests/reserved_below.rs` writes each word in **every** position a name may stand and compiles the result; `ref(x)` came back as *this returns `ref i64`, and the function declares `i64`*. **A count over the corpus cannot see a collision the corpus does not write.**
+
+### What moved, and what did not
+
+- **No decision moves.** What a view *is*, when the compiler writes one, what it may not outlive — [ADR-094](docs/specification/adr/adr-094.md), [ADR-107](docs/specification/adr/adr-107.md), [ADR-008](docs/specification/adr/adr-008.md), [ADR-147](docs/specification/adr/adr-147.md) — all stand. This changes characters.
+- **The corpus, the three pages, the four `.contracts` that carried a view, and the tests that assert on a printed type.** The two specification baselines moved in their **preview text only**: not one verdict changed, which is what a pure spelling change has to look like.
+- **The ADRs are not rewritten.** A record says what was decided when it was decided.
+- **Both spellings parse** while the rest moves, with a test that the old one reads back **as the same type**. D3 (`ref Array[T]`, and a bare `Array[T]` refused) and D4 (`&` leaves) follow.
+
 ## [0.0.132] — 2026-09-21
 
 **A path's head is one of five things, and a name that is none of them is

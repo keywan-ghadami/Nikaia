@@ -65,7 +65,7 @@ grammar Calc {
     // Division cannot be folded that way - it is neither commutative nor
     // recoverable from a sign - so the operator has to travel with the operand.
     // A tuple carries the pair, and the operator itself is an `enum`: there are
-    // exactly two, which is what a sum type says. Written as a `&str` it would
+    // exactly two, which is what a sum type says. Written as a `ref String` it would
     // be one comparison away from a typo the compiler cannot see.
     //
     // The `match` reads the **pair**, which is ADR-137 D1's tuple pattern: this

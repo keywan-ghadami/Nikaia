@@ -210,7 +210,10 @@ fn an_element_of_the_wrong_type_is_the_lets_own_refusal() {
     .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
     assert!(found[0].message.contains("Array[i64, 1]"), "{found:#?}");
-    assert!(found[0].message.contains("Array[&str, 1]"), "{found:#?}");
+    assert!(
+        found[0].message.contains("Array[ref String, 1]"),
+        "{found:#?}"
+    );
 }
 
 /// **An array inside another type takes its shape too**, which is the position

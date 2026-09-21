@@ -62,7 +62,7 @@ fn ran(purpose: &str, source: &str) -> String {
 /// from one `describe` the program wrote once.
 #[test]
 fn the_specifications_own_example_runs() {
-    let source = "struct User { name: &str, age: i64 }\n\
+    let source = "struct User { name: ref String, age: i64 }\n\
                   struct Point { x: i64, y: i64 }\n\
                   \n\
                   fn describe[T: Struct](value: T) {\n\
@@ -103,7 +103,7 @@ fn the_specifications_own_example_runs() {
 #[test]
 fn a_body_wrong_for_one_field_names_the_turn() {
     let found = findings(
-        "struct User { name: &str, age: i64 }\n\
+        "struct User { name: ref String, age: i64 }\n\
          \n\
          fn sum[T: Struct](value: T) -> i64 {\n\
          \x20   let mut total: i64 = 0\n\
@@ -141,7 +141,7 @@ fn a_body_wrong_for_one_field_names_the_turn() {
 #[test]
 fn a_member_a_reflected_field_does_not_have_is_said_once() {
     let found = findings(
-        "struct User { name: &str, age: i64 }\n\
+        "struct User { name: ref String, age: i64 }\n\
          \n\
          fn d[T: Struct](value: T) {\n\
          \x20   for field in T::fields { println(field.label) }\n\
@@ -166,7 +166,7 @@ fn a_member_a_reflected_field_does_not_have_is_said_once() {
 #[test]
 fn a_bound_that_is_never_asked_is_an_ordinary_generic() {
     let rust = lowered(
-        "struct User { name: &str }\n\
+        "struct User { name: ref String }\n\
          \n\
          fn tell[T: Struct](value: T) { println(\"told\") }\n\
          \n\
@@ -221,7 +221,7 @@ fn variants_says_which_half_is_built() {
 /// in the generated file says it exists.
 #[test]
 fn the_report_prints_what_was_unrolled() {
-    let source = "struct User { name: &str, age: i64 }\n\
+    let source = "struct User { name: ref String, age: i64 }\n\
                   struct Point { x: i64, y: i64 }\n\
                   \n\
                   fn describe[T: Struct](value: T) {\n\
@@ -242,7 +242,7 @@ fn the_report_prints_what_was_unrolled() {
 
     assert!(
         report.contains("`describe` unrolled over `User` as `describe__User`")
-            && report.contains("    name: &str")
+            && report.contains("    name: ref String")
             && report.contains("    age: i64"),
         "{report}"
     );
@@ -271,7 +271,7 @@ fn the_report_prints_what_was_unrolled() {
 #[test]
 fn a_shape_walk_is_unrolled_across_the_files_of_a_package() {
     let declares = parse_to_ast(
-        "struct User { name: &str, age: i64 }\n\
+        "struct User { name: ref String, age: i64 }\n\
          struct Point { x: i64, y: i64 }\n\
          \n\
          fn describe[T: Struct](value: T) {\n\
