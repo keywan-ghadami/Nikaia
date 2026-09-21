@@ -103,6 +103,23 @@ pub enum Value {
     /// so [`decoded`] is a faithful reading rather than an invention, and
     /// [`written`] puts it back.
     Text(String),
+    /// A value of a `struct` this program declares, by field name.
+    ///
+    /// **What it is for is the method.** A `sync` method of the program's own
+    /// looked exactly like something a `comptime` should be able to call — the
+    /// body is right there and `sync` says it may run
+    /// ([ADR-075](../../../docs/specification/adr/adr-075.md) D1) — and it
+    /// could not, because a method needs a **value** to be called on and this
+    /// evaluator had none to make.
+    ///
+    /// It lands as a `const` like anything else: `const P: Point = Point { x: 1, y: 2 };`
+    /// is Rust, and a struct whose fields own nothing is already its own view —
+    /// [ADR-079](../../../docs/specification/adr/adr-079.md) D1's *a number is
+    /// already its own view*, read one shape out.
+    Struct {
+        name: String,
+        fields: BTreeMap<String, Value>,
+    },
 }
 
 /// Why a build-time expression did not come to a value.
@@ -279,16 +296,54 @@ impl<'a> BuildTime<'a> {
             // ([ADR-075](../../../docs/specification/adr/adr-075.md) D1) and a
             // body this walk can read is the **ability**, and they are two
             // different things.
-            Expr::MethodCall { method, .. } => Err(Refusal::NotHere {
-                what: format!(".{}()", self.parsed.text(*method)),
-                why: "a method is not a shape this evaluator reads. What it reads is a \
-                      call to a function declared in this file, and `len` and `push` \
-                      over a list it already holds. A `comptime` runs what this compiler can read the body of, and `sync` says a body *may* run while the program is built (ADR-075 D1) rather than that this compiler can run it",
-                // **Not *move it into a function***, which is the trap: the
-                // method would be just as unreadable one function further in.
-                way_out: "write what it does with arithmetic, an `if`, a `for` and a \
-                          call to a function of this file",
-            }),
+            // Kap 4.2's literal, and the shorthand with it: `Point { x, y }`
+            // is `Point { x: x, y: y }`, which the parser leaves as a field
+            // with no value of its own.
+            Expr::StructLit { name, fields } => {
+                let name = self.parsed.text(*name).to_string();
+                let mut held = BTreeMap::new();
+                for field in fields {
+                    let written = self.parsed.text(field.name).to_string();
+                    let value = match &field.value {
+                        Some(value) => self.expr(value, frame)?,
+                        None => frame.get(&written).cloned().ok_or(Refusal::Unevaluable)?,
+                    };
+                    held.insert(written, value);
+                }
+                Ok(Value::Struct { name, fields: held })
+            }
+            Expr::Field { base, name } => {
+                let on = self.expr(base, frame)?;
+                let field = self.parsed.text(*name);
+                match on {
+                    Value::Struct { mut fields, .. } => {
+                        fields.remove(field).ok_or(Refusal::Unevaluable)
+                    }
+                    _ => Err(Refusal::Unevaluable),
+                }
+            }
+            // **A method of this program, on a value this evaluator made.**
+            // The receiver is evaluated first because it is what says *which*
+            // method: a `Point`'s `length` and a `Line`'s are two entries, and
+            // the ledger keys them apart by the type.
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                config,
+            } if config.is_empty() => {
+                let on = self.expr(receiver, frame)?;
+                let Value::Struct { name, .. } = &on else {
+                    return Err(self.no_method_here(*method));
+                };
+                let key = format!("{name}::{}", self.parsed.text(*method));
+                let mut given = vec![on.clone()];
+                for arg in args {
+                    given.push(self.expr(arg, frame)?);
+                }
+                self.call(&key, &given)
+            }
+            Expr::MethodCall { method, .. } => Err(self.no_method_here(*method)),
             Expr::Call { func, args, config } if config.is_empty() => {
                 let Expr::Variable(name) = func.as_ref() else {
                     return Err(Refusal::Unevaluable);
@@ -482,6 +537,28 @@ impl<'a> BuildTime<'a> {
         Ok(Value::Text(out))
     }
 
+    /// **A method this evaluator has no receiver for.**
+    ///
+    /// Two of them reach a value it holds — a struct's own method, and `len`
+    /// and `push` over a list — and everything else is `std`'s or a package's,
+    /// whose body is Rust rather than something this reads.
+    fn no_method_here(&self, method: winnow_grammar::Symbol) -> Refusal {
+        Refusal::NotHere {
+            what: format!(".{}()", self.parsed.text(method)),
+            why: "this evaluator has no value to call it on. What it reads is a call to \
+                  a function declared in this file, a method of a `struct` it made \
+                  here, and `len` and `push` over a list it holds - everything else is \
+                  `std`'s or a package's, whose body is Rust. A `comptime` runs what \
+                  this compiler can read the body of, and `sync` says a body *may* run \
+                  while the program is built (ADR-075 D1) rather than that this \
+                  compiler can run it",
+            // **Not *move it into a function***, which is the trap: the method
+            // would be just as unreadable one function further in.
+            way_out: "write what it does with arithmetic, an `if`, a `for` and a call \
+                      to a function of this file",
+        }
+    }
+
     /// A call to a function this unit declares.
     ///
     /// **The permission is read off the ledger**
@@ -576,6 +653,16 @@ impl<'a> BuildTime<'a> {
     /// A **receiver** stops it: a method needs a value to be called on, and a
     /// build-time call by name has none.
     fn body_of(&self, name: &str) -> Option<(Vec<String>, Block)> {
+        // `Tag::doubled` is a method's key, and it is the ledger's own — so the
+        // split here is the same one `contracts` makes when it writes the
+        // entry, and the two cannot drift about which name a call resolves to.
+        match name.split_once("::") {
+            Some((target, method)) => self.method_of(target, method),
+            None => self.free_body_of(name),
+        }
+    }
+
+    fn free_body_of(&self, name: &str) -> Option<(Vec<String>, Block)> {
         self.parsed.program.items.iter().find_map(|item| {
             let Item::Fn {
                 name: declared,
@@ -594,13 +681,62 @@ impl<'a> BuildTime<'a> {
             if self.parsed.text((*declared)?) != name {
                 return None;
             }
-            Some((
-                args.iter()
-                    .map(|arg| self.parsed.text(arg.name).to_string())
-                    .collect(),
-                body.clone(),
-            ))
+            Some((self.parameters(args), body.clone()))
         })
+    }
+
+    /// A method of a `struct` this file declares, by the key a call resolves to.
+    ///
+    /// **`self` is the first parameter**, which is the shape the call site
+    /// builds: the receiver is evaluated before the arguments, because it is
+    /// what says *which* method — a `Point`'s `length` and a `Line`'s are two
+    /// entries the ledger keys apart by the type.
+    ///
+    /// A method with **no receiver** is Kap 4.2's constructor and is reached by
+    /// its own name (`Stats::new`), so it takes no `self` and is left as the
+    /// declaration wrote it.
+    fn method_of(&self, target: &str, method: &str) -> Option<(Vec<String>, Block)> {
+        self.parsed.program.items.iter().find_map(|item| {
+            let Item::Impl {
+                target: on,
+                methods,
+                ..
+            } = &item.node
+            else {
+                return None;
+            };
+            if self.parsed.text(on.name) != target {
+                return None;
+            }
+            methods.iter().find_map(|declared| {
+                let Item::Fn {
+                    name,
+                    args,
+                    receiver,
+                    config,
+                    body,
+                    ..
+                } = &declared.node
+                else {
+                    return None;
+                };
+                if !config.is_empty() || self.parsed.text((*name)?) != method {
+                    return None;
+                }
+                let mut parameters = match receiver {
+                    Some(_) => vec!["self".to_string()],
+                    None => Vec::new(),
+                };
+                parameters.extend(self.parameters(args));
+                Some((parameters, body.clone()))
+            })
+        })
+    }
+
+    fn parameters(&self, args: &[crate::ast::FnArg]) -> Vec<String> {
+        args.iter()
+            .map(|arg| self.parsed.text(arg.name).to_string())
+            .collect()
     }
 
     /// A body: `let`s, an early `return`, a loop, and a last statement that is

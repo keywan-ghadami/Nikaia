@@ -524,6 +524,18 @@ body that does not terminate hangs the build: worth knowing before starting, and
 not a reason to add one on the way past. A **recursion** that does not terminate
 is bounded, because that one takes this compiler's stack with it.
 
+*And a method of this program folds, at 0.0.114* — the wall the owner asked
+about. It was never `sync`, which is the **permission**
+([ADR-075](specification/adr/adr-075.md) D1) and whose ledger check applies to a
+method's key exactly as to a function's; it was that a method needs a **value**
+to be called on and the evaluator had none to make. `Value::Struct` is that
+value, so `Point { x: 1, y: 2 }.scaled(10)` folds, a method may call another on
+`self`, and a struct whose fields own nothing lands as `const P: Point = Point { x: 1, y: 2 };`
+— [ADR-079](specification/adr/adr-079.md) D1's *a number is already its own
+view*, read one shape out. `NK1167` names a **field** a `const` cannot hold, and
+asks the declaration rather than the value, because a way out that tells a
+program to declare what it already declared is not one.
+
 *The order the records implied:* the value first — which is not the loop's step,
 since the loop is a shape the interpreter reads and a table is a *value* the
 whole compiler has to carry from the build into the program. That is done. The

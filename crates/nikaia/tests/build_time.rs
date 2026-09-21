@@ -748,3 +748,105 @@ fn an_escape_the_backend_rejects_is_not_invented_here() {
     let found = findings("comptime X: &str = \"a\\qb\"\nfn main() { println(X) }\n");
     assert!(found.iter().any(|f| f.code == "NK1127"), "{found:#?}");
 }
+
+/// **A `sync` method of this program's own folds**, which is what the owner
+/// expected of it and what 0.0.113 had to say it did not do.
+///
+/// The wall was not `sync` — that is [ADR-075](../../../docs/specification/adr/adr-075.md)
+/// D1's **permission**, and the ledger check it drives applies to a method's
+/// key exactly as to a function's. It was that a method needs a **value** to be
+/// called on, and this evaluator had none to make.
+#[test]
+fn a_method_of_this_program_folds() {
+    let source = "struct Point { x: i64, y: i64 }\n\
+                  impl Point {\n\
+                  \x20   fn scaled(&self, by: i64) -> Point sync {\n\
+                  \x20       return Point { x: self.x * by, y: self.y * by }\n\
+                  \x20   }\n\
+                  \x20   fn sum(&self) -> i64 sync { return self.x + self.y }\n\
+                  \x20   fn twice_the_sum(&self) -> i64 sync { return self.sum() * 2 }\n\
+                  }\n\
+                  comptime ORIGIN: Point = Point { x: 1, y: 2 }\n\
+                  comptime BIG: Point = ORIGIN.scaled(10)\n\
+                  comptime TOTAL: i64 = BIG.twice_the_sum()\n\
+                  fn main() { println(f\"{TOTAL}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    // A `struct` of values that own nothing is already its own view, so it
+    // lands like a number does.
+    assert!(
+        rust.contains("const ORIGIN: Point = Point { x: 1, y: 2 };"),
+        "{rust}"
+    );
+    // A method **on a named constant**, handing back a struct.
+    assert!(
+        rust.contains("const BIG: Point = Point { x: 10, y: 20 };"),
+        "{rust}"
+    );
+    // And a method that calls another one on `self`.
+    assert!(rust.contains("const TOTAL: i64 = 60;"), "{rust}");
+}
+
+/// **The permission is still the ledger's**, which is the half that must not
+/// have moved: a method that reaches the world is `NK1152` by its own key, the
+/// same sentence a free function gets ([ADR-075](../../../docs/specification/adr/adr-075.md)
+/// D1, D2).
+#[test]
+fn a_method_the_rule_forbids_is_named_by_its_key() {
+    let source = "use std::fs\n\
+                  struct Reader { n: i64 }\n\
+                  impl Reader {\n\
+                  \x20   fn read(&self) -> i64 {\n\
+                  \x20       let t = fs::read_to_string(\"x\") catch { \"\" }\n\
+                  \x20       return t.len() + self.n\n\
+                  \x20   }\n\
+                  }\n\
+                  comptime N: i64 = Reader { n: 1 }.read()\n\
+                  fn main() { println(f\"{N}\") }\n";
+    let found = findings(source);
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1152")
+        .unwrap_or_else(|| panic!("NK1152: {found:#?}"));
+    assert!(
+        refusal.message.contains("`Reader::read`"),
+        "by the key a call resolves to: {}",
+        refusal.message
+    );
+}
+
+/// **A `struct` is only as writable as its fields**, and the way out has to be
+/// one that can be taken — which the first shape of this was not: it asked the
+/// **value**, so it told a program that had already declared `Array[i64, 3]` to
+/// declare `Array[T, N]`. It asks the **declaration** now.
+#[test]
+fn a_field_a_const_cannot_hold_is_named_and_the_way_out_works() {
+    let refused = "struct Bag { items: Vec[i64] }\n\
+                   comptime B: Bag = Bag { items: [1, 2, 3] }\n\
+                   fn main() { println(f\"{B.items.len()}\") }\n";
+    let found = findings(refused);
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1167")
+        .unwrap_or_else(|| panic!("NK1167: {found:#?}"));
+    assert!(
+        refusal.message.contains("`items` is declared `Vec[i64]`"),
+        "it names the field and what it is: {}",
+        refusal.message
+    );
+
+    // And the way out is taken, which is the assertion that matters.
+    let taken = "struct Bag { items: Array[i64, 3], label: &str }\n\
+                 impl Bag {\n\
+                 \x20   fn total(&self) -> i64 sync {\n\
+                 \x20       let mut sum = 0\n\
+                 \x20       for i in 0..<3 { sum = sum + self.items[i] }\n\
+                 \x20       return sum\n\
+                 \x20   }\n\
+                 }\n\
+                 comptime B: Bag = Bag { items: [1, 2, 3], label: \"bag\" }\n\
+                 comptime TOTAL: i64 = B.total()\n\
+                 fn main() { println(f\"{B.label} {TOTAL}\") }\n";
+    assert!(findings(taken).is_empty(), "{:#?}", findings(taken));
+    assert_eq!(ran("a struct that crosses", taken).trim(), "bag 6");
+}

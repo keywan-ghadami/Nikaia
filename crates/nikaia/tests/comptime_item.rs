@@ -107,8 +107,8 @@ fn a_function_above_the_constant_still_sees_it() {
 /// **The example has moved once**, and that is the guard working rather than
 /// failing: `"x".len()` stood here because text at build time did not exist,
 /// and it **folds** since 0.0.113. What still does not is a method this
-/// evaluator does not read — `len` and `push` over a list it holds are the two
-/// it knows, and nothing else.
+/// evaluator has no value to call on — a `struct` declared here has one since
+/// 0.0.114, and `std`'s body is Rust either way.
 #[test]
 fn an_item_that_cannot_fold_is_refused() {
     let found = findings("comptime BAD = \"x\".to_uppercase()\n\nfn main() { }\n");

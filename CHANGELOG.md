@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.114] — 2026-09-21
+
+**A `sync` method of this program's own folds now** — the wall the owner asked
+about two packages ago, and the reason for it was never `sync`.
+
+### Added
+
+- **`Value::Struct`, and with it the method.** `sync` is the **permission** ([ADR-075](docs/specification/adr/adr-075.md) D1) and its ledger check applies to a method's key exactly as to a function's — `Reader::read` that reaches the world is `NK1152` by that key. What stopped a method was that it needs a **value** to be called on, and this evaluator had none to make.
+- **So a struct literal, a field, and a method on one.** `Point { x: 1, y: 2 }.scaled(10)` folds; a method may call another on `self`; and a method is found by the key a call resolves to, which is the ledger's own split, so the two cannot drift about which name a call means.
+- **And a struct lands.** `const ORIGIN: Point = Point { x: 1, y: 2 };` is Rust, and a struct whose fields own nothing is already its own view — [ADR-079](docs/specification/adr/adr-079.md) D1's *a number is already its own view*, read one shape out.
+- **A `comptime` binds its whole value**, not the integer it would have been. `constant` is the fold's and stays; `built` is the value, which is what `comptime BIG = ORIGIN.scaled(10)` needs one line later.
+- **`NK1167` one level in**: `` `B`'s `items` is declared `Vec[i64]`, and a `const` cannot hold one ``. A reader cannot see which half of `Bag { items: [1, 2, 3] }` the language below refuses, and *this cannot be evaluated* leaves them to work it out.
+
+### Fixed while building it
+
+- **The first shape of that refusal offered a way out that could not be taken.** It asked the **value**, so a program that had already written `items: Array[i64, 3]` was told to declare `Array[T, N]` — the same failure this session criticised two packages earlier, met from the inside. It asks the **declaration** now, and the test takes the way out and runs the program.
+
+### Changed
+
+- `NK1127`'s catalogue says *a method of a `struct` declared here* as well as a function of this file. What still does not fold is `std`, whose body is Rust, and a callee in another **file** of the same program — the one-file limit of this walk, which `open-work.md` carries with the interner hazard that makes it more than plumbing.
+
 ## [0.0.113] — 2026-09-21
 
 **A build-time text is the value, not the spelling** — 0.0.112's refusal of

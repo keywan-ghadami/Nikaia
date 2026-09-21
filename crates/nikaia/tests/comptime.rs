@@ -120,9 +120,10 @@ fn a_program_with_comptime_bindings_compiles_and_prints_them() {
 /// **And the reason 0.0.112 gave for it was wrong**, which 0.0.113 corrects
 /// twice over. `.to_uppercase()` is not refused because a question about the
 /// *value* cannot be answered — it never gets that far, and that question is
-/// answered now anyway, because text is **decoded**. A **method** is not a
-/// shape this evaluator reads at all: what it reads is a call to a function
-/// declared in this file, plus `len` and `push` over a list it already holds.
+/// answered now anyway, because text is **decoded**. What it is refused for is
+/// that this evaluator has **no value to call it on**: a method of a `struct`
+/// declared here folds since 0.0.114, and everything else is `std`'s or a
+/// package's, whose body is Rust.
 #[test]
 fn a_comptime_binding_this_compiler_cannot_evaluate_is_refused_by_name() {
     let found =
@@ -191,7 +192,7 @@ fn a_comptime_says_which_wall_it_met() {
     );
     assert!(
         said.notes[0].contains("`.to_uppercase()`")
-            && said.notes[0].contains("a method is not a shape this evaluator reads"),
+            && said.notes[0].contains("no value to call it on"),
         "the note names what it met and which wall: {:#?}",
         said.notes
     );

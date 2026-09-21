@@ -1057,7 +1057,9 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
             // `[&str; N]`, which a `const` does hold — but nothing has asked
             // for one, and a type the language can spell is what
             // `Array[&str, N]` would need to be first.
-            build_time::Value::List(_) | build_time::Value::Text(_) => return None,
+            build_time::Value::List(_)
+            | build_time::Value::Text(_)
+            | build_time::Value::Struct { .. } => return None,
         };
         match &found {
             // `[1, 3_000_000_000]` is an `i64` array and not a mixed one: the
@@ -1071,6 +1073,38 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
     found
 }
 
+/// A build-time value, spelled as Rust writes one — for the shapes a `const`
+/// can hold.
+///
+/// `None` where one of them cannot be written down, which is what sends the
+/// caller to `NK1127`: a field that is a `Vec` has no `const` form, and a
+/// struct is only as writable as its fields.
+fn rust_value(value: &build_time::Value) -> Option<String> {
+    match value {
+        build_time::Value::Int(n) => Some(n.to_string()),
+        build_time::Value::Bool(yes) => Some(yes.to_string()),
+        build_time::Value::Text(text) => Some(format!("\"{}\"", build_time::written(text))),
+        build_time::Value::Struct { name, fields } => {
+            let mut written = Vec::with_capacity(fields.len());
+            for (field, held) in fields {
+                written.push(format!("{field}: {}", rust_value(held)?));
+            }
+            Some(format!("{name} {{ {} }}", written.join(", ")))
+        }
+        // **Inside a struct a list is spelled and nothing more**: the field's
+        // declared type carries the `[T; N]`, so `[1, 2, 3]` is what Rust
+        // wants there. Whether the field *may* be a list at all is the
+        // declaration's question and `unwritable_field` asks it.
+        build_time::Value::List(items) => {
+            let mut written = Vec::with_capacity(items.len());
+            for held in items {
+                written.push(rust_value(held)?);
+            }
+            Some(format!("[{}]", written.join(", ")))
+        }
+    }
+}
+
 /// A build-time array, spelled as Rust writes one.
 fn rust_array_value(items: &[build_time::Value]) -> Option<String> {
     let mut written = Vec::with_capacity(items.len());
@@ -1078,7 +1112,9 @@ fn rust_array_value(items: &[build_time::Value]) -> Option<String> {
         written.push(match item {
             build_time::Value::Int(value) => value.to_string(),
             build_time::Value::Bool(yes) => yes.to_string(),
-            build_time::Value::List(_) | build_time::Value::Text(_) => return None,
+            build_time::Value::List(_)
+            | build_time::Value::Text(_)
+            | build_time::Value::Struct { .. } => return None,
         });
     }
     Some(format!("[{}]", written.join(", ")))
@@ -1109,6 +1145,17 @@ struct Local {
     /// program refused* ([Part III
     /// C.4](../../docs/specification/30-nikaia-tooling.md)).
     immutable: Option<Immutable>,
+    /// **What the build worked out this name is**, whole — a `comptime`'s
+    /// value, where there is one.
+    ///
+    /// `constant` above is the fold's and is an integer, which was the whole of
+    /// what a build-time value could be. It is not any more: text, a list and a
+    /// `struct` are values too, and a `comptime` that reads another one needs
+    /// the value rather than the number it would have been. Kept beside
+    /// `constant` rather than replacing it, because the fold asks a narrower
+    /// question — *which integer type did a declaration pin* — that this does
+    /// not answer.
+    built: Option<build_time::Value>,
     /// Where the `let` stands, for a binding whose value was an **empty list**
     /// and whose element type nothing has said yet
     /// ([ADR-135](../../docs/specification/adr/adr-135.md) D2).
@@ -1154,6 +1201,7 @@ impl Local {
             name: local.name.clone(),
             ty: local.ty.clone(),
             constant: local.constant,
+            built: local.built.clone(),
             immutable: local.immutable.clone(),
             empty_list: local.empty_list,
         }
@@ -1164,6 +1212,7 @@ impl Local {
             name,
             ty,
             constant: None,
+            built: None,
             immutable: None,
             empty_list: None,
         }
@@ -2121,6 +2170,7 @@ impl<'a> Checker<'a> {
                 name,
                 ty: self.declared(&arg.ty, &arg.span).erase(&parameters),
                 constant: None,
+                built: None,
                 // **D3**: without the word, a body that changes this parameter
                 // is `NK1138`.
                 empty_list: None,
@@ -3009,6 +3059,7 @@ impl<'a> Checker<'a> {
             name: self.parsed.text(name).to_string(),
             ty,
             constant: None,
+            built: None,
             empty_list: None,
             immutable: asked.then(|| Immutable {
                 at: span.clone(),
@@ -3970,6 +4021,9 @@ impl<'a> Checker<'a> {
                     name,
                     ty: bound,
                     constant,
+                    // A `let` binds a number where one folded; the whole value
+                    // is a `comptime`'s, which is the one that *must* fold.
+                    built: None,
                     empty_list: pending,
                     // **Part I 2.1**: without the word, a change to this name
                     // is `NK1139`. The span is the statement's, which is the
@@ -8054,9 +8108,14 @@ impl<'a> Checker<'a> {
             // `let` whose value folded. Integers only, because that is what
             // the scope records — a `bool` constant is not visible here yet
             // and reaches the same `NK1127` it always did.
+            // **The whole value where the build has one**, and the fold's
+            // integer otherwise. `comptime BIG = ORIGIN.scaled(10)` needs
+            // `ORIGIN` to be a `Point` here and not the number it is not.
             let known = |name: &str| -> Option<build_time::Value> {
-                let (_, constant) = self.local(name)?;
-                constant.map(build_time::Value::Int)
+                let held = self.binding(name)?;
+                held.built
+                    .clone()
+                    .or_else(|| held.constant.map(build_time::Value::Int))
             };
             build_time::BuildTime::new(self.parsed, self.own, &known).evaluate(value)
         };
@@ -8701,6 +8760,66 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **The first field of a declared `struct` that has no `const` form.**
+    ///
+    /// Asked of the **declaration** and not of the value, which is the whole of
+    /// why it is a method: `Bag { items: [1, 2, 3] }` is the same literal
+    /// whether `items` is a `Vec[i64]` or an `Array[i64, 3]`, and only one of
+    /// those is something a `const` holds. Asking the value instead produced a
+    /// way out that could not be taken — *declare it `Array[T, N]`*, on a
+    /// program that already had.
+    ///
+    /// One level, deliberately: a struct inside a struct reports the outer
+    /// field, which is the one the reader wrote on this line.
+    fn unwritable_field(&self, ty: &Ty) -> Option<(String, String)> {
+        let Ty::Named { name, .. } = ty else {
+            return None;
+        };
+        self.fields_of(name)?.into_iter().find_map(|field| {
+            if rust_constant_type(&field.ty).is_some() {
+                return None;
+            }
+            // A field that is itself a declared `struct` is fine where *its*
+            // fields are, which is the same question one level in.
+            if matches!(&field.ty, Ty::Named { name, .. } if self.fields_of(name).is_some())
+                && self.unwritable_field(&field.ty).is_none()
+            {
+                return None;
+            }
+            Some((field.name.clone(), field.ty.text()))
+        })
+    }
+
+    /// **`NK1167` one level in**: the value is a `struct` a `const` could hold,
+    /// and a **field** of it is not
+    /// ([ADR-079](../../docs/specification/adr/adr-079.md) D2).
+    ///
+    /// The field is named because a reader cannot see which half of
+    /// `Bag { items: [1, 2, 3] }` the language below refuses — the struct is
+    /// fine and the `Vec` in it is not, and *this cannot be evaluated* leaves
+    /// them to work that out.
+    fn a_field_that_owns_memory(&mut self, bound: &str, field: &str, held: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1167",
+            message: format!(
+                "`{bound}`'s `{field}` is declared `{held}`, and a `const` cannot hold one"
+            ),
+            notes: vec![
+                "a `struct` crosses into the program as a `const` only where every \
+                 field can - what owns memory has no `const` form, which is why a \
+                 build-time value crosses in its view form (ADR-079 D1)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "declare `{field}` as the fixed form of what it holds - `Array[T, N]` \
+                 for a `Vec`, `&str` for a `String` - or take it out of the `comptime` \
+                 and build it while the program runs"
+            )),
+        });
+    }
+
     /// **`NK1167`: a `comptime` whose value owns memory**
     /// ([ADR-079](../../docs/specification/adr/adr-079.md) D2).
     ///
@@ -9030,6 +9149,7 @@ impl<'a> Checker<'a> {
             name,
             ty,
             constant,
+            built: None,
             immutable: None,
             empty_list: None,
         });
@@ -9844,6 +9964,16 @@ impl<'a> Checker<'a> {
                     // way out. Only where the build computed one, because that
                     // is what lets the way out name the length.
                     match (&evaluated, is_growable(want)) {
+                        // **A `struct` is only as writable as its fields**, and
+                        // the one that is not is worth naming: a reader looking
+                        // at `Bag { items: [1, 2, 3] }` cannot see which half
+                        // of it a `const` cannot hold.
+                        (Some(build_time::Value::Struct { .. }), _)
+                            if self.unwritable_field(want).is_some() =>
+                        {
+                            let (field, held) = self.unwritable_field(want).expect("just asked");
+                            self.a_field_that_owns_memory(&bound, &field, &held, span);
+                        }
                         (
                             Some(
                                 computed
@@ -9868,7 +9998,19 @@ impl<'a> Checker<'a> {
         let said_a_type = self.checked.findings.len() > before;
 
         let below = match (&want, &folded, value) {
-            (Some(want), _, _) => rust_constant_type(want),
+            // **A type this program declares is its own name below**, and the
+            // *value* is what says it is one: `rust_constant_type` knows the
+            // types Part I 2.2 offers and cannot know a `Point`, where a
+            // `Value::Struct` names the very type the declaration did.
+            (Some(want), _, _) => rust_constant_type(want).or_else(|| match &evaluated {
+                Some(build_time::Value::Struct { name, .. })
+                    if matches!(want, Ty::Named { name: wanted, args, view: false }
+                        if wanted == name && args.is_empty()) =>
+                {
+                    Some(name.clone())
+                }
+                _ => None,
+            }),
             (None, Some(folded), _) => Some(match &folded.pinned {
                 Some(pinned) => pinned.clone(),
                 None => match i32::try_from(folded.value) {
@@ -9900,6 +10042,12 @@ impl<'a> Checker<'a> {
                 // something the language below has; `const X: &str` is, and its
                 // lifetime is `'static` by the elision a `const` already makes.
                 Some(build_time::Value::Text(_)) => Some("&str".to_string()),
+                // **A struct is its own name below**, and the fields carry
+                // themselves — `const P: Point = Point { x: 1, y: 2 };` is
+                // Rust, and a struct whose fields own nothing is already the
+                // view form ([ADR-079](../../docs/specification/adr/adr-079.md)
+                // D1's *a number is already its own view*, one shape out).
+                Some(build_time::Value::Struct { name, .. }) => Some(name.clone()),
                 None => None,
             },
         };
@@ -9917,6 +10065,7 @@ impl<'a> Checker<'a> {
             Some(build_time::Value::Text(text)) => {
                 Some(format!("\"{}\"", build_time::written(text)))
             }
+            Some(value @ build_time::Value::Struct { .. }) => rust_value(value),
             None => None,
         };
         match (&below, &written) {
@@ -9942,7 +10091,8 @@ impl<'a> Checker<'a> {
                          **list** - a literal, `f\"… {n} …\"`, arithmetic and \
                          comparisons over literals and over other constants, `+`, `==` and \
                          `.len()` over text, an `if`, a **call** to a function declared **in this \
-                         file** whose body is made of those, a `for` over a range or a `while` \
+                         file** or a **method** of a `struct` declared here, whose body \
+                         is made of those, a `for` over a range or a `while` \
                          inside such a body, and `xs[i]`, `xs[i] = …`, `xs.push(…)` and \
                          `xs.len()` over a list it holds (ADR-073 D5's second stage). \
                          What a build-time value owns, the program gets a view of: a \
@@ -9965,14 +10115,21 @@ impl<'a> Checker<'a> {
         // `comptime ANSWER = double(21)` visible as a name with no value — so
         // the next constant that read it was `NK1127` although the one before
         // it had just been computed.
-        self.bind_with(
-            bound,
-            held,
-            match &evaluated {
+        self.bind_local(Local {
+            name: bound,
+            ty: held,
+            // The fold's number, which is what `constant_of` reads one
+            // `comptime` later and what `ADR-043` D5's overflow check needs.
+            constant: match &evaluated {
                 Some(build_time::Value::Int(value)) => Some(*value),
                 _ => None,
             },
-        );
+            // …and the whole value, which is what a *call* one `comptime`
+            // later needs: `ORIGIN.scaled(10)` wants a `Point`.
+            built: evaluated,
+            immutable: None,
+            empty_list: None,
+        });
         Ty::Tuple(Vec::new())
     }
 
