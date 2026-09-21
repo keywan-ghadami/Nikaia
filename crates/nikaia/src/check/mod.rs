@@ -1011,6 +1011,24 @@ fn rust_constant_type(ty: &Ty) -> Option<String> {
     }
 }
 
+/// Whether a type is one this language grows — a `Vec` or a `List`.
+///
+/// The pair [ADR-079](../../docs/specification/adr/adr-079.md) D1 is about:
+/// growable going in, and a `const` below that cannot hold one.
+fn is_growable(ty: &Ty) -> bool {
+    matches!(ty, Ty::Named { name, .. } if name == "Vec" || name == "List")
+}
+
+/// The Rust element type of a growable list this checker **did** type.
+fn element_below(found: &Ty) -> Option<String> {
+    match found {
+        Ty::Named { name, args, .. } if name == "Vec" || name == "List" => {
+            rust_constant_type(args.first()?)
+        }
+        _ => None,
+    }
+}
+
 /// The Rust element type of a build-time array nothing declared a type for.
 ///
 /// **Every element has to agree**, which is the same rule
@@ -8464,7 +8482,7 @@ impl<'a> Checker<'a> {
         // report a second time in numbers the reader has to compare by eye.
         if let Some(n) = count {
             if items.len() as i64 != n {
-                self.a_list_the_wrong_length_for_its_array(items.len(), n, span);
+                self.a_list_the_wrong_length_for_its_array(items.len(), n, span, Counted::Written);
                 return Some(want.clone());
             }
             self.checked.array_literals.insert(*at);
@@ -8497,6 +8515,154 @@ impl<'a> Checker<'a> {
             view: false,
         })
     }
+}
+
+/// Where the element count in `NK1157` came from.
+///
+/// Two sentences under one code, because the rule is one — an `Array[T, N]`
+/// takes exactly `N` — and the **way out** is not: a literal's length is on the
+/// page and can be edited there, where a computed one came out of a body and
+/// *write five elements* is advice nobody can take.
+#[derive(Debug, Clone, Copy)]
+enum Counted {
+    Written,
+    Computed,
+}
+
+/// What [`Checker::crosses_as_fixed`] found, which is four things and not two.
+#[derive(Debug, Clone, Copy)]
+enum Crossing {
+    /// A computed list of exactly the declared length. It fits.
+    Fits,
+    /// Refused here, by name — the lengths differ, and the sentence says both.
+    Said,
+    /// The declaration is a fixed type and the value is growable, and **nothing
+    /// computed it**. The mismatch is not the program's: `NK1152` or `NK1127`
+    /// has already said what is, and a second sentence about the declaration
+    /// would send the reader to a line that is right
+    /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+    Unanswered,
+    /// Not this record's pair. The ordinary mismatch applies.
+    Other,
+}
+
+impl<'a> Checker<'a> {
+    /// **Growable going in, fixed coming out**
+    /// ([ADR-079](../../docs/specification/adr/adr-079.md) D1) — whether a
+    /// value this build **computed** crosses into the program as the fixed type
+    /// its declaration names.
+    ///
+    /// ```nika
+    /// fn squares() -> Vec[i64] sync {
+    ///     let mut xs = []
+    ///     for i in 0..<5 { xs.push(i * i) }
+    ///     return xs
+    /// }
+    ///
+    /// comptime TABLE: Array[i64, 5] = squares()
+    /// ```
+    ///
+    /// The body works with a list that does not know its length; the `const`
+    /// below cannot hold one, because a `Vec` allocates. **But the value has
+    /// been computed by the time this is asked**, so its length is a fact and
+    /// `Array[T, N]` is exactly what it crosses as — which is that record's own
+    /// title, and the reason `push` did not need a second shape to be built.
+    ///
+    /// **Only for a value that evaluated.** A `Vec` this compiler could not
+    /// compute has no length, so nothing here can say it is five long; that
+    /// pair goes to `NK1166` the way it always did, and `NK1127` says the rest.
+    ///
+    /// See [`Crossing`] for what the four answers mean.
+    fn crosses_as_fixed(
+        &mut self,
+        found: &Ty,
+        want: &Ty,
+        evaluated: Option<&build_time::Value>,
+        span: &Span,
+    ) -> Crossing {
+        let Ty::Named {
+            name: wanted,
+            args,
+            view: false,
+        } = want
+        else {
+            return Crossing::Other;
+        };
+        if wanted != ty::ARRAY {
+            return Crossing::Other;
+        }
+        let [element, Ty::Count(n)] = args.as_slice() else {
+            return Crossing::Other;
+        };
+        // A growable list of this language, by either spelling. Anything else
+        // is not the crossing this record is about.
+        let held = match found {
+            Ty::Named { name, args, .. } if name == "Vec" || name == "List" => args.first(),
+            _ => return Crossing::Other,
+        };
+        let Some(build_time::Value::List(items)) = evaluated else {
+            // **Nothing computed it, so the declaration is not what is wrong.**
+            // Saying *this is a `Vec[i64]` and the `const` says `Array[i64, 1]`*
+            // would send the reader to a line that is right — the body is what
+            // could not be run, and `NK1152` or `NK1127` has just said so.
+            return Crossing::Unanswered;
+        };
+        // **The length is the whole of the type's other half**, so it is asked
+        // first and it is asked of the *computed* value - which is the number
+        // the reader cannot count off the page, and is why the sentence says it.
+        if items.len() as i64 != *n {
+            self.a_list_the_wrong_length_for_its_array(items.len(), *n, span, Counted::Computed);
+            return Crossing::Said;
+        }
+        // The element type is the ordinary comparison, and `?` fits everything
+        // as it does everywhere else (ADR-024 D1).
+        match held {
+            Some(held) if !held.fits(element) => Crossing::Other,
+            _ => Crossing::Fits,
+        }
+    }
+
+    /// **`NK1167`: a `comptime` whose value owns memory**
+    /// ([ADR-079](../../docs/specification/adr/adr-079.md) D2).
+    ///
+    /// *"A `comptime` binding whose value owns memory is refused because of
+    /// what it **is**, and the way out is the view-shaped equivalent."* A `Vec`
+    /// allocates and `const X: Vec<T>` is not a thing the language below has,
+    /// where `const X: [T; N]` is.
+    ///
+    /// **And the way out names the number**, which is the whole reason this is
+    /// worth a code rather than a note on `NK1127`: the build has just computed
+    /// the value, so it knows the length the reader would otherwise have to
+    /// work out by reading the body.
+    fn a_constant_that_owns_memory(&mut self, bound: &str, held: &Ty, len: usize, span: &Span) {
+        let element = match held {
+            Ty::Named { args, .. } => args.first().map(|ty| ty.text()),
+            _ => None,
+        };
+        let element = element
+            .filter(|ty| ty != "?")
+            .unwrap_or_else(|| "T".to_string());
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1167",
+            message: format!(
+                "`{bound}` is a `{}`, and a `const` cannot hold one",
+                held.text()
+            ),
+            notes: vec![
+                "a `Vec` owns memory and allocates, and the language below has no \
+                 `const` that holds one - what it does have is `[T; N]`, which is why a \
+                 build-time value crosses in fixed form (ADR-079 D1)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "declare it `Array[{element}, {len}]` - the build computed {}, \
+                 so that is the length",
+                plural(len, "element")
+            )),
+        });
+    }
 
     /// `NK1157`: a list literal standing where an `Array[T, N]` is wanted, with
     /// a different number of elements
@@ -8505,24 +8671,46 @@ impl<'a> Checker<'a> {
     /// **Both numbers**, because the length *is* part of the type and what the
     /// reader has to do about it is count: a message saying only that one array
     /// type is not another leaves the counting undone.
-    fn a_list_the_wrong_length_for_its_array(&mut self, written: usize, wanted: i64, span: &Span) {
+    fn a_list_the_wrong_length_for_its_array(
+        &mut self,
+        written: usize,
+        wanted: i64,
+        span: &Span,
+        how: Counted,
+    ) {
+        let had = plural(wanted.unsigned_abs() as usize, "element");
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: span.clone(),
             code: "NK1157",
-            message: format!(
-                "this writes {}, and the array holds {wanted}",
-                plural(written, "element")
-            ),
+            message: match how {
+                Counted::Written => format!(
+                    "this writes {}, and the array holds {wanted}",
+                    plural(written, "element")
+                ),
+                Counted::Computed => format!(
+                    "this computed {}, and the array holds {wanted}",
+                    plural(written, "element")
+                ),
+            },
             notes: vec![
                 "the length is part of the type, so an `Array[T, N]` takes exactly `N` \
                  elements (ADR-152 D4)"
                     .to_string(),
             ],
-            help: Some(format!(
-                "write {}, or declare the array the length this literal is",
-                plural(wanted.unsigned_abs() as usize, "element")
-            )),
+            help: Some(match how {
+                Counted::Written => {
+                    format!("write {had}, or declare the array the length this literal is")
+                }
+                // **Not *write five elements***, which is what the other half
+                // says and is advice nobody can take here: the number came out
+                // of a body, so the two things a reader can change are the body
+                // and the declaration.
+                Counted::Computed => format!(
+                    "declare the array the length this computes, or have the body \
+                     produce {had}"
+                ),
+            }),
         });
     }
 
@@ -9503,26 +9691,17 @@ impl<'a> Checker<'a> {
         let bound = self.parsed.text(name).to_string();
         self.nameable(&bound, span, "a `comptime`");
         let want = ty.as_ref().map(|ty| self.declared(ty, span));
-        if let Some(want) = &want {
-            self.constant_fits(value, Some(want), span);
-            // **The annotation is a use, and a use answers the literal**
-            // (ADR-152 D4) - the same line a `let` runs one construct over, and
-            // it was missing here: `comptime PRIMES: Array[i64, 4] = [2, 3, 5, 7]`
-            // is a `Vec[?]` against an `Array[i64, 4]` without it.
-            let found = self
-                .array_literal(&found, want, value, span)
-                .unwrap_or_else(|| found.clone());
-            self.expect(&found, want, span.clone(), "const", |found, want| {
-                format!("this is `{found}`, and the `const` says `{want}`")
-            });
-        } else {
-            self.constant_fits(value, None, span);
-        }
 
         // What the emitter writes, spelled in the language below. An
         // integer takes the type its declaration pinned, and otherwise
         // the first one that holds it - Part I 2.4's rule, applied here
         // because Rust's `const` will not take the absence.
+        //
+        // **Before the type check and not after it**, which is
+        // [ADR-079](../../docs/specification/adr/adr-079.md) D1's doing: whether
+        // a growable value crosses as a fixed one is a question about the
+        // **value**, because the length that makes an `Array[T, N]` a type is
+        // the one the build computed.
         let folded = self.constant_of(value);
         // **The second stage of
         // [ADR-073](../../docs/specification/adr/adr-073.md) D5**: a call, and
@@ -9534,6 +9713,51 @@ impl<'a> Checker<'a> {
             Some(folded) => (Some(build_time::Value::Int(folded.value)), false),
             None => self.build_time_value(value, span),
         };
+        // Counted rather than returned, so that every refusal below - the
+        // crossing's, the ordinary mismatch's, and whatever `constant_fits`
+        // makes of a literal - suppresses `NK1127` the same way. One mistake,
+        // one error, and the rule does not have to be remembered at each site.
+        let before = self.checked.findings.len();
+        if let Some(want) = &want {
+            self.constant_fits(value, Some(want), span);
+            // **The annotation is a use, and a use answers the literal**
+            // (ADR-152 D4) - the same line a `let` runs one construct over, and
+            // it was missing here: `comptime PRIMES: Array[i64, 4] = [2, 3, 5, 7]`
+            // is a `Vec[?]` against an `Array[i64, 4]` without it.
+            let narrowed = self
+                .array_literal(&found, want, value, span)
+                .unwrap_or_else(|| found.clone());
+            // **Growable going in, fixed coming out**
+            // ([ADR-079](../../docs/specification/adr/adr-079.md) D1). A body
+            // that builds its table with `push` has a `Vec`, and a `const`
+            // below cannot hold one - but the value has been computed by the
+            // line above, so its length is known and `Array[T, N]` is exactly
+            // what it crosses as.
+            match self.crosses_as_fixed(&narrowed, want, evaluated.as_ref(), span) {
+                Crossing::Fits | Crossing::Said | Crossing::Unanswered => {}
+                Crossing::Other => {
+                    // …and D2's other half: a value that owns memory is refused
+                    // for **what it is**, with the view-shaped equivalent as the
+                    // way out. Only where the build computed one, because that
+                    // is what lets the way out name the length.
+                    match (&evaluated, is_growable(want)) {
+                        (Some(build_time::Value::List(items)), true) => {
+                            let (want, len) = (want.clone(), items.len());
+                            self.a_constant_that_owns_memory(&bound, &want, len, span);
+                        }
+                        _ => {
+                            self.expect(&narrowed, want, span.clone(), "const", |found, want| {
+                                format!("this is `{found}`, and the `const` says `{want}`")
+                            });
+                        }
+                    }
+                }
+            }
+        } else {
+            self.constant_fits(value, None, span);
+        }
+        let said_a_type = self.checked.findings.len() > before;
+
         let below = match (&want, &folded, value) {
             (Some(want), _, _) => rust_constant_type(want),
             (None, Some(folded), _) => Some(match &folded.pinned {
@@ -9551,12 +9775,16 @@ impl<'a> Checker<'a> {
                     Ok(_) => "i32".to_string(),
                     Err(_) => "i64".to_string(),
                 }),
-                // **An array with nothing declaring its type.** Part I 2.4's
-                // rule read one level in: the elements decide, and `[T; N]` is
-                // the whole type because the length is the value's.
-                Some(build_time::Value::List(items)) => {
-                    rust_array_type(items).map(|ty| format!("[{ty}; {}]", items.len()))
-                }
+                // **An array with nothing declaring its type.** The element
+                // type is the **checker's** where it has one - a body declared
+                // `-> Vec[i64]` says `i64`, and reading it off the values
+                // instead would make `[0, 1, 4]` an `[i32; 3]` and every later
+                // `i64` arithmetic on it `rustc`'s complaint about a file
+                // nobody wrote. Part I 2.4's widest-holder rule is the fallback
+                // for the case nothing declared anything.
+                Some(build_time::Value::List(items)) => element_below(&found)
+                    .or_else(|| rust_array_type(items))
+                    .map(|ty| format!("[{ty}; {}]", items.len())),
                 None => None,
             },
         };
@@ -9578,7 +9806,7 @@ impl<'a> Checker<'a> {
             // …and nothing at all where the refusal has already been made by
             // name: `NK1152` and `NK1165` each say what `NK1127` would, with
             // the part that matters in it.
-            _ if said => {}
+            _ if said || said_a_type => {}
             _ => self.checked.findings.push(Finding {
                 code: "NK1127",
                 severity: Severity::Error,
@@ -9588,15 +9816,15 @@ impl<'a> Checker<'a> {
                     "a `comptime` is a `let` that *must* fold, so one that cannot is \
                          refused rather than computed while the program runs (Part II, 10.2)"
                         .to_string(),
-                    "what it evaluates today is an integer, a `bool`, or a fixed-length \
-                         **array** of them - a literal, arithmetic and comparisons over \
-                         literals and over other constants, an `if`, a **call** to a \
-                         function of this program whose body is made of those, a `for` \
-                         over a range or a `while` inside such a body, and `xs[i]`, \
-                         `xs[i] = …` and `xs.len()` over an array it holds (ADR-073 D5's \
-                         second stage). Text is not in it yet, and neither is a `Vec`: a \
-                         `const` below cannot hold one, which is why a build-time table \
-                         is written at its length and filled by index"
+                    "what it evaluates today is an integer, a `bool`, or a **list** \
+                         of them - a literal, arithmetic and comparisons over literals \
+                         and over other constants, an `if`, a **call** to a function of \
+                         this program whose body is made of those, a `for` over a range \
+                         or a `while` inside such a body, and `xs[i]`, `xs[i] = …`, \
+                         `xs.push(…)` and `xs.len()` over a list it holds (ADR-073 D5's \
+                         second stage). Text is not in it yet. A list built with `push` \
+                         is fine and crosses as an `Array[T, N]`, because a `const` \
+                         below cannot hold a `Vec` (ADR-079 D1)"
                         .to_string(),
                 ],
                 help: Some(format!(

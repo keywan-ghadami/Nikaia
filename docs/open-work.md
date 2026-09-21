@@ -478,14 +478,19 @@ because it is what says which integer type a *declaration* pinned.
 nowhere to arrive — what a `comptime` handed to the language below was one
 integer or one `bool`.
 
-*How it was answered, and why there is no `push`:* `.push` on a list hands back
-a `Vec[?]`, a `Vec` allocates, and a `const` cannot hold one — `NK1104` refuses
-one against an `Array[i64, 5]` long before the evaluator is reached. `[T; N]` is
-exactly what a `const` holds ([ADR-152](specification/adr/adr-152.md)), so a
-build-time table is written at its length and filled by index, and the evaluator
-gained the four things that needs: the list literal, `xs[i]`, `xs[i] = …` and
-`xs.len()`. `comptime TABLE: Array[i64, 5] = squares()` is
-`const TABLE: [i64; 5] = [0, 1, 4, 9, 16];`. Text is still not in it.
+*How it was answered, and `push` with it:* `[T; N]` is exactly what a `const`
+holds ([ADR-152](specification/adr/adr-152.md)), so a build-time table crosses as
+an array — `comptime TABLE: Array[i64, 5] = squares()` is
+`const TABLE: [i64; 5] = [0, 1, 4, 9, 16];`. The evaluator reads the list
+literal, `xs[i]`, `xs[i] = …`, `xs.len()` and **`xs.push(…)`**, so a body may
+fill its table at a known length *or* grow it, which is
+[ADR-079](specification/adr/adr-079.md)'s own title — *growable going in, fixed
+coming out*. 0.0.108 recorded *there is no `push`* and gave a measurement for it;
+the measurement was right and the conclusion was too narrow — `NK1104` refuses a
+`Vec` as a **function's declared result**, and a `comptime` is not one. By the
+time a declaration is compared the build has computed the value, so its length is
+a fact. A `Vec` as the **crossed** form is still impossible and `NK1167` says so
+by name. Text is still not in it.
 
 *Why it is work and not a question:* two records decided what may happen, and
 one of them now can.

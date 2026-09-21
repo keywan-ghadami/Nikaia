@@ -416,3 +416,156 @@ fn an_array_has_a_length_in_the_ledger() {
     assert!(entry.sync.is_sync() && entry.touches_known && entry.touches.is_empty());
     assert!(library.functions.contains_key("Array::is_empty"));
 }
+
+/// **Growable going in, fixed coming out** —
+/// [ADR-079](../../../docs/specification/adr/adr-079.md)'s own title, and the
+/// half of it this evaluator can now do. A body builds its table with `push`,
+/// which is the shape §3 of that record asked for; what crosses into the
+/// program is fixed, because `const X: Vec<T>` is not a thing the language
+/// below has and `const X: [T; N]` is.
+///
+/// **0.0.108 said there was no `push` and gave a measurement for it.** The
+/// measurement was right — `.push` hands back a `Vec[?]` and `NK1104` refuses
+/// that against an `Array[i64, 5]` — and the conclusion drawn from it was too
+/// narrow: the refusal is about a **function's declared result**, and a
+/// `comptime` is not one. By the time the declaration is compared, the build
+/// has computed the value, so its length is a fact.
+#[test]
+fn a_table_built_with_push_crosses_as_an_array() {
+    let source = "fn squares() -> Vec[i64] {\n\
+                  \x20   let mut xs = []\n\
+                  \x20   for i in 0..<5 {\n\
+                  \x20       xs.push(i * i)\n\
+                  \x20   }\n\
+                  \x20   return xs\n\
+                  }\n\
+                  comptime TABLE: Array[i64, 5] = squares()\n\
+                  fn main() { println(f\"{TABLE[4]}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const TABLE: [i64; 5] = [0, 1, 4, 9, 16];"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// The same with **no annotation at all**, which is where the element type has
+/// to come from somewhere: the checker's, and not the values'. Reading it off
+/// the values makes `[0, 1, 4]` an `[i32; 3]`, and the first `i64` arithmetic
+/// on it is `rustc`'s complaint about a file nobody wrote.
+#[test]
+fn an_unannotated_table_takes_the_element_type_the_checker_has() {
+    let source = "fn squares() -> Vec[i64] {\n\
+                  \x20   let mut xs = []\n\
+                  \x20   for i in 0..<5 {\n\
+                  \x20       xs.push(i * i)\n\
+                  \x20   }\n\
+                  \x20   return xs\n\
+                  }\n\
+                  comptime TABLE = squares()\n\
+                  fn main() { println(f\"{TABLE[4]}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const TABLE: [i64; 5] ="),
+        "the checker's `i64`, not the values' `i32`:\n{}",
+        lowered(source)
+    );
+}
+
+/// `NK1157`'s second sentence. The rule is the one a literal gets — an
+/// `Array[T, N]` takes exactly `N` — and the **way out** is not, because *write
+/// five elements* is advice nobody can take about a number that came out of a
+/// body.
+#[test]
+fn a_computed_table_of_the_wrong_length_says_both_numbers() {
+    let source = "fn squares() -> Vec[i64] {\n\
+                  \x20   let mut xs = []\n\
+                  \x20   for i in 0..<5 {\n\
+                  \x20       xs.push(i * i)\n\
+                  \x20   }\n\
+                  \x20   return xs\n\
+                  }\n\
+                  comptime TABLE: Array[i64, 3] = squares()\n\
+                  fn main() { println(f\"{TABLE[0]}\") }\n";
+    let found = findings(source);
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1157")
+        .unwrap_or_else(|| panic!("NK1157: {found:#?}"));
+    assert!(
+        refusal.message.contains("computed 5 elements") && refusal.message.contains("holds 3"),
+        "both numbers: {}",
+        refusal.message
+    );
+    assert!(
+        refusal
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("declare the array the length this computes")),
+        "a way out that can be taken: {:?}",
+        refusal.help
+    );
+}
+
+/// **`NK1167`** ([ADR-079](../../../docs/specification/adr/adr-079.md) D2): a
+/// `comptime` whose value owns memory is refused for *what it is* — and the way
+/// out names the length, because the build has just computed it.
+#[test]
+fn a_constant_declared_a_vec_is_told_the_length_it_computed() {
+    let source = "fn squares() -> Vec[i64] {\n\
+                  \x20   let mut xs = []\n\
+                  \x20   for i in 0..<5 {\n\
+                  \x20       xs.push(i * i)\n\
+                  \x20   }\n\
+                  \x20   return xs\n\
+                  }\n\
+                  comptime TABLE: Vec[i64] = squares()\n\
+                  fn main() { println(f\"{TABLE[0]}\") }\n";
+    let found = findings(source);
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1167")
+        .unwrap_or_else(|| panic!("NK1167: {found:#?}"));
+    assert!(
+        refusal
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("Array[i64, 5]")),
+        "the way out names the length the build computed: {:?}",
+        refusal.help
+    );
+    assert!(
+        !found.iter().any(|f| f.code == "NK1127"),
+        "one mistake, one error: {found:#?}"
+    );
+}
+
+/// **And a body that could not be run is not told its declaration is wrong.**
+/// `NK1152` says the callee may not run while the program is built; adding
+/// *this is a `Vec[i64]` and the `const` says `Array[i64, 1]`* would send the
+/// reader to the one line that is right, which is
+/// [Part III C.4](../../../docs/specification/30-nikaia-tooling.md)'s failure
+/// with the refusal already made.
+#[test]
+fn an_unevaluable_body_does_not_also_blame_its_declaration() {
+    let source = "use std::fs\n\
+                  fn lines() -> Vec[i64] {\n\
+                  \x20   let mut xs = []\n\
+                  \x20   let t = fs::read_to_string(\"x\") catch { \"\" }\n\
+                  \x20   xs.push(t.len())\n\
+                  \x20   return xs\n\
+                  }\n\
+                  comptime TABLE: Array[i64, 1] = lines()\n\
+                  fn main() { println(f\"{TABLE[0]}\") }\n";
+    let found = findings(source);
+    assert!(
+        found.iter().any(|f| f.code == "NK1152"),
+        "the callee the rule forbids: {found:#?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|f| f.code == "NK1166" || f.code == "NK1127"),
+        "and nothing about the declaration, which is right: {found:#?}"
+    );
+}

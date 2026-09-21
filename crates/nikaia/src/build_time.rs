@@ -533,6 +533,35 @@ impl<'a> BuildTime<'a> {
                         }
                     }
                 }
+                // **`xs.push(v)`, which is how a table is *grown* rather than
+                // filled** — [ADR-079](../../../docs/specification/adr/adr-079.md)'s
+                // own title, *growable going in, fixed coming out*. The body
+                // works with a list that does not know its length yet; what
+                // crosses into the program is fixed, and the declaration is
+                // where it becomes so.
+                //
+                // A statement and not an expression, because that is what it
+                // is: `Vec::push` hands back nothing, and a body that reads
+                // its result is not one this evaluator sees.
+                Stmt::Expr(Expr::MethodCall {
+                    receiver,
+                    method,
+                    args,
+                    config,
+                }) if self.parsed.text(*method) == "push"
+                    && args.len() == 1
+                    && config.is_empty() =>
+                {
+                    let Expr::Variable(name) = receiver.as_ref() else {
+                        return Err(Refusal::Unevaluable);
+                    };
+                    let name = self.parsed.text(*name).to_string();
+                    let given = self.expr(&args[0], frame)?;
+                    let Some(Value::List(items)) = frame.get_mut(&name) else {
+                        return Err(Refusal::Unevaluable);
+                    };
+                    items.push(given);
+                }
                 Stmt::Expr(expr) if at == last => return Ok(Flow::Value(self.expr(expr, frame)?)),
                 _ => return Err(Refusal::Unevaluable),
             }

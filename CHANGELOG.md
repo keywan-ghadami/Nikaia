@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.111] — 2026-09-21
+
+**A build-time table may be grown with `push`** — which is
+[ADR-079](docs/specification/adr/adr-079.md)'s own title, *growable going in,
+fixed coming out*, and which 0.0.108 said was not possible.
+
+### Added
+
+- **`xs.push(v)` in a build-time body.** `fn squares() -> Vec[i64] { let mut xs = []; for i in 0..<5 { xs.push(i * i) }; return xs }` under a `comptime TABLE: Array[i64, 5]` reaches the generated file as `const TABLE: [i64; 5] = [0, 1, 4, 9, 16];`. The body works with a list that does not know its length; what crosses into the program is fixed, and the declaration is where it becomes so.
+- **`NK1167`** ([ADR-079](docs/specification/adr/adr-079.md) D2): a `comptime` whose value owns memory, refused for **what it is** — and the way out names the number, which is why it is worth a code rather than a note. The build has just computed the value, so *declare it `Array[i64, 5]`* is a line the reader can take instead of one they have to work out by reading the body.
+- **`NK1157` gained a second sentence** for the same rule. An `Array[T, N]` takes exactly `N` elements whether the `N` was written or computed; what differs is the **way out**, because *write five elements* is advice nobody can take about a number that came out of a body. It says *this computed 5 elements, and the array holds 3*.
+
+### Fixed
+
+- **0.0.108's *there is no `push`* was too narrow, and the record says so where it stands.** The measurement behind it was right — `.push` hands back a `Vec[?]` and `NK1104` refuses that — but what `NK1104` refuses is a **function's declared result**, and a `comptime` is not one. By the time a declaration is compared, the build has computed the value, so its length is a fact. [ADR-175](docs/specification/adr/adr-175.md) D1's heading carries the correction and [ADR-079](docs/specification/adr/adr-079.md) is *built* for a list now.
+- **An un-annotated table took its element type from its values.** `comptime TABLE = squares()` over a `-> Vec[i64]` body wrote `const TABLE: [i32; 5]`, because the narrowest type that holds `0, 1, 4, 9, 16` is an `i32` — and the first `i64` arithmetic on it would be `rustc`'s complaint about a file nobody wrote. The checker's element type is used where it has one; Part I 2.4's widest-holder rule stays the fallback for the case nothing declared anything.
+- **A body that could not be run is no longer also told its declaration is wrong.** `NK1152` says the callee may not run while the program is built; *this is a `Vec[i64]` and the `const` says `Array[i64, 1]`* used to follow it, pointing at the one line that is right. That is [C.4](docs/specification/30-nikaia-tooling.md)'s failure with the refusal already made. Every refusal at a `comptime` now suppresses `NK1127` by the same counter rather than by a rule remembered per site.
+
 ## [0.0.110] — 2026-09-20
 
 **Two of the three points the language is short of are not work, and the page
