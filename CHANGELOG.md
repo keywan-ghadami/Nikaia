@@ -4,6 +4,41 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.125] — 2026-09-21
+
+**What a build-time value *is*, widened** — [ADR-079](docs/specification/adr/adr-079.md)
+§5 — after the owner asked whether a `Vec` and an `enum` come across from a
+`comptime`, and then whether **byte slices and compositions** may. The answer
+was *partly*, and measuring turned the two questions into five gaps, four
+defects one construct over, and two absences that need a ruling.
+
+### Five shapes cross that did not
+
+- **A float.** `comptime R: f64 = 1.5` had nothing to arrive as, so a `comptime` with a float anywhere in it was `NK1127` — *this compiler cannot evaluate it* — for a line Rust writes as `const R: f64 = 1.5;`. The literal is written with `{:?}` and not `{}`, because Rust's `Debug` for a float is the shortest text that reads back as the same bits, and **only a finite one is written**: `1.0 / 0.0` stays a refusal rather than becoming a `const` of something the source never named. Arithmetic over floats came with it, because a value that crosses and cannot be added is half a feature.
+- **An `enum` variant, with what it carries.** `const A: Shape = Shape::Num(1.5);`, `Shape::Pair(7, "x")`, and an array of them.
+- **A nested list**, as `[[T; M]; N]`. The element type was read one level deep and asked no further.
+- **A `struct` whose field is an `Array[T, N]`.** The walk that asks whether a field can be written as a `const` read `Array` as a type with no constant form, which is the opposite of true.
+- **`u8`**, the byte Part I 2.2 offers — so `comptime MAGIC: Array[u8, 4] = [0x7F, 0x45, 0x4C, 0x46]` is a **buffer** a `const` holds. It was `NK1127`.
+
+### The `enum` is what makes the refusal a question about the *value*
+
+- **`Shape::Empty` is a `const` and `Shape::Many([1, 2])` is not, and the two are the same `Shape`.** So a walk over the declared *type* has no answer to give. Without this the second one lowered — `const M: Shape = Shape::Many([1, 2]);` against a variant declaring a `Vec` — and `rustc` answered about the generated file, which is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class. `NK1167` now walks the value, names the **variant**, and says another variant of the same `enum` may cross perfectly well.
+- **And a grammar's result crosses in both new shapes.** The dumper writes `(f 1.5)` and a `match` with an arm per variant emitting `(v Ty Variant …)`; a variant with **named** fields is refused by name, because a build-time value carries a payload by position. The decoder had one defect of the kind this format invites: a variant's tag is **two words** and the reader took the second from where the first ended, so `(v Shade Odd)` came back with an empty variant name. A test that **runs** a program is what caught it.
+
+### Four defects one construct over, found by writing the programs
+
+- **A grammar at build time did not work in a project build at all.** [ADR-177](docs/specification/adr/adr-177.md) shipped one package earlier able to lower a loose `.nika` file and unable to build the shape anybody would write it in. `Project::report` rebuilds the source map whenever the backend had anything to say — and *anything* includes a **warning**, which the generated crate emits for the `grammar!` macro's `cfg` — and it rebuilt with `Reads::none()`. That pass evaluated the `comptime` to nothing, the emitter refused an item the build had already written a `const` for, and this compiler's own internal sentence reached the user in place of the program running. One function now answers *what may this build read, and where does it compile a parser* for both lowerings, and `tests/project.rs` builds and runs a grammar project — because every unit test passed throughout.
+- **`xs[i].field` did not compile, for a `Vec` and an `Array` alike.** `(*index::get(&rows, index::at(1))).a` is *type annotations needed*: `at`'s `I` has nothing to infer itself from, and where the element is only printed an integer literal's late defaulting settles it, while a **field read on the element** needs the type before the defaulting happens. The emitter already knew — the paragraph beside the write branch says `at(0)` has nothing to infer `I` from and takes the literal out of the conversion — and the **read** branch had never had the same exception. A nested index is the same absence one level out, and `grid[1][0]` works now too. A **range** stays in the conversion, because `Get<I> for str` wants a `Range<usize>` that a bare `Range<{integer}>` does not give it.
+- **A named-field variant's literal typed as the variant.** `Shape::Spot { x: 1 }` answered `Shape::Spot`, which is not a type any declaration can be written as — so a correct function was `NK1104`, *hands back `Shape::Spot` and declares `Shape`*, with a way out that cannot be taken ([Part III C.2](docs/specification/30-nikaia-tooling.md)). Its fields went unchecked in the same breath, because nothing held them under that name. Both halves are one map now, built where the `enum` is read.
+- **`let x: u8 = 300` lowered**, which is the C.1 hole a crossed form opens if the range is not checked with it. `NK1116` has the byte's range now, and the article is read off how the name is *said*: `a u8`, `an i32`.
+
+### What is still out is one absence rather than five
+
+- **A `Vec[T]` inside a crossed value** — a field of a `struct` (`examples/config.nika`'s `Section { settings: Vec[Setting] }`) or a variant's payload (`examples/json.nika`'s `Json::Array(Vec[Json])`), which is **what both corpus grammars produce** — cannot cross: `Array[T, N]` cannot type a position whose length differs per value. A **binary asset** cannot be read at all (`asset("…")` hands back a `&str` and refuses a file that is not UTF-8 by name, and there is no result type an `asset_bytes` could have), and `Bytes` owns its run. All three want **[ADR-079](docs/specification/adr/adr-079.md) D1's own `&[T]`**, which that record has carried as not-built since it was written, and the question is on [`open-decisions.md`](docs/open-decisions.md).
+- **Compositions are the half that already works**, which is what measuring the second question found: a `struct` **in** an array crosses, an `Array[T, N]` **as a struct field** crosses since this package, and an `Array[u8, N]` is the byte buffer `&[u8]` would have been. What a `Fixed` cannot hold is the composition, and that is the next bullet.
+- **A `struct` as a `Fixed` value** is its own question, with a different root: `Fixed<V>::get` hands back `Option<V> where V: Copy` — 0.0.118's own correction — and a Nikaia `struct` does not derive `Copy`. That page recommends the message first, because `NK1127`'s *cannot evaluate* is the wrong claim: the value evaluated fine.
+- **Two smaller defects are written down with their reproductions** (`docs/open-work.md` §1.3, §1.4): a cast over a `for` binding is a cast over a **view** (`for n in NS { n as i64 }` is *casting `&i32` as `i64`*), and a slice of text read as a **value** does not lower (`f"{text[1..3]}"`, where `&text[1..3]` is fine and is what the corpus writes).
+
 ## [0.0.124] — 2026-09-21
 
 **A grammar runs while the program is built, by compiling the parser it

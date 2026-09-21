@@ -547,6 +547,34 @@ pub fn lower(
     lower_reading(input, settings, no_cache, packages, None)
 }
 
+/// **What a build may read, and where it compiles a parser**
+/// ([ADR-072](../../docs/specification/adr/adr-072.md) D1 and D2,
+/// [ADR-177](../../docs/specification/adr/adr-177.md) D2).
+///
+/// **One function rather than two constructions**, because both of this
+/// build's lowerings have to answer the same question. The second one is
+/// `Project::report`'s, which rebuilds the source map when the backend had
+/// something to say — and when it was handed `Reads::none()` instead, every
+/// `comptime` that read a file or ran a grammar evaluated to nothing on that
+/// pass, so the emitter refused an item the build had already lowered. What
+/// reached the user was this compiler's own internal sentence in place of the
+/// backend's message, which is the opposite of what `report` exists for.
+///
+/// A list that cannot be read fails the build on its own account: a flag that
+/// names a file and is quietly treated as *no list* would turn a build that
+/// meant to read into one that says a path is not named, which is the wrong
+/// sentence about the wrong thing.
+fn reads_for(layout: &Layout, allowlist: Option<&Path>) -> Result<assets::Reads> {
+    let reads = match allowlist {
+        Some(list) => assets::Reads::with(&layout.root, assets::Allowlist::read(list)?),
+        None => assets::Reads::at(&layout.root),
+    };
+    // **Where a grammar's parser is compiled** (`open-work.md` §2.9). Beside
+    // the cache rather than under the root, which is the rule that file already
+    // keeps: a loose `.nika` outside a project has nothing written next to it.
+    Ok(reads.building_in(layout.store.with_file_name("build-time")))
+}
+
 /// The same, told which allowlist is in effect
 /// ([ADR-072](../../docs/specification/adr/adr-072.md) D2).
 ///
@@ -566,19 +594,8 @@ pub fn lower_reading(
     let layout = Layout::resolve(input);
     let unit = layout.unit_name(input);
     // **What this build may read, resolved before anything is read**
-    // ([ADR-072](../../docs/specification/adr/adr-072.md) D1, D2). A list that
-    // cannot be read fails the build on its own account: a flag that names a
-    // file and is quietly treated as *no list* would turn a build that meant
-    // to read into one that says a path is not named, which is the wrong
-    // sentence about the wrong thing.
-    let reads = match allowlist {
-        Some(list) => assets::Reads::with(&layout.root, assets::Allowlist::read(list)?),
-        None => assets::Reads::at(&layout.root),
-    }
-    // **Where a grammar's parser is compiled** (`open-work.md` §2.9). Beside
-    // the cache rather than under the root, which is the rule that file already
-    // keeps: a loose `.nika` outside a project has nothing written next to it.
-    .building_in(layout.store.with_file_name("build-time"));
+    // ([ADR-072](../../docs/specification/adr/adr-072.md) D1, D2).
+    let reads = reads_for(&layout, allowlist)?;
     let choices = match reads.list_digest() {
         Some(digest) => settings.choices().reading(digest),
         None => settings.choices(),
@@ -1838,7 +1855,7 @@ impl Project {
         // rebuild. That is the same shape the lowering already has (above): the
         // work happens once, and the decision is made where it can be reported.
         let (mut code, messages) = cargo.messages("build", &[])?;
-        self.report(&messages)?;
+        self.report(&messages, allowlist)?;
         if code == 0 && subcommand == "run" {
             // **The built program is run directly, and that is Part III C.1
             // rather than a shortcut.** `cargo run` is a second invocation that
@@ -1900,7 +1917,7 @@ impl Project {
     /// The map is rebuilt rather than carried: the lowering is deterministic, so
     /// a second one gives the same map (ADR-012), and this way the cost is paid
     /// only by a build the backend had something to say about.
-    fn report(&self, messages: &str) -> Result<()> {
+    fn report(&self, messages: &str, allowlist: Option<&Path>) -> Result<()> {
         if messages
             .lines()
             .all(|line| !line.contains("\"compiler-message\""))
@@ -1912,7 +1929,11 @@ impl Project {
         // set and the translation of somebody else's error would be a refusal of
         // a program that is fine.
         let program = modules::Program::read_with(&self.entry(), &self.packages()?)?;
-        let lowered = program.emit(self.settings.build)?;
+        // **The same reads the build lowered under** (ADR-072, ADR-177). This
+        // lowering has to be the lowering, or an item the build wrote a `const`
+        // for is refused here and the backend's message never arrives.
+        let reads = reads_for(&Layout::resolve(&self.entry()), allowlist)?;
+        let lowered = program.emit_reading(self.settings.build, &reads)?;
         let sources: Vec<&str> = program.sources();
         let paths: Vec<String> = program
             .units

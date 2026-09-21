@@ -68,7 +68,7 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Two entries are open.**
+**Four entries are open.**
 
 ### 1.1. A grammar's entry does not say what it keeps
 
@@ -124,7 +124,98 @@ rather than guessed at, and it waits on the same mechanism
 *Every example still runs*, at both settings, which is what said this cost
 information rather than correctness.
 
-### 1.2. A grammar entry in tail position over a local that owns its input
+### 1.2. A path whose head names nothing is not refused
+
+**The other half of `NK1171`**, and it is written down because the half that
+*was* built is what makes this one visible. `Op::Mul` beside
+`enum Op { Add, Sub }` used to lower, and `rustc` refused the **generated
+file** — [Part III C.1](specification/30-nikaia-tooling.md)'s class. That is
+fixed: the compiler has read the declaration, so it can say the name is not in
+it.
+
+`nowhere::wobble` is not fixed, and the reason is that the compiler has read
+nothing. A module of a package, an item of a foreign crate and a name no ledger
+has been told about all look the same from inside the checker — an absent key —
+and refusing on absence would refuse correct programs, which is the direction
+[Part III C.4](specification/30-nikaia-tooling.md) forbids and the one
+[ADR-010](specification/adr/adr-010.md) D1 is careful about in the other
+polarity.
+
+*Measured, and it is what keeps the entry small.* Instrumenting the checker's
+path arm and running the whole corpus — `examples/`, `benches/`,
+`tests/samples/` — turns up **seven distinct paths used as values**:
+`Summary::merge`, `Report::merge`, `Refused::NoStatement`, `Refused::NoDatabase`,
+`Op::Times`, `Op::Divide`, `Json::Null`. Every one of them is either a variant
+of an enum this program declares or a key a ledger records. **Not one** has a
+head this compiler has not read. So the case this entry names is one no program
+here writes, which is why refusing it can wait for the mechanism that would make
+the refusal right rather than for the next package.
+
+*What would make it right* is knowing what a head may legally be: a module of
+this package, a package named in the manifest, a foreign crate the ledger
+describes, or a type. Three of those four are already written down somewhere;
+what is missing is one walk that asks them in order and a sentence for the case
+where none of them answers — the same shape `NK1117` has one segment down.
+
+### 1.3. A cast over a `for` binding is a cast over a view
+
+*Reproduction:*
+
+```nika
+comptime NS: Array[i32, 3] = [1, 2, 3]
+
+fn main() {
+    let mut sum: i64 = 0
+    for n in NS { sum = sum + (n as i64) }
+    println(f"{sum}")
+}
+```
+
+`rustc` refuses the **generated file** — relayed onto the `.nika` line, so it
+reads *casting `&i32` as `i64` is invalid* — which is
+[Part III C.1](specification/30-nikaia-tooling.md)'s class: the noun `&i32` is
+not in the program.
+
+*It is the binding and not the cast.* `for` over a sequence binds a **view** of
+each element, which is right and is what lets the loop read without copying; the
+cast then stands over the view rather than over the number. The same cast on a
+named `let` compiles, and so does the same loop without a cast.
+
+*What it needs:* the lowering writing `*n` where a cast's operand is a loop
+binding over a sequence — the emitter already knows which bindings those are
+(`lent_lets` is the neighbouring fact), so this is a question of asking at the
+cast rather than of new analysis. **The corpus does not write the shape** —
+`tests/examples.rs` runs every runnable example and is green — which is why it
+is here and not fixed.
+
+### 1.4. A slice of text read as a value does not lower
+
+*Reproduction:*
+
+```nika
+fn main() {
+    let text = "hello"
+    println(f"{text[1..3]}")
+}
+```
+
+`rustc` refuses the generated file with *the size for values of type `str`
+cannot be known at compilation time*. The lowering writes `(*index::get(&text,
+index::at(1..=3)))`, and the `*` that every bracket read carries
+([ADR-161](specification/adr/adr-161.md) D6) dereferences to `str`, which is
+unsized.
+
+*The `&` form is fine*, which is what keeps this small and is what every program
+in the corpus writes: `let part = &text[1..3]` compiles and runs, and
+`examples/k-nucleotide.nika`'s `&dna[i..<i + k]` is the shape `index.rs` was
+built around.
+So the defect is the **bare** slice in value position.
+
+*What it needs:* the read wrapper knowing that a slice of text is already a
+view — the same distinction `Found` draws for a map one arm over, where the `*`
+is what takes the option apart. A slice needs no `*` at all.
+
+### 1.5. A grammar entry in tail position over a local that owns its input
 
 **Found by [ADR-173](specification/adr/adr-173.md)'s own test**, which is the
 only reason it is visible: nothing in the corpus writes this shape, and the
@@ -162,39 +253,6 @@ why the corpus is green.
 at the `;`, ahead of the local. `ARM_VALUE`'s trick one construct over
 ([ADR-164](specification/adr/adr-164.md) D1) is the same idea for the same kind
 of reason.
-
-### 1.2. A path whose head names nothing is not refused
-
-**The other half of `NK1171`**, and it is written down because the half that
-*was* built is what makes this one visible. `Op::Mul` beside
-`enum Op { Add, Sub }` used to lower, and `rustc` refused the **generated
-file** — [Part III C.1](specification/30-nikaia-tooling.md)'s class. That is
-fixed: the compiler has read the declaration, so it can say the name is not in
-it.
-
-`nowhere::wobble` is not fixed, and the reason is that the compiler has read
-nothing. A module of a package, an item of a foreign crate and a name no ledger
-has been told about all look the same from inside the checker — an absent key —
-and refusing on absence would refuse correct programs, which is the direction
-[Part III C.4](specification/30-nikaia-tooling.md) forbids and the one
-[ADR-010](specification/adr/adr-010.md) D1 is careful about in the other
-polarity.
-
-*Measured, and it is what keeps the entry small.* Instrumenting the checker's
-path arm and running the whole corpus — `examples/`, `benches/`,
-`tests/samples/` — turns up **seven distinct paths used as values**:
-`Summary::merge`, `Report::merge`, `Refused::NoStatement`, `Refused::NoDatabase`,
-`Op::Times`, `Op::Divide`, `Json::Null`. Every one of them is either a variant
-of an enum this program declares or a key a ledger records. **Not one** has a
-head this compiler has not read. So the case this entry names is one no program
-here writes, which is why refusing it can wait for the mechanism that would make
-the refusal right rather than for the next package.
-
-*What would make it right* is knowing what a head may legally be: a module of
-this package, a package named in the manifest, a foreign crate the ledger
-describes, or a type. Three of those four are already written down somewhere;
-what is missing is one walk that asks them in order and a sentence for the case
-where none of them answers — the same shape `NK1117` has one segment down.
 
 ## 2. Decided and unbuilt
 

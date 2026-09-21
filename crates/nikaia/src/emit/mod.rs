@@ -5123,9 +5123,35 @@ impl<'p> Emitter<'p> {
                 if !flow.in_a_place {
                     out.push("(*nikaia_std::index::get(&");
                     self.postfix_base(out, base, depth, flow)?;
-                    out.push(", nikaia_std::index::at(");
-                    self.expr(out, index, depth, flow)?;
-                    out.push(")))");
+                    out.push(", ");
+                    // **The literal exception belongs to the read as well**, and
+                    // it was missing here: `xs[0]` as a *read* went through
+                    // `at(…)` whatever was in the brackets, and `at`'s `I` has
+                    // nothing to infer itself from. Alone that survived, because
+                    // an integer literal defaults late and `usize` is what every
+                    // `At` for a number answers with — but a **field read on the
+                    // element** needs the type *before* the defaulting, so
+                    // `rows[1].a` was `cannot infer type` about the generated
+                    // file, for both an `Array` and a `Vec`. That is [Part III
+                    // C.1](../../docs/specification/30-nikaia-tooling.md)'s
+                    // class and the very thing the paragraph above says this
+                    // exception exists to prevent.
+                    //
+                    // **A range is not in the exception here**, though it is
+                    // in the brackets below: `text[1..3]` as a read goes
+                    // through `Get<I> for str`, whose `I` a bare
+                    // `Range<{integer}>` does not pin, and what came back was
+                    // `rustc` about `str` not being `Sized`. `at` answers a
+                    // `Range<usize>` and settles it, which is what it is for.
+                    match only_literals(index) && !matches!(&**index, Expr::Range { .. }) {
+                        true => self.expr(out, index, depth, flow.inferred())?,
+                        false => {
+                            out.push("nikaia_std::index::at(");
+                            self.expr(out, index, depth, flow)?;
+                            out.push(")");
+                        }
+                    }
+                    out.push("))");
                     return Ok(());
                 }
                 self.postfix_base(out, base, depth, flow)?;

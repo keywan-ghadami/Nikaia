@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.124 (Draft)
+**Version:** 0.0.125 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -125,10 +125,13 @@ not exhaust the compiler's stack.
 
 **What crosses from build time to run time** is decided
 ([ADR-079](adr/adr-079.md)). A result arrives in its **view** form: `Vec[T]` as
-`&[T]`, `String` as `&str`. A value built with `push` is fixed once it has
-crossed. A value that owns memory is refused by its *type*, not by its parse. A
-map that crosses is a **fixed** map with a closed key set. How it is looked up is
-the compiler's decision, as a map's hasher is.
+an `Array[T, N]`, `String` as a `&str`. A value built with `push` is fixed once
+it has crossed. A value that owns memory is refused by what it *is* and never by
+its parse — by its **type** for a `struct`, and for an `enum` by the **variant
+the value is**, because `Shape::Empty` is a `const` and `Shape::Many([1, 2])` is
+not while both are the same `Shape`. A map that crosses is a **fixed** map with
+a closed key set. How it is looked up is the compiler's decision, as a map's
+hasher is.
 
 **A map the build can see is written as a list of pairs**, and the declared type
 says it is a map ([ADR-176](adr/adr-176.md) D1). There is no map literal:
@@ -176,10 +179,11 @@ switched off without editing anything ([ADR-072](adr/adr-072.md) D3).
 > so there is one implementation of the grammar language and this section's *the
 > same syntax and the same meaning* is a tautology. Invalid input fails the build
 > in the parser's own words. What A's own example still meets is the
-> **crossing**: `Json::Value` is an `enum`, and a build-time value is a whole
-> number, a `bool`, text, a list and a `struct` — so it is `NK1178` with the
-> reason rather than a parse that happens and has nowhere to land. A rule whose
-> result is one of the five crosses and runs.
+> **crossing**: a build-time value is a whole number, a float, a `bool`, text, a
+> list, a `struct` and an `enum` variant, and `Json::Value` carries a `Vec`
+> **inside** a variant — so it is `NK1178` with the reason rather than a parse
+> that happens and has nowhere to land. A rule whose result is one of the seven
+> crosses and runs.
 >
 > Not implemented is [ADR-079](adr/adr-079.md) D5's serialised blob, which waits
 > for a table large enough to ask for it.

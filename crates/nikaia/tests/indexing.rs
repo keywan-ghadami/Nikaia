@@ -211,3 +211,61 @@ fn main() {
     );
     assert_eq!(printed.trim(), "99 21 1");
 }
+
+/// **A field read on an element of a sequence**, which did not compile at all
+/// (0.0.125).
+///
+/// `rows[1].a` — for a `Vec` and for an `Array[T, N]` alike — lowered to
+/// `(*index::get(&rows, index::at(1))).a` and `rustc` answered *type
+/// annotations needed*: `at`'s `I` has nothing to infer itself from, and where
+/// the element is only printed an integer literal's late defaulting settles it,
+/// while a **field read on the element** needs the type before the defaulting
+/// happens.
+///
+/// The emitter already knew this — the paragraph beside the write branch says
+/// `at(0)` has nothing to infer `I` from and takes the literal out of the
+/// conversion — and the **read** branch had never had the same exception. So a
+/// `let` with an index in it was fine and the field after it was
+/// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class:
+/// `rustc` speaking about the generated file, for an ordinary line.
+///
+/// **A nested index is the same absence one level out**, and it is here for
+/// that reason: `grid[1][0]` has an index where a base stands.
+#[test]
+fn a_field_of_an_indexed_element_compiles_and_runs() {
+    let printed = ran(
+        "a field through an index",
+        "struct Row { a: i64, b: i64 }\n\
+         \n\
+         fn main() {\n\
+         \x20   let rows: Array[Row, 2] = [Row { a: 1, b: 2 }, Row { a: 3, b: 4 }]\n\
+         \x20   println(f\"{rows[1].a}\")\n\
+         \x20   let mut held: Vec[Row] = []\n\
+         \x20   held.push(Row { a: 5, b: 6 })\n\
+         \x20   println(f\"{held[0].b}\")\n\
+         \x20   let grid: Array[Array[i64, 2], 2] = [[1, 2], [3, 4]]\n\
+         \x20   println(f\"{grid[1][0]}\")\n\
+         }\n",
+    );
+    assert_eq!(printed, "3\n6\n3\n");
+}
+
+/// …and **a range stays in the conversion**, which is why the exception above
+/// is narrower than the write branch's.
+///
+/// `&text[1..3]` is a slice, and `Get<I> for str` wants a `Range<usize>` that a
+/// bare `Range<{integer}>` does not give it. `index::at` answers one, which is
+/// what it is for — so the literal exception is for a **number** and not for
+/// everything written in literals.
+#[test]
+fn a_slice_of_text_still_goes_through_the_conversion() {
+    let printed = ran(
+        "a slice of text",
+        "fn main() {\n\
+         \x20   let text = \"hello\"\n\
+         \x20   let part = &text[1..3]\n\
+         \x20   println(f\"{part}\")\n\
+         }\n",
+    );
+    assert_eq!(printed, "ell\n");
+}

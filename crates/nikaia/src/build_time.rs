@@ -78,12 +78,30 @@ enum Flow {
 /// the shape the type system already had — measured: `.push` on a list hands
 /// back a `Vec[?]`, and `NK1104` refuses it against an `Array[i64, 5]` before
 /// this evaluator is ever reached.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// **`PartialEq` and no longer `Eq`**, since a float joined. Equality over a
+/// float is not an equivalence — `NaN` is equal to nothing, itself included —
+/// and keeping the derive by pretending otherwise would be a lie this compiler
+/// then reasons with. Nothing here needs a total order or a hash.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     /// In an `i128`, so a sum that cannot fit an `i64` is a number the caller
     /// can name rather than one that wrapped — [`fold`](crate::fold)'s reason,
     /// one level up.
     Int(i128),
+    /// **A number with a point in it**, carried as the machine carries one.
+    ///
+    /// It arrives as a literal or out of a grammar, and it crosses as the
+    /// `f64` or `f32` a declaration asks for. What it does **not** do is take
+    /// part in [`fold`](crate::fold)'s arithmetic, which is integers and stays
+    /// integers: a build that folded `0.1 + 0.2` would have to answer for the
+    /// answer, and nothing has asked it to yet.
+    ///
+    /// **A value that is not finite is refused where it crosses**, not here:
+    /// there is no literal for an infinity or a `NaN` in either language, so a
+    /// `const` holding one cannot be written — and a compiler that wrote
+    /// `f64::INFINITY` would be putting a name into the program that the
+    /// `.nika` line never mentioned.
+    Float(f64),
     Bool(bool),
     /// A fixed-length list, every element already a value.
     List(Vec<Value>),
@@ -104,6 +122,23 @@ pub enum Value {
     /// so [`decoded`] is a faithful reading rather than an invention, and
     /// [`written`] puts it back.
     Text(String),
+    /// **A variant of an `enum` this program declares**, with what it carries.
+    ///
+    /// `Shade::Odd` and `Json::Number(1.5)` are both this; the payload is empty
+    /// for the first. It lands as a `const` the way a struct does — `const C:
+    /// Shade = Shade::Odd;` is Rust — and the **payloads** are what decide
+    /// whether it can: a variant carrying a `Vec` has no `const` form for the
+    /// same reason a field that is one does not.
+    ///
+    /// **The name is carried and not resolved here.** Which `enum` a variant
+    /// belongs to is the checker's answer and the emitter writes what it is
+    /// told ([ADR-011](../../../docs/specification/adr/adr-011.md) D2), so this
+    /// holds the pair rather than a reference to a declaration.
+    Variant {
+        ty: String,
+        variant: String,
+        payload: Vec<Value>,
+    },
     /// A tuple, which is what a **pair** is
     /// ([ADR-176](../../../docs/specification/adr/adr-176.md) D1): a map the
     /// build can see is written `[("get", 1), ("post", 2)]`, and that needed no
@@ -272,6 +307,10 @@ impl<'a> BuildTime<'a> {
     fn expr(&mut self, expr: &Expr, frame: &BTreeMap<String, Value>) -> Result<Value, Refusal> {
         match expr {
             Expr::LitInt(value) => Ok(Value::Int(*value as i128)),
+            Expr::LitFloat(written) => written
+                .parse()
+                .map(Value::Float)
+                .map_err(|_| Refusal::Unevaluable),
             Expr::LitBool(value) => Ok(Value::Bool(*value)),
             Expr::LitStr(text) => decoded(text).map(Value::Text).ok_or(Refusal::Unevaluable),
             Expr::Tuple(parts) => {
@@ -286,6 +325,22 @@ impl<'a> BuildTime<'a> {
             // at build time worth having at all. A literal alone would be a
             // value somebody could have written down.
             Expr::LitInterpolated(literal) => self.interpolated(literal, frame),
+            // **A variant that carries nothing**: `Shade::Odd`, which is a
+            // value and not a call. The path arm below a call, one shape out.
+            Expr::Path(path) => {
+                let names: Vec<&str> = path.iter().map(|s| self.parsed.text(*s)).collect();
+                let [ty, variant] = names.as_slice() else {
+                    return Err(Refusal::Unevaluable);
+                };
+                match self.variant_of(ty, variant) {
+                    Some(()) => Ok(Value::Variant {
+                        ty: ty.to_string(),
+                        variant: variant.to_string(),
+                        payload: Vec::new(),
+                    }),
+                    None => Err(Refusal::Unevaluable),
+                }
+            }
             Expr::Variable(name) => {
                 let name = self.parsed.text(*name).to_string();
                 if let Some(held) = frame.get(&name) {
@@ -454,6 +509,23 @@ impl<'a> BuildTime<'a> {
                     return Err(Refusal::Unevaluable);
                 };
                 let (grammar, rule) = (grammar.to_string(), rule.to_string());
+                // **A variant with a payload is written the same way a grammar
+                // rule is called** — `Json::Number(1.5)` beside
+                // `Cfg::file(text)` — so the declaration decides which it is.
+                // An `enum` this program declares wins, because a grammar and
+                // an `enum` under one name is a name declared twice and
+                // `NK1148`'s to refuse, not this walk's.
+                if self.variant_of(&grammar, &rule).is_some() {
+                    let mut payload = Vec::with_capacity(args.len());
+                    for arg in args {
+                        payload.push(self.expr(arg, frame)?);
+                    }
+                    return Ok(Value::Variant {
+                        ty: grammar,
+                        variant: rule,
+                        payload,
+                    });
+                }
                 let [input] = args.as_slice() else {
                     return Err(Refusal::Unevaluable);
                 };
@@ -529,6 +601,28 @@ impl<'a> BuildTime<'a> {
                 BinaryOp::Mul => a.checked_mul(b).map(Value::Int),
                 BinaryOp::Div => a.checked_div(b).map(Value::Int),
                 BinaryOp::Rem => a.checked_rem(b).map(Value::Int),
+                BinaryOp::Eq => Some(Value::Bool(a == b)),
+                BinaryOp::Ne => Some(Value::Bool(a != b)),
+                BinaryOp::Lt => Some(Value::Bool(a < b)),
+                BinaryOp::Le => Some(Value::Bool(a <= b)),
+                BinaryOp::Gt => Some(Value::Bool(a > b)),
+                BinaryOp::Ge => Some(Value::Bool(a >= b)),
+                BinaryOp::And | BinaryOp::Or => None,
+            }
+            .ok_or(Refusal::Unevaluable),
+            // **Arithmetic over floats**, which has no `checked_` half: a
+            // float does not wrap, it reaches infinity or `NaN` — and what
+            // catches that is the spelling, because `float_literal` writes only
+            // a finite one. So `1.0 / 0.0` is not silently a `const` of
+            // something the source never named; it is a `comptime` this
+            // compiler says it cannot evaluate, and a `let` computes it while
+            // the program runs.
+            (Value::Float(a), Value::Float(b)) => match op {
+                BinaryOp::Add => Some(Value::Float(a + b)),
+                BinaryOp::Sub => Some(Value::Float(a - b)),
+                BinaryOp::Mul => Some(Value::Float(a * b)),
+                BinaryOp::Div => Some(Value::Float(a / b)),
+                BinaryOp::Rem => Some(Value::Float(a % b)),
                 BinaryOp::Eq => Some(Value::Bool(a == b)),
                 BinaryOp::Ne => Some(Value::Bool(a != b)),
                 BinaryOp::Lt => Some(Value::Bool(a < b)),
@@ -759,6 +853,27 @@ impl<'a> BuildTime<'a> {
                 why,
             }),
         }
+    }
+
+    /// Whether `ty::variant` names a variant of an `enum` this **program**
+    /// declares — this file or one beside it, which is the same reach a call
+    /// across a file boundary has (Part I 9.1).
+    fn variant_of(&self, ty: &str, variant: &str) -> Option<()> {
+        std::iter::once(self.parsed)
+            .chain(self.beside.iter().copied())
+            .find_map(|parsed| {
+                parsed
+                    .program
+                    .items
+                    .iter()
+                    .find_map(|item| match &item.node {
+                        Item::Enum { name, variants, .. } if parsed.text(*name) == ty => variants
+                            .iter()
+                            .any(|held| parsed.text(held.name) == variant)
+                            .then_some(()),
+                        _ => None,
+                    })
+            })
     }
 
     /// The file a grammar was declared in, and what its `pub` rule hands back.

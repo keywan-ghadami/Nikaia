@@ -181,25 +181,124 @@ fn invalid_input_fails_the_build_in_the_parsers_own_words() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// **A result with no build-time form is refused before a parser is compiled.**
+/// A grammar whose rule hands back an **`enum`**, with the four shapes a
+/// variant can be: no payload, text, a float, and two things at once.
+const SHADES: &str = "enum Shade { Odd, Even, Named(&str), Weight(f64) }\n\
+     \n\
+     grammar Pick {\n\
+     \x20   rule WSE = multispace1 -> { }\n\
+     \x20   rule WS = WSE* -> { }\n\
+     \x20   rule NUM -> f64 = n:dec[f64](text(digit+ (\".\" digit+)?)) -> { n }\n\
+     \x20   rule ONE -> Shade = \"odd\" -> { Shade::Odd }\n\
+     \x20   rule TWO -> Shade = \"even\" -> { Shade::Even }\n\
+     \x20   rule THREE -> Shade = \"n:\" s:raw_ident -> { Shade::Named(s) }\n\
+     \x20   rule FOUR -> Shade = \"w:\" n:NUM -> { Shade::Weight(n) }\n\
+     \x20   rule SHADE -> Shade = s:(ONE | TWO | THREE | FOUR) -> { s }\n\
+     \x20   pub rule many -> Vec[Shade] = shades:SHADE* -> { shades }\n\
+     }\n";
+
+/// **An `enum` crosses, by the variant the value *is*.**
 ///
-/// What a `comptime` hands the program has to cross
-/// ([ADR-079](../../../docs/specification/adr/adr-079.md) D1), and an `enum`
-/// variant has no shape among the five a build-time value has. The sentence
-/// says *that* rather than something about `const`, which holds a Rust enum
-/// perfectly well — the absence is this compiler's value, not the language
-/// below's.
+/// This was refused by name until 0.0.125, and the sentence it was refused
+/// with was true of this compiler rather than of the language below: Rust
+/// holds a `const S: Shade = Shade::Odd` perfectly well. What was missing was
+/// a build-time value with a variant in it
+/// ([ADR-079](../../../docs/specification/adr/adr-079.md) D1's set), and with
+/// one the dump is a `match` the generator writes an arm per variant of.
+///
+/// The test **runs** the program, because that is the only thing that says
+/// the arm bound the payload the parser actually built: a `const` compared
+/// against a string would pass for a dumper that wrote the first variant every
+/// time.
 #[test]
-fn a_result_with_no_build_time_form_is_refused_by_name() {
-    let (dir, reads) = workshop("grammar-no-form");
-    let source = "enum Shade { Odd, Even }\n\
+fn an_enum_crosses_from_a_grammar_by_the_variant_the_value_is() {
+    let (dir, reads) = workshop("grammar-enum");
+    let source = format!(
+        "{SHADES}\n\
+         comptime SHADES: Array[Shade, 4] = Pick::many(\"odd even n:blue w:2.5\")\n\
+         \n\
+         fn main() {{\n\
+         \x20   for s in SHADES {{\n\
+         \x20       match s {{\n\
+         \x20           Shade::Odd => {{ println(\"odd\") }}\n\
+         \x20           Shade::Even => {{ println(\"even\") }}\n\
+         \x20           Shade::Named(n) => {{ println(f\"named {{n}}\") }}\n\
+         \x20           Shade::Weight(w) => {{ println(f\"weight {{w}}\") }}\n\
+         \x20       }}\n\
+         \x20   }}\n\
+         }}"
+    );
+    assert!(
+        findings_in(&source, &reads).is_empty(),
+        "{:#?}",
+        findings_in(&source, &reads)
+    );
+
+    let parsed = parse_to_ast(&source).expect("parses");
+    let rust = nikaia::emit::emit_program_reading(&parsed, Default::default(), &reads)
+        .expect("lowers")
+        .rust;
+    assert!(
+        rust.contains(
+            "const SHADES: [Shade; 4] = [Shade::Odd, Shade::Even, Shade::Named(\"blue\"), \
+             Shade::Weight(2.5)];"
+        ),
+        "{rust}"
+    );
+
+    assert_eq!(
+        run(&dir, &reads, &source),
+        "odd\neven\nnamed blue\nweight 2.5\n"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **And a float crosses as itself**, which was the other half of the same
+/// absence.
+///
+/// The dump writes it with `{:?}` rather than `{}` — Rust's `Debug` for a
+/// float is the shortest text that reads back as the same bits, and what this
+/// build hands the program has to be the number the parser had, not a rounding
+/// of it.
+#[test]
+fn a_float_crosses_from_a_grammar_as_the_bits_the_parser_had() {
+    let (dir, reads) = workshop("grammar-float");
+    let source = "grammar Num {\n\
+         \x20   rule WS = multispace0 -> { }\n\
+         \x20   pub rule one -> f64 = n:dec[f64](text(digit+ (\".\" digit+)?)) -> { n }\n\
+         }\n\
+         \n\
+         comptime N: f64 = Num::one(\"0.1\")\n\
+         \n\
+         fn main() { println(f\"{N}\") }";
+    assert!(
+        findings_in(source, &reads).is_empty(),
+        "{:#?}",
+        findings_in(source, &reads)
+    );
+    assert_eq!(run(&dir, &reads, source), "0.1\n");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **A shape with no crossed form is still refused before a parser is
+/// compiled**, and 0.0.125 moved where that line is rather than removing it.
+///
+/// A variant with **named** fields is the one an `enum` still cannot cross as:
+/// a build-time value carries a variant's payload by position, and whether a
+/// named-field variant should carry a field map is a question nobody has
+/// answered. The sentence says *that* — a shape nobody has decided — rather
+/// than something about `const`, which holds `Shape::Spot { x: 1 }` fine.
+#[test]
+fn a_variant_with_named_fields_is_refused_by_name() {
+    let (dir, reads) = workshop("grammar-named-variant");
+    let source = "enum Shape { Spot { x: i64 } }\n\
          \n\
          grammar Pick {\n\
          \x20   rule WS = multispace0 -> { }\n\
-         \x20   pub rule one -> Shade = \"odd\" -> { Shade::Odd }\n\
+         \x20   pub rule one -> Shape = \"spot\" -> { Shape::Spot { x: 1 } }\n\
          }\n\
          \n\
-         comptime CHOICE: Shade = Pick::one(\"odd\")\n\
+         comptime CHOICE: Shape = Pick::one(\"spot\")\n\
          \n\
          fn main() { println(\"hi\") }";
     let found = one(source, &reads);
@@ -210,32 +309,7 @@ fn a_result_with_no_build_time_form_is_refused_by_name() {
         found.message
     );
     assert!(
-        found.notes[0].contains("is an `enum`"),
-        "{:#?}",
-        found.notes
-    );
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-/// **And a float is the same absence**, which the message has to say
-/// differently: Rust holds a `const X: f64` happily, so *a `const` cannot hold
-/// one* would be a false sentence. What there is no room for is a float in the
-/// value this compiler carries.
-#[test]
-fn a_float_result_is_refused_for_the_right_reason() {
-    let (dir, reads) = workshop("grammar-float");
-    let source = "grammar Num {\n\
-         \x20   rule WS = multispace0 -> { }\n\
-         \x20   pub rule one -> f64 = n:float -> { n }\n\
-         }\n\
-         \n\
-         comptime N: f64 = Num::one(\"1.5\")\n\
-         \n\
-         fn main() { println(\"hi\") }";
-    let found = one(source, &reads);
-    assert_eq!(found.code, "NK1178");
-    assert!(
-        found.notes[0].contains("no float among them"),
+        found.notes[0].contains("named") && found.notes[0].contains("by position"),
         "{:#?}",
         found.notes
     );
@@ -266,7 +340,7 @@ fn a_build_with_nowhere_to_build_says_so() {
 /// warning about. This is the cheap half of holding them together, and the
 /// running tests above are the half that counts.
 #[test]
-fn the_decoder_reads_the_five_shapes() {
+fn the_decoder_reads_every_shape_the_dumper_writes() {
     use nikaia::build_time::Value;
     use nikaia::grammar_run::decode;
 
@@ -279,6 +353,27 @@ fn the_decoder_reads_the_five_shapes() {
     assert_eq!(
         decode("(l (i 1) (i 2))").expect("a list"),
         Value::List(vec![Value::Int(1), Value::Int(2)])
+    );
+    assert_eq!(decode("(f 1.5)").expect("a float"), Value::Float(1.5));
+    // **The variant and its type are two words**, and the one defect this
+    // decoder had was reading the second from where the first ended: `(v Shade
+    // Odd)` came back as a variant with no name, and the payload loop then met
+    // an `O`. The shape below is the one the generated dumper writes.
+    assert_eq!(
+        decode("(v Shade Odd)").expect("a unit variant"),
+        Value::Variant {
+            ty: "Shade".to_string(),
+            variant: "Odd".to_string(),
+            payload: Vec::new(),
+        }
+    );
+    assert_eq!(
+        decode("(v Shape Pair (i 7) (s \"x\"))").expect("a variant with a payload"),
+        Value::Variant {
+            ty: "Shape".to_string(),
+            variant: "Pair".to_string(),
+            payload: vec![Value::Int(7), Value::Text("x".to_string())],
+        }
     );
     let Value::Struct { name, fields } =
         decode("(t Setting (key (s \"a\")) (value (i 1)))").expect("a struct")

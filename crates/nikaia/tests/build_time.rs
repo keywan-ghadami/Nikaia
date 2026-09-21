@@ -899,3 +899,193 @@ fn a_ring_of_constants_is_refused_once_and_named() {
         rings[0].notes
     );
 }
+
+/// **A float is a build-time value** (0.0.125).
+///
+/// It was not, and the absence was invisible from the outside: `comptime R =
+/// 1.5` had nothing to evaluate to, so a `comptime` with a float anywhere in it
+/// was `NK1127` — *this compiler cannot evaluate it* — for a value the language
+/// below writes as `const R: f64 = 1.5;`.
+///
+/// **The literal is written with `{:?}` and not `{}`**, because Rust's `Debug`
+/// for a float is the shortest text that reads back as the same bits. `0.1` is
+/// the case that says so: `{}` and `{:?}` agree here, and they stop agreeing
+/// the moment arithmetic has run.
+#[test]
+fn a_float_crosses_as_the_bits_the_build_had() {
+    let source = "fn half(n: f64) -> f64 { return n / 2.0 }\n\
+                  comptime R: f64 = 1.5\n\
+                  comptime H: f64 = half(R)\n\
+                  fn main() { println(f\"{R} {H}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(rust.contains("const R: f64 = 1.5;"), "{rust}");
+    assert!(rust.contains("const H: f64 = 0.75;"), "{rust}");
+    assert_eq!(ran("a float that crosses", source).trim(), "1.5 0.75");
+}
+
+/// **A list of lists crosses as an array of arrays** (0.0.125).
+///
+/// `rust_array_type` read the first element and asked what *it* was, and the
+/// answer for a list was nothing — so `[[1, 2], [3, 4]]` was `NK1127` while
+/// `[1, 2, 3]` had crossed since [ADR-079](../../../docs/specification/adr/adr-079.md)
+/// D1. One recursion, and the rule is the same at every depth.
+#[test]
+fn a_nested_list_crosses_as_a_nested_array() {
+    let source = "comptime GRID: Array[Array[i64, 2], 2] = [[1, 2], [3, 4]]\n\
+                  fn main() { println(f\"{GRID[1][0]}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const GRID: [[i64; 2]; 2] = [[1, 2], [3, 4]];"),
+        "{}",
+        lowered(source)
+    );
+    assert_eq!(ran("a nested array", source).trim(), "3");
+}
+
+/// **And a `struct` may hold one** (0.0.125).
+///
+/// A field declared `Array[T, N]` was refused by the walk that asks whether a
+/// field can be written as a `const` — it read `Array` as a type the language
+/// below has no constant form for, which is the opposite of true. The check is
+/// now the same recursion the value takes.
+#[test]
+fn a_struct_field_may_be_a_fixed_array() {
+    let source = "struct Row { a: i64, b: i64 }\n\
+                  struct Holder { rows: Array[Row, 2] }\n\
+                  comptime HELD: Holder = Holder { rows: [Row { a: 1, b: 2 }, Row { a: 3, b: 4 }] }\n\
+                  fn main() { println(f\"{HELD.rows[1].a}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains(
+            "const HELD: Holder = Holder { rows: [Row { a: 1, b: 2 }, Row { a: 3, b: 4 }] };"
+        ),
+        "{}",
+        lowered(source)
+    );
+    assert_eq!(ran("a struct holding an array", source).trim(), "3");
+}
+
+/// **An `enum` crosses, by the variant the value *is*** (0.0.125).
+///
+/// A variant had no build-time value at all, so `comptime PICK = Shade::Odd`
+/// was `NK1127` for a line Rust writes as `const PICK: Shade = Shade::Odd;`.
+/// The four shapes are here at once: no payload, a float, two things at a time,
+/// and a variant inside an array — because what a variant carries is the part
+/// this has to get right, and a test with one variant in it would pass for a
+/// compiler that wrote the first one every time.
+#[test]
+fn an_enum_variant_crosses_with_what_it_carries() {
+    let source = "enum Shape { Empty, Num(f64), Pair(i64, &str) }\n\
+                  comptime A: Shape = Shape::Num(1.5)\n\
+                  comptime B: Shape = Shape::Pair(7, \"x\")\n\
+                  comptime C: Array[Shape, 2] = [Shape::Empty, Shape::Num(2.0)]\n\
+                  fn main() {\n\
+                  \x20   match B {\n\
+                  \x20       Shape::Pair(n, s) => { println(f\"{n}{s}\") }\n\
+                  \x20       else => { println(\"other\") }\n\
+                  \x20   }\n\
+                  \x20   match A {\n\
+                  \x20       Shape::Num(v) => { println(f\"{v}\") }\n\
+                  \x20       else => { println(\"other\") }\n\
+                  \x20   }\n\
+                  \x20   println(f\"{C.len()}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(rust.contains("const A: Shape = Shape::Num(1.5);"), "{rust}");
+    assert!(
+        rust.contains("const B: Shape = Shape::Pair(7, \"x\");"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("const C: [Shape; 2] = [Shape::Empty, Shape::Num(2.0)];"),
+        "{rust}"
+    );
+    assert_eq!(ran("an enum that crosses", source).trim(), "7x\n1.5\n2");
+}
+
+/// **`NK1167` asks the value and not the type**, which is what an `enum` makes
+/// unavoidable.
+///
+/// `Shape::Empty` is a `const` and `Shape::Many([1, 2])` is not, and the two
+/// are the same `Shape` — so a walk over the declared *type* has no answer to
+/// give. Without this the second one lowered and `rustc` answered about the
+/// generated file, which is [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s
+/// class.
+///
+/// The sentence names the **variant**, because what a reader changes is that
+/// variant's declaration — and it says the rest of the `enum` is fine, because
+/// it is.
+#[test]
+fn a_variant_that_owns_memory_is_refused_by_name() {
+    let found = findings(
+        "enum Shape { Empty, Many(Vec[i64]) }\n\
+         comptime M: Shape = Shape::Many([1, 2])\n\
+         fn main() { println(\"hi\") }\n",
+    );
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1167");
+    assert!(
+        found[0]
+            .message
+            .contains("`Shape::Many` carries a `Vec[i64]`"),
+        "{}",
+        found[0].message
+    );
+    assert!(
+        found[0].notes[0].contains("Another variant of the same `enum` may cross"),
+        "{:#?}",
+        found[0].notes
+    );
+}
+
+/// **A variant with named fields wears a struct literal, and it is its `enum`**
+/// (0.0.125).
+///
+/// `Shape::Spot { x: 1 }` typed as `Shape::Spot`, which is not a type any
+/// declaration can be written as — so a correct function was `NK1104`, *hands
+/// back `Shape::Spot` and declares `Shape`*, with a way out that cannot be
+/// taken ([Part III C.2](../../../docs/specification/30-nikaia-tooling.md)).
+/// Its fields went unchecked in the same breath, because nothing had them
+/// under that name.
+#[test]
+fn a_variant_with_named_fields_is_its_enum() {
+    let source = "enum Shape { Dot, Spot { x: i64 } }\n\
+                  fn make() -> Shape { return Shape::Spot { x: 3 } }\n\
+                  comptime S: Shape = Shape::Spot { x: 4 }\n\
+                  fn main() {\n\
+                  \x20   match make() {\n\
+                  \x20       Shape::Spot { x } => { println(f\"{x}\") }\n\
+                  \x20       else => { println(\"dot\") }\n\
+                  \x20   }\n\
+                  \x20   match S {\n\
+                  \x20       Shape::Spot { x } => { println(f\"{x}\") }\n\
+                  \x20       else => { println(\"dot\") }\n\
+                  \x20   }\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const S: Shape = Shape::Spot { x: 4 };"),
+        "{}",
+        lowered(source)
+    );
+    assert_eq!(ran("a named-field variant", source).trim(), "3\n4");
+}
+
+/// …and its fields are checked, which is the half that was silent.
+#[test]
+fn a_variant_field_of_the_wrong_type_is_refused() {
+    let found = findings(
+        "enum Shape { Dot, Spot { x: i64 } }\n\
+         fn make() -> Shape { return Shape::Spot { x: \"no\" } }\n\
+         fn main() { match make() { else => { println(\"hi\") } } }\n",
+    );
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1106");
+    assert!(
+        found[0].message.contains("`Shape::Spot.x` is `i64`"),
+        "{}",
+        found[0].message
+    );
+}

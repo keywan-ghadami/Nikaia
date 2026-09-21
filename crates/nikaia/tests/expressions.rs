@@ -101,8 +101,14 @@ fn a_postfix_leaves_a_plain_receiver_alone() {
     // The read is a call now ([ADR-161](../../../docs/specification/adr/adr-161.md)
     // D6) and the `*` around it is a place, so a postfix still needs no
     // parentheses of its own beyond the ones the read already has.
+    //
+    // **And the index is the literal itself**, not `index::at(0)`: `at`'s `I`
+    // has nothing to infer itself from, which is fine where the element is
+    // only read and is `cannot infer type` the moment a **field** is read on
+    // it (`tests/indexing.rs`). The write branch already had this exception
+    // and the read branch had never had it.
     assert!(
-        emitted.contains("(*nikaia_std::index::get(&xs, nikaia_std::index::at(0))).abs()"),
+        emitted.contains("(*nikaia_std::index::get(&xs, 0)).abs()"),
         "{emitted}"
     );
 }

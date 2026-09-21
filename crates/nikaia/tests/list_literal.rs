@@ -188,7 +188,7 @@ fn an_index_on_its_subjects_line_still_indexes() {
     // not a list literal of its own.
     assert!(rust.contains("nikaia_std::index::get(&xs,"), "{rust}");
     assert!(
-        rust.contains("let y = (*nikaia_std::index::get(&xs, nikaia_std::index::at(2)));"),
+        rust.contains("let y = (*nikaia_std::index::get(&xs, 2));"),
         "{rust}"
     );
 }

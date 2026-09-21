@@ -382,30 +382,54 @@ fn dump(parsed: &Parsed, ty: &Ty, expr: &str, depth: usize, out: &mut String) ->
             out.push_str(&format!("{pad}out.push(')');\n"));
             Ok(())
         }
-        // **A float has nothing to arrive as**, and that is the value's shape
-        // rather than the language below's: Rust holds `const X: f64` happily,
-        // and what a build-time value *is* does not include a float
-        // ([`crate::build_time::Value`]). Named here rather than falling into
-        // the sentence about fields, which would be about the wrong thing.
-        Ty::Named { name, .. } if name == "f32" || name == "f64" => Err(Wall::NoCrossedForm {
-            ty: ty.text(),
-            because: "a value this compiler holds while it builds is a whole number, a \
-                      `bool`, text, a list or a `struct` - there is no float among them, \
-                      so there is nothing for one to arrive as"
-                .to_string(),
-        }),
-        // **An enum is the same absence one shape over.** A variant carries a
-        // name this compiler would have to keep, and a build-time value has no
-        // room for one — which is a decision nobody has taken rather than a
-        // limit of the language below.
-        Ty::Named { name, .. } if declares_enum(parsed, name) => Err(Wall::NoCrossedForm {
-            ty: ty.text(),
-            because: format!(
-                "`{name}` is an `enum`, and a value this compiler holds while it builds has \
-                 no shape for a variant - a whole number, a `bool`, text, a list and a \
-                 `struct` are the five"
-            ),
-        }),
+        // **`{:?}` and not `{}`**, because Rust's `Debug` for a float is the
+        // shortest text that reads back as the same bits — which is what the
+        // decoder then parses, and what a `const` is written from.
+        Ty::Named { name, .. } if name == "f32" || name == "f64" => {
+            out.push_str(&format!(
+                "{pad}out.push_str(&format!(\"(f {{:?}})\", {expr}));\n"
+            ));
+            Ok(())
+        }
+        // **An `enum`, by the variant the value *is*.** A declaration cannot
+        // say which one that is, so the dump is a `match` and the generator
+        // writes an arm per variant.
+        Ty::Named { name, .. } if variants_of(parsed, name).is_some() => {
+            let variants = variants_of(parsed, name).expect("just asked");
+            out.push_str(&format!("{pad}match {expr} {{\n"));
+            for (variant, carried, named) in variants {
+                if named {
+                    return Err(Wall::NoCrossedForm {
+                        ty: ty.text(),
+                        because: format!(
+                            "`{name}::{variant}` carries **named** fields, and a value this \
+                             compiler holds while it builds carries a variant's payload by \
+                             position - which is a shape nobody has decided yet rather than \
+                             one the language below lacks"
+                        ),
+                    });
+                }
+                let bound: Vec<String> = (0..carried.len())
+                    .map(|at| format!("__nikaia_p{at}"))
+                    .collect();
+                let pattern = match carried.is_empty() {
+                    true => format!("{name}::{variant}"),
+                    false => format!("{name}::{variant}({})", bound.join(", ")),
+                };
+                out.push_str(&format!("{pad}    {pattern} => {{\n"));
+                out.push_str(&format!(
+                    "{pad}        out.push_str(\"(v {name} {variant}\");\n"
+                ));
+                for (held, bound) in carried.iter().zip(&bound) {
+                    out.push_str(&format!("{pad}        out.push(' ');\n"));
+                    dump(parsed, held, bound, depth + 2, out)?;
+                }
+                out.push_str(&format!("{pad}        out.push(')');\n"));
+                out.push_str(&format!("{pad}    }}\n"));
+            }
+            out.push_str(&format!("{pad}}}\n"));
+            Ok(())
+        }
         // A `struct` this program declares, field by field. The order is the
         // declaration's, which is what the decoder reads back.
         Ty::Named { name, .. } => {
@@ -445,10 +469,10 @@ fn dump(parsed: &Parsed, ty: &Ty, expr: &str, depth: usize, out: &mut String) ->
 
 /// Whether a name is one of the whole numbers, which cross as themselves.
 ///
-/// **`f32` and `f64` are not here**, and that is not an oversight: what a
-/// build-time value is does not include a float
-/// ([`crate::build_time::Value`]), so a rule that hands one back has nothing to
-/// arrive as and is refused by name.
+/// **`f32` and `f64` are not here**, and that is not an absence: a float is a
+/// build-time value of its own ([`crate::build_time::Value::Float`]) and the
+/// arm below writes it with `{:?}`, because the shortest text that reads back
+/// as the same bits is not the text `{}` gives.
 fn is_whole(name: &str) -> bool {
     matches!(
         name,
@@ -456,11 +480,39 @@ fn is_whole(name: &str) -> bool {
     )
 }
 
-/// Whether this program declares `name` with `enum`.
-fn declares_enum(parsed: &Parsed, name: &str) -> bool {
-    parsed.program.items.iter().any(|item| {
-        matches!(&item.node, Item::Enum { name: declared, .. } if parsed.text(*declared) == name)
-    })
+/// The variants of an `enum` this program declares: the name, what it carries
+/// by position, and whether the declaration named those fields.
+fn variants_of(parsed: &Parsed, name: &str) -> Option<Vec<(String, Vec<Ty>, bool)>> {
+    parsed
+        .program
+        .items
+        .iter()
+        .find_map(|item| match &item.node {
+            Item::Enum {
+                name: declared,
+                variants,
+                ..
+            } if parsed.text(*declared) == name => Some(
+                variants
+                    .iter()
+                    .map(|held| {
+                        let (carried, named) = match &held.fields {
+                            crate::ast::VariantFields::Unit => (Vec::new(), false),
+                            crate::ast::VariantFields::Tuple(types) => (
+                                types.iter().map(|t| Ty::from_ast(parsed, t)).collect(),
+                                false,
+                            ),
+                            crate::ast::VariantFields::Named(fields) => (
+                                fields.iter().map(|f| Ty::from_ast(parsed, &f.ty)).collect(),
+                                true,
+                            ),
+                        };
+                        (parsed.text(held.name).to_string(), carried, named)
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })
 }
 
 /// The fields of a `struct` this program declares, in declaration order.
@@ -497,8 +549,15 @@ fn fields_of(parsed: &Parsed, name: &str) -> Option<Vec<(String, Ty)>> {
 /// decoder that agreed with a generator it never met would prove nothing.
 ///
 /// The form is s-expressions, one per shape a build-time value has:
-/// `(i 42)`, `(b true)`, `(s "…")`, `(l …)` and `(t Name (field …) …)`. Text
-/// carries Rust's escapes, which is the set the rest of this compiler reads.
+/// `(i 42)`, `(f 1.5)`, `(b true)`, `(s "…")`, `(l …)`, `(t Name (field …) …)`
+/// and `(v Ty Variant …)`. Text carries Rust's escapes, which is the set the
+/// rest of this compiler reads.
+///
+/// **A variant's tag is two words and not one**, which is the whole of what
+/// the one defect here was: `(v Shade Odd)` read the type and then read the
+/// variant from the *same* position, so the variant came back empty and the
+/// payload loop met an `O`. A separator between two words has to be skipped by
+/// whoever reads the second one.
 pub fn decode(text: &str) -> Result<crate::build_time::Value, Wall> {
     let mut at = text.char_indices().peekable();
     let value = read(text, &mut at)?;
@@ -520,7 +579,31 @@ fn read(text: &str, at: &mut Cursor<'_>) -> Result<crate::build_time::Value, Wal
                 detail: format!("`{digits}` is not a whole number"),
             })?)
         }
+        "f" => {
+            let written = word(text, at);
+            crate::build_time::Value::Float(written.parse().map_err(|_| Wall::Unreadable {
+                detail: format!("`{written}` is not a number"),
+            })?)
+        }
         "b" => crate::build_time::Value::Bool(word(text, at) == "true"),
+        "v" => {
+            let ty = word(text, at);
+            skip_blanks(at);
+            let variant = word(text, at);
+            let mut payload = Vec::new();
+            loop {
+                skip_blanks(at);
+                match at.peek() {
+                    Some((_, ')')) | None => break,
+                    _ => payload.push(read(text, at)?),
+                }
+            }
+            crate::build_time::Value::Variant {
+                ty,
+                variant,
+                payload,
+            }
+        }
         "s" => crate::build_time::Value::Text(quoted(at)?),
         "l" => {
             let mut items = Vec::new();

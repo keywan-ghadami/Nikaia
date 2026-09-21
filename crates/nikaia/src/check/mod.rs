@@ -573,6 +573,7 @@ pub fn check_against<'a>(
         library,
         structs: BTreeMap::new(),
         enums: BTreeMap::new(),
+        variant_owner: BTreeMap::new(),
         grammars: parsed
             .program
             .items
@@ -1058,8 +1059,20 @@ pub fn propagation_against(
 /// the one Part I gives it, which is a decision rather than a mapping.
 fn rust_constant_type(ty: &Ty) -> Option<String> {
     match ty {
+        // **`u8` was missing**, which is the byte Part I 2.2 offers and the
+        // shape a **buffer** is written in: `comptime B: Array[u8, 3] = [1, 2,
+        // 3]` was `NK1127` — *this compiler cannot evaluate it* — for a line
+        // Rust writes as `const B: [u8; 3] = [1, 2, 3];`. A correct program
+        // refused ([Part III C.4](../../docs/specification/30-nikaia-tooling.md))
+        // with a sentence that was not about the program.
+        //
+        // The rest of the list is what it was. Widening it to every Rust
+        // integer would promise a surface Part I 2.2 does not offer, which is
+        // the reason `constant_fits` gives for its own range table.
         Ty::Named { name, args, view } if args.is_empty() && !*view => match name.as_str() {
-            "i32" | "i64" | "u32" | "u64" | "f32" | "f64" | "bool" | "char" => Some(name.clone()),
+            "i32" | "i64" | "u8" | "u32" | "u64" | "f32" | "f64" | "bool" | "char" => {
+                Some(name.clone())
+            }
             _ => None,
         },
         // **`&str` is the crossed form of text**
@@ -1120,6 +1133,10 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
                 Ok(_) => "i32".to_string(),
                 Err(_) => "i64".to_string(),
             },
+            // **A float is an `f64` where nothing declared otherwise**, which
+            // is Part I 2.4's widest-holder rule read over the one shape it
+            // has two of: `f32` is a *declaration*, never an inference.
+            build_time::Value::Float(_) => "f64".to_string(),
             // **Text is a view where it crosses**
             // ([ADR-079](../../docs/specification/adr/adr-079.md) D1), and an
             // array of it is an array of views: `[&str; N]`, which a `const`
@@ -1131,13 +1148,25 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
             // name. Whether the *fields* can be written is the declaration's
             // question, and `unwritable_field` asks it.
             build_time::Value::Struct { name, .. } => name.clone(),
-            // An array of arrays has a length per level and this reads one, so
-            // it says nothing rather than guessing.
-            build_time::Value::List(_)
+            // **A variant is its `enum`'s name below**, which is the struct's
+            // answer one shape over: the declaration is a type the language
+            // below has, and what a `const` needs is the name.
+            build_time::Value::Variant { ty, .. } => ty.clone(),
+            // **An array of arrays is `[[T; M]; N]`**, and the inner lengths
+            // have to agree — a length is part of the type
+            // ([ADR-152](../../docs/specification/adr/adr-152.md) D4), so a
+            // list of rows that are not the same length is not a list of one
+            // type and there is nothing to write. Refused by saying nothing,
+            // which reaches `NK1127`; the *value* is fine and it is the
+            // **crossing** that has no shape for it.
+            build_time::Value::List(inner) => {
+                let held = rust_array_type(inner)?;
+                format!("[{held}; {}]", inner.len())
+            }
             // A tuple's `const` form is the pair it is, and the only place one
             // stands is inside a `Fixed` — where the two halves are written
             // into two tables rather than beside each other.
-            | build_time::Value::Tuple(_) => return None,
+            build_time::Value::Tuple(_) => return None,
         };
         match &found {
             // `[1, 3_000_000_000]` is an `i64` array and not a mixed one: the
@@ -1160,12 +1189,29 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
 fn rust_value(value: &build_time::Value) -> Option<String> {
     match value {
         build_time::Value::Int(n) => Some(n.to_string()),
+        build_time::Value::Float(n) => float_literal(*n),
         build_time::Value::Bool(yes) => Some(yes.to_string()),
         build_time::Value::Text(text) => Some(format!("\"{}\"", build_time::written(text))),
         // A tuple has no `const` form of its own: the one place a pair stands
         // is inside a `Fixed`, which writes its halves into two tables rather
         // than beside each other (ADR-176 D2).
         build_time::Value::Tuple(_) => None,
+        // `Shade::Odd`, and `Json::Number(1.5)` where it carries something —
+        // which is what a program writes, so it is what a `const` holds.
+        build_time::Value::Variant {
+            ty,
+            variant,
+            payload,
+        } => {
+            if payload.is_empty() {
+                return Some(format!("{ty}::{variant}"));
+            }
+            let mut written = Vec::with_capacity(payload.len());
+            for held in payload {
+                written.push(rust_value(held)?);
+            }
+            Some(format!("{ty}::{variant}({})", written.join(", ")))
+        }
         build_time::Value::Struct { name, fields } => {
             let mut written = Vec::with_capacity(fields.len());
             for (field, held) in fields {
@@ -1193,12 +1239,18 @@ fn rust_array_value(items: &[build_time::Value]) -> Option<String> {
     for item in items {
         written.push(match item {
             build_time::Value::Int(value) => value.to_string(),
+            build_time::Value::Float(value) => float_literal(*value)?,
             build_time::Value::Bool(yes) => yes.to_string(),
             // The same literal the single text crosses as, element for element.
             build_time::Value::Text(text) => format!("\"{}\"", build_time::written(text)),
-            // …and a struct is the literal `rust_value` writes for one.
-            value @ build_time::Value::Struct { .. } => rust_value(value)?,
-            build_time::Value::List(_) | build_time::Value::Tuple(_) => return None,
+            // …and a struct, or a variant, is the literal `rust_value` writes.
+            value @ (build_time::Value::Struct { .. } | build_time::Value::Variant { .. }) => {
+                rust_value(value)?
+            }
+            // An array of arrays, element for element — the type above says
+            // the lengths agree, and this writes them.
+            build_time::Value::List(inner) => rust_array_value(inner)?,
+            build_time::Value::Tuple(_) => return None,
         });
     }
     Some(format!("[{}]", written.join(", ")))
@@ -1347,6 +1399,13 @@ struct Checker<'a> {
     structs: BTreeMap<String, Vec<FieldContract>>,
     /// Every enum declared here, with its variant names.
     enums: BTreeMap<String, BTreeSet<String>>,
+    /// `Shape::Spot` → `Shape`, for every variant that carries **named**
+    /// fields — the ones a struct literal builds.
+    ///
+    /// Two facts at one key: that this name is a variant and not a type, and
+    /// which `enum` a literal for it has. [`Self::structs`] holds its fields
+    /// under the same key, so one field check serves both shapes.
+    variant_owner: BTreeMap<String, String>,
     /// Every **grammar** declared here, with the names of its `pub` rules
     /// ([ADR-082](../../docs/specification/adr/adr-082.md) D1, D2).
     ///
@@ -1837,6 +1896,36 @@ impl<'a> Checker<'a> {
                         .collect();
                     for name in &named {
                         self.nameable(name, &item.span, "a variant");
+                    }
+                    // **A variant with named fields wears a struct literal**,
+                    // and until this was here nothing read it: `Shape::Spot {
+                    // x: 1 }` found no fields, so every field went unchecked,
+                    // and the literal's *type* came out as `Shape::Spot` -
+                    // which no declaration can be written as, so a correct
+                    // program was refused with a way out that cannot be taken
+                    // ([Part III C.2](../../docs/specification/30-nikaia-tooling.md)
+                    // and C.4 at once).
+                    //
+                    // The fields go in the same map a `struct`'s do, under the
+                    // qualified key, so `fields_of` answers for both and there
+                    // is one field check rather than two. **`pub` is not asked
+                    // of them**: a variant carries no visibility word, so its
+                    // fields are as reachable as the `enum` is (Part I 9.2).
+                    for variant in variants {
+                        let ast::VariantFields::Named(fields) = &variant.fields else {
+                            continue;
+                        };
+                        let held: Vec<FieldContract> = fields
+                            .iter()
+                            .map(|f| FieldContract {
+                                name: self.parsed.text(f.name).to_string(),
+                                ty: self.declared(&f.ty, &f.span),
+                                public: true,
+                            })
+                            .collect();
+                        let key = format!("{own}::{}", self.parsed.text(variant.name));
+                        self.variant_owner.insert(key.clone(), own.clone());
+                        self.structs.insert(key, held);
                     }
                     let variants = variants
                         .iter()
@@ -3825,9 +3914,12 @@ impl<'a> Checker<'a> {
     /// asked too. That is the one case `rustc` refused about the generated file
     /// with *"attempt to compute `i32::MAX + 1_i32`"*.
     ///
-    /// **Only the two integer types Part I 2.2 offers.** `u32` and the rest are
-    /// accepted by the compiler below and not offered here, so a range for them
-    /// would be a claim about a surface that is not promised.
+    /// **Only the integer types Part I 2.2 offers** — `i64`, `i32` and `u8`.
+    /// `u32` and the rest are accepted by the compiler below and not offered
+    /// here, so a range for them would be a claim about a surface that is not
+    /// promised. The byte joined the list the day it gained a `const` form: a
+    /// range that is not checked is `rustc` about the generated file the first
+    /// time somebody writes one.
     fn constant_fits(&mut self, value: &Expr, want: Option<&Ty>, span: &Span) {
         let Some(folded) = self.constant_of(value) else {
             return;
@@ -3851,6 +3943,11 @@ impl<'a> Checker<'a> {
         let fits = match ty.as_str() {
             "i32" => i32::try_from(folded.value).is_ok(),
             "i64" => i64::try_from(folded.value).is_ok(),
+            // **And the byte**, which needed no range here while it had no
+            // crossed form: once `const B: u8 = …` is something this compiler
+            // writes, `let x: u8 = 300` writing it is `rustc` about the
+            // generated file ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+            "u8" => u8::try_from(folded.value).is_ok(),
             _ => return,
         };
         if fits {
@@ -3858,6 +3955,7 @@ impl<'a> Checker<'a> {
         }
         let (low, high) = match ty.as_str() {
             "i32" => (i32::MIN as i128, i32::MAX as i128),
+            "u8" => (u8::MIN as i128, u8::MAX as i128),
             _ => (i64::MIN as i128, i64::MAX as i128),
         };
         // A bare literal says its own digits; anything folded says what it came
@@ -3875,9 +3973,22 @@ impl<'a> Checker<'a> {
             span: span.clone(),
             code: "NK1116",
             message,
-            notes: vec![format!("an `{ty}` holds {low} to {high} (Part I, 2.2)")],
+            // **`a u8` and `an i32`**, because the article is read off how the
+            // name is *said*: a reader says "you-eight" and "eye-thirty-two",
+            // and `an u8` is the kind of sentence that makes a message look
+            // generated.
+            notes: vec![format!(
+                "{} `{ty}` holds {low} to {high} (Part I, 2.2)",
+                match ty.starts_with('i') {
+                    true => "an",
+                    false => "a",
+                }
+            )],
             help: Some(match ty.as_str() {
                 "i32" => "write `i64` where the number needs it".to_string(),
+                "u8" => "a `u8` is one byte, so write `i32` or `i64` where the number \
+                         is a count rather than a byte"
+                    .to_string(),
                 _ => "an `i64` is the widest number this language has, so this \
                       computation has to be arranged to stay inside it"
                     .to_string(),
@@ -5109,6 +5220,15 @@ impl<'a> Checker<'a> {
                         }
                         None => self.no_such_field(&name, &field, declared, span),
                     }
+                }
+                // **A variant's literal is its `enum`** and not the variant:
+                // `Shape` is a type a declaration can be written as and
+                // `Shape::Spot` is not, so answering the latter refused a
+                // correct program with a way out nobody can take (Part III
+                // C.4). The map is built where the `enum` is read, so the
+                // literal and the pattern agree by construction.
+                if let Some(owner) = self.variant_owner.get(&name) {
+                    return Ty::named(owner.clone());
                 }
                 match self.struct_parameters.get(&name) {
                     Some(order) => {
@@ -9321,11 +9441,17 @@ impl<'a> Checker<'a> {
     /// it asks the declaration.
     fn declared_below(&self, ty: &Ty) -> Option<String> {
         match ty {
+            // A `struct` or an `enum` this program declares: both are types the
+            // generated file has, under the same name.
             Ty::Named {
                 name,
                 args,
                 view: false,
-            } if args.is_empty() && self.fields_of(name).is_some() => Some(name.clone()),
+            } if args.is_empty()
+                && (self.fields_of(name).is_some() || self.enums.contains_key(name)) =>
+            {
+                Some(name.clone())
+            }
             Ty::Named {
                 name,
                 args,
@@ -9358,8 +9484,15 @@ impl<'a> Checker<'a> {
             return None;
         };
         self.fields_of(name)?.into_iter().find_map(|field| {
-            if rust_constant_type(&field.ty).is_some() {
-                return None;
+            // **The types Part I 2.2 offers, and the ones this program
+            // declares.** `rust_constant_type` knows the first set and cannot
+            // know the second — it has no program to ask — so an
+            // `Array[Row, 2]` used to be refused although `[Row; 2]` is exactly
+            // the one aggregate a `const` holds.
+            if rust_constant_type(&field.ty).is_some() || self.declared_below(&field.ty).is_some() {
+                // …and a declared type is only as writable as *its* fields,
+                // which is the same question one level in.
+                return self.unwritable_field(&self.element_of(&field.ty));
             }
             // A field that is itself a declared `struct` is fine where *its*
             // fields are, which is the same question one level in.
@@ -9372,6 +9505,84 @@ impl<'a> Checker<'a> {
         })
     }
 
+    /// What an `Array[T, N]` holds, and the type itself where it is not one.
+    ///
+    /// One step, because that is what the question above needs: whether the
+    /// fields of what a field *holds* can be written.
+    fn element_of(&self, ty: &Ty) -> Ty {
+        match ty {
+            Ty::Named { name, args, .. } if name == ty::ARRAY => {
+                args.first().cloned().unwrap_or_else(|| ty.clone())
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    /// **The first part of a computed value the language below cannot write**,
+    /// as the **declaration** at that position says
+    /// ([ADR-079](../../docs/specification/adr/adr-079.md) D2).
+    ///
+    /// [`Checker::unwritable_field`] asks a *type*, which is right for a
+    /// `struct`: every field is there whichever value it holds. An `enum` is
+    /// not like that — `Shape::Empty` is a `const` and `Shape::Many([1, 2])` is
+    /// not, and the two have the same declared type — so the variant has to be
+    /// read off the **value**, and the walk follows it down.
+    ///
+    /// Hands back *where* and *what*: `Shape::Many` and `Vec[i64]`.
+    fn unwritable_in(&self, value: &build_time::Value) -> Option<(String, String)> {
+        match value {
+            build_time::Value::Struct { name, fields } => self
+                .unwritable_field(&Ty::named(name.clone()))
+                .or_else(|| fields.values().find_map(|held| self.unwritable_in(held))),
+            build_time::Value::Variant {
+                ty,
+                variant,
+                payload,
+            } => self
+                .unwritable_payload(ty, variant)
+                .or_else(|| payload.iter().find_map(|held| self.unwritable_in(held))),
+            build_time::Value::List(items) => {
+                items.iter().find_map(|held| self.unwritable_in(held))
+            }
+            _ => None,
+        }
+    }
+
+    /// What one variant **declares** it carries, where a `const` cannot hold it.
+    ///
+    /// Read from the item tree rather than from a ledger, because a variant's
+    /// payload is not a column: a ledger records what a caller has to know
+    /// about a type it cannot see, and this is the type's own shape.
+    fn unwritable_payload(&self, ty: &str, variant: &str) -> Option<(String, String)> {
+        let carried = std::iter::once(self.parsed)
+            .chain(self.beside.iter().copied())
+            .find_map(|parsed| {
+                parsed
+                    .program
+                    .items
+                    .iter()
+                    .find_map(|item| match &item.node {
+                        Item::Enum { name, variants, .. } if parsed.text(*name) == ty => variants
+                            .iter()
+                            .find(|held| parsed.text(held.name) == variant)
+                            .map(|held| match &held.fields {
+                                ast::VariantFields::Unit => Vec::new(),
+                                ast::VariantFields::Tuple(types) => {
+                                    types.iter().map(|t| Ty::from_ast(parsed, t)).collect()
+                                }
+                                ast::VariantFields::Named(fields) => {
+                                    fields.iter().map(|f| Ty::from_ast(parsed, &f.ty)).collect()
+                                }
+                            }),
+                        _ => None,
+                    })
+            })?;
+        carried
+            .into_iter()
+            .find(|held| rust_constant_type(held).is_none() && self.declared_below(held).is_none())
+            .map(|held| (format!("{ty}::{variant}"), held.text()))
+    }
+
     /// **`NK1167` one level in**: the value is a `struct` a `const` could hold,
     /// and a **field** of it is not
     /// ([ADR-079](../../docs/specification/adr/adr-079.md) D2).
@@ -9381,24 +9592,47 @@ impl<'a> Checker<'a> {
     /// fine and the `Vec` in it is not, and *this cannot be evaluated* leaves
     /// them to work that out.
     fn a_field_that_owns_memory(&mut self, bound: &str, field: &str, held: &str, span: &Span) {
+        // **A variant is named whole** — `Shape::Many` — where a field is named
+        // under its binding. The `::` is what tells them apart, and it is worth
+        // a different sentence: what a reader changes is the *declaration*, and
+        // the two declarations do not look alike.
+        let carries = field.contains("::");
+        let message = match carries {
+            true => format!("`{field}` carries a `{held}`, and a `const` cannot hold one"),
+            false => {
+                format!("`{bound}`'s `{field}` is declared `{held}`, and a `const` cannot hold one")
+            }
+        };
+        let note = match carries {
+            true => "an `enum` crosses into the program as a `const` only where the \
+                     variant the value *is* can - what owns memory has no `const` form, \
+                     which is why a build-time value crosses in its view form (ADR-079 \
+                     D1). Another variant of the same `enum` may cross perfectly well"
+                .to_string(),
+            false => "a `struct` crosses into the program as a `const` only where every \
+                      field can - what owns memory has no `const` form, which is why a \
+                      build-time value crosses in its view form (ADR-079 D1)"
+                .to_string(),
+        };
+        let help = match carries {
+            true => format!(
+                "declare what `{field}` carries as the fixed form of it - `Array[T, N]` \
+                 for a `Vec`, `&str` for a `String` - or take it out of the `comptime` \
+                 and build it while the program runs"
+            ),
+            false => format!(
+                "declare `{field}` as the fixed form of what it holds - `Array[T, N]` \
+                 for a `Vec`, `&str` for a `String` - or take it out of the `comptime` \
+                 and build it while the program runs"
+            ),
+        };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: span.clone(),
             code: "NK1167",
-            message: format!(
-                "`{bound}`'s `{field}` is declared `{held}`, and a `const` cannot hold one"
-            ),
-            notes: vec![
-                "a `struct` crosses into the program as a `const` only where every \
-                 field can - what owns memory has no `const` form, which is why a \
-                 build-time value crosses in its view form (ADR-079 D1)"
-                    .to_string(),
-            ],
-            help: Some(format!(
-                "declare `{field}` as the fixed form of what it holds - `Array[T, N]` \
-                 for a `Vec`, `&str` for a `String` - or take it out of the `comptime` \
-                 and build it while the program runs"
-            )),
+            message,
+            notes: vec![note],
+            help: Some(help),
         });
     }
 
@@ -11173,6 +11407,9 @@ impl<'a> Checker<'a> {
                 },
             }),
             (None, None, _) => match &evaluated {
+                // A float with nothing declaring which one it is takes the
+                // wider, as an integer does (Part I 2.4).
+                Some(build_time::Value::Float(_)) => Some("f64".to_string()),
                 // A `bool` from the interpreter is a `bool` below, whether it
                 // was written `true` or came out of a call.
                 Some(build_time::Value::Bool(_)) => Some("bool".to_string()),
@@ -11206,6 +11443,8 @@ impl<'a> Checker<'a> {
                 // view form ([ADR-079](../../docs/specification/adr/adr-079.md)
                 // D1's *a number is already its own view*, one shape out).
                 Some(build_time::Value::Struct { name, .. }) => Some(name.clone()),
+                // …and a variant is its `enum`'s name, one shape over.
+                Some(build_time::Value::Variant { ty, .. }) => Some(ty.clone()),
                 None => None,
             },
         };
@@ -11228,6 +11467,7 @@ impl<'a> Checker<'a> {
         // to; `true` and `false` are themselves.
         let written = match &evaluated {
             Some(build_time::Value::Int(value)) => Some(value.to_string()),
+            Some(build_time::Value::Float(value)) => float_literal(*value),
             Some(build_time::Value::Bool(yes)) => Some(yes.to_string()),
             Some(build_time::Value::List(items)) => rust_array_value(items),
             // **The value, spelled as a literal `rustc` reads.** The pair with
@@ -11237,7 +11477,9 @@ impl<'a> Checker<'a> {
             Some(build_time::Value::Text(text)) => {
                 Some(format!("\"{}\"", build_time::written(text)))
             }
-            Some(value @ build_time::Value::Struct { .. }) => rust_value(value),
+            Some(
+                value @ (build_time::Value::Struct { .. } | build_time::Value::Variant { .. }),
+            ) => rust_value(value),
             // A pair has no `const` form of its own, and a list of them has one
             // only where a declaration says it is a table — which `crossed`
             // below is.
@@ -11248,8 +11490,30 @@ impl<'a> Checker<'a> {
             Some((below, written)) => (Some(below), Some(written)),
             None => (below, written),
         };
+        // **A part of the value the language below cannot write.**
+        //
+        // Asked of the **value** rather than of the declared type, because an
+        // `enum` is not answerable from its type: `Shape::Empty` is a `const`
+        // and `Shape::Many([1, 2])` is not, and the two are the same `Shape`.
+        // Without this the second one lowered — `const M: Shape =
+        // Shape::Many([1, 2]);` against a variant that declares a `Vec` — and
+        // `rustc` answered about the generated file, which is [Part III
+        // C.1](../../docs/specification/30-nikaia-tooling.md)'s class.
+        let said_a_part = match &evaluated {
+            Some(value) => match self.unwritable_in(value) {
+                Some((where_it_is, held)) => {
+                    self.a_field_that_owns_memory(&bound, &where_it_is, &held, span);
+                    true
+                }
+                None => false,
+            },
+            None => false,
+        };
         match (&below, &written) {
-            (Some(below), Some(written)) => {
+            // **Nothing is recorded where a part of it cannot be written**,
+            // or the emitter would write the `const` the refusal just said is
+            // not one.
+            (Some(below), Some(written)) if !said_a_part => {
                 self.checked
                     .comptime_values
                     .insert(span.start, (below.clone(), written.clone()));
@@ -11257,7 +11521,7 @@ impl<'a> Checker<'a> {
             // …and nothing at all where the refusal has already been made by
             // name: `NK1152` and `NK1165` each say what `NK1127` would, with
             // the part that matters in it.
-            _ if said || said_a_type || said_a_table => {}
+            _ if said || said_a_type || said_a_table || said_a_part => {}
             _ => self.checked.findings.push(Finding {
                 code: "NK1127",
                 severity: Severity::Error,
@@ -11267,8 +11531,9 @@ impl<'a> Checker<'a> {
                     "a `comptime` is a `let` that *must* fold, so one that cannot is \
                          refused rather than computed while the program runs (Part II, 10.2)"
                         .to_string(),
-                    "what it evaluates today is an integer, a `bool`, **text** or a \
-                         **list** - a literal, `f\"… {n} …\"`, arithmetic and \
+                    "what it evaluates today is an integer, a **float**, a `bool`, \
+                         **text**, a **list**, a `struct` and an `enum` variant - a \
+                         literal, `f\"… {n} …\"`, arithmetic and \
                          comparisons over literals and over other constants, `+`, `==` and \
                          `.len()` over text, an `if`, a **call** to a function or a **method** \
                          this **program** declares, whose body is made of those, a `for` over a range or a `while` \
@@ -11946,7 +12211,7 @@ fn convert(found: &Ty, want: &Ty) -> String {
     }
 }
 
-/// The name of the integer type this is, among the two Part I 2.2 offers.
+/// The name of the integer type this is, among the three Part I 2.2 offers.
 ///
 /// A view or a type with arguments is neither: `&i32` is a reference and
 /// `Vec[i32]` is a list, and a number does not stand beside either of them.
@@ -11957,7 +12222,7 @@ fn integer_named(ty: &Ty) -> Option<String> {
     if !args.is_empty() || *view {
         return None;
     }
-    matches!(name.as_str(), "i32" | "i64").then(|| name.clone())
+    matches!(name.as_str(), "i32" | "i64" | "u8").then(|| name.clone())
 }
 
 /// Whether an expression is a literal — a value written in the source rather
@@ -12056,6 +12321,22 @@ fn is_number(name: &str) -> bool {
             | "f32"
             | "f64"
     )
+}
+
+/// A float, written as a literal `rustc` reads — or nothing, where it cannot be.
+///
+/// **`{:?}` and not `{}`**, because Rust's `Debug` for a float is the shortest
+/// text that reads back as the same bits, and `Display` is not: `1.0` prints as
+/// `1` under the second, and `const X: f64 = 1;` is not Rust.
+///
+/// **A value that is not finite has no literal in either language.** An
+/// infinity and a `NaN` reach a program through a name — `f64::INFINITY` — and
+/// writing one into a `const` would put a name in the generated file that the
+/// `.nika` line never mentioned. So it is `None` here and `NK1127` at the
+/// caller, which is the honest answer: this is a thing the crossing does not
+/// do.
+fn float_literal(value: f64) -> Option<String> {
+    value.is_finite().then(|| format!("{value:?}"))
 }
 
 /// The closest field name, when one is close enough to be worth suggesting.

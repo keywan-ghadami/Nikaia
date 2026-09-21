@@ -1718,3 +1718,62 @@ fn the_target_info_probe_ignores_what_is_on_standard_input() {
     assert!(said.contains("target_arch="), "{said}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// **A grammar runs in a project build too**, which it did not
+/// ([ADR-177](../../../docs/specification/adr/adr-177.md), 0.0.125).
+///
+/// The feature shipped able to lower a loose `.nika` file and unable to build
+/// the project shape anybody would actually write it in. The cause was a
+/// *second* lowering: `Project::report` rebuilds the source map whenever the
+/// backend had anything to say — **a warning counts**, and the generated crate
+/// emits one for the `grammar!` macro's `cfg` — and it rebuilt it with
+/// `Reads::none()`. So that pass evaluated the `comptime` to nothing, the
+/// emitter refused an item the build had already written a `const` for, and
+/// what reached the user was this compiler's own internal sentence instead of
+/// the program running.
+///
+/// **This test builds and runs**, because that is the only thing that sees it:
+/// every unit test of the lowering passed throughout, and so did the loose-file
+/// path the corpus sweep exercises.
+#[test]
+fn a_grammar_at_build_time_reaches_a_project_build() {
+    let dir = a_project(
+        "project-grammar",
+        "[package]\nname = \"settings\"\nversion = \"0.1.0\"\n",
+        "@borrowed\n\
+         pub struct Setting {\n\
+         \x20   key: &str,\n\
+         \x20   value: &str,\n\
+         }\n\
+         \n\
+         grammar Cfg {\n\
+         \x20   rule WSE = multispace1 -> { }\n\
+         \x20   rule WS = (WSE | COMMENT)* -> { }\n\
+         \x20   rule COMMENT = \"#\" until(line_ending) -> { }\n\
+         \x20   rule NAME -> &str = s:raw_ident -> { s }\n\
+         \x20   rule VALUE -> &str = s:until(\"#\" | line_ending) -> { s.trim() }\n\
+         \x20   rule setting -> Setting = key:NAME \"=\" value:VALUE -> { Setting { key, value } }\n\
+         \x20   pub rule file -> Vec[Setting] = settings:setting* -> { settings }\n\
+         }\n\
+         \n\
+         comptime SETTINGS: Array[Setting, 2] = \
+         Cfg::file(\"host = example.com\\nport = 8080  # the usual one\\n\")\n\
+         \n\
+         fn main() {\n\
+         \x20   for s in SETTINGS {\n\
+         \x20       println(f\"{s.key}={s.value}\")\n\
+         \x20   }\n\
+         }\n",
+    );
+
+    let ran = nikaia(&["run"], &dir);
+    assert!(ran.status.success(), "{}", said(&ran));
+    let printed = String::from_utf8_lossy(&ran.stdout);
+    assert!(
+        printed.contains("host=example.com") && printed.contains("port=8080"),
+        "the parse happened while the program was built: {}",
+        said(&ran)
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -129,3 +129,111 @@ the price [ADR-070](specification/adr/adr-070.md) already paid for `loop` and is
 small — the word stays reserved there, and here there is not even a word to
 reserve. The real cost is the other way: a `[ ]` that nobody intends to build
 makes every other `[ ]` on the page worth less.
+
+### May a build-time value cross as a **view into what the build allocated**?
+
+**What is blocked.** Three shapes that a `comptime` computes perfectly well and
+cannot hand to the program, all three for one reason:
+
+* A **`Vec[T]` inside a crossed value** — a field of a `struct`
+  (`examples/config.nika`'s `Section { settings: Vec[Setting] }`) or the payload
+  of a variant (`examples/json.nika`'s `Json::Array(Vec[Json])`), which is
+  **what both corpus grammars produce**. `NK1167` refuses it, and correctly:
+  `Array[Setting, N]` cannot type a field whose `N` differs per value, and a
+  declaration is one type.
+* A **binary asset**. [ADR-072](specification/adr/adr-072.md)'s `asset("…")`
+  hands back a `&str` and refuses a file that is not UTF-8 by name
+  (`Denied::NotText`). There is no `asset_bytes`, so a build cannot read a
+  `.png`, a lookup table or a serialised index at all.
+* **`Bytes`** ([ADR-156](specification/adr/adr-156.md) D1), which is
+  reference-counted and owns its run, so it has no `const` form — the same
+  sentence `String` gets.
+
+**Measured, at 0.0.125.** The rest of the aggregate crossed in this package:
+`Array[u8, N]` is a byte buffer a `const` holds today (`comptime MAGIC:
+Array[u8, 4] = [0x7F, 0x45, 0x4C, 0x46]` compiles and runs), a nested array is
+`[[T; M]; N]`, a `struct` may hold an `Array[T, N]` field, and an `enum` crosses
+by the variant the value is. So what is left is **exactly** the case where the
+length is not one number: a field whose list is a different length per value.
+
+**Why it is the owner's.** The answer is a **type**, and this language does not
+have one to write. [ADR-079](specification/adr/adr-079.md) D1 says a result
+crosses as `&[T]`, and §5 records that what was built is `Array[T, N]` instead,
+*because the array is what the type language can already spell*. So the record
+already names the missing type and calls the absence somebody else's question.
+Whether to close it is a decision about Part I 2.2's surface rather than about
+this evaluator.
+
+**The options.**
+
+* **A — spell the view**: `&[T]`, the missing half of D1's view form, with
+  `&[u8]` falling out of it and a `Vec[T]` field crossing as `&[T]` the way text
+  crosses as `&str`. One type, and it answers all three bullets — `asset_bytes`
+  then has a result type to have.
+* **B — a `std` type**, `Slice[T]`, wrapping a `&'static [T]`. Cheaper below and
+  a **different type from what the program declared**, so `Section.settings`
+  would have to be written as `Slice[Setting]` and stop being a `Vec` for the
+  code that builds one at run time. That is the objection: a field's type would
+  depend on who fills it.
+* **C — leave it.** A `Vec` field stays out of a `comptime`, a binary asset
+  stays unreadable, and a grammar whose result nests a list is refused by name —
+  which is where 0.0.125 leaves it, with `NK1167` saying so rather than `rustc`
+  about the generated file.
+
+**What this page recommends: A, and not in this package.** `&[T]` is the type
+this language keeps almost-having: the tether work (`open-work.md`'s Tethered
+entry) wants it, `asset_bytes` wants it, and a `Vec` field crossing wants it. B
+buys the same three at the cost of a type the program did not write, which is
+the thing [ADR-107](specification/adr/adr-107.md) D3 refuses one construct over.
+But A is a **language surface change** and belongs in a record of its own, with
+the borrow rules written down — not folded into a package about what an
+evaluator computes.
+
+**What it costs if wrong**: C is free today and gets more expensive the more
+grammars are written, because the shape it refuses is the shape a parser's
+result naturally has. A costs a type in Part I 2.2 that every later analysis has
+to answer for.
+
+### May a `Fixed` table hold a `struct`?
+
+**What is blocked.** `comptime PAIRS: Fixed[&str, Row] = [("x", Row { a: 1, b:
+2 }), …]` is `NK1127`. Every part of it crosses on its own — a `Row` is a
+`const`, a table of `&str` keys is a `const` — and the combination is not.
+
+**Measured.** [ADR-176](specification/adr/adr-176.md)'s `Fixed<V>::get` hands
+back `Option<V> where V: Copy`, which is 0.0.118's own correction: returning
+`Option<&V>` made `??` over a table of text ambiguous between two `Or` impls and
+`rustc` spoke about the generated file. A Nikaia `struct` derives `Clone` and
+`Debug` and **not** `Copy`, so a struct value in a table would be `rustc` about
+the generated file again — which is why the checker refuses it before it gets
+there, rather than the refusal being a judgement about tables.
+
+**Why it is the owner's.** The answer is what `Copy` means in this language.
+Nothing in Part I says a struct is copied, and [ADR-008](specification/adr/adr-008.md)
+D5 says a copy is never something a compiler inserts on its own — so deriving
+`Copy` where every field is `Copy` would make the compiler's answer to *may this
+be copied* depend on a field nobody looked at.
+
+**The options.**
+
+* **A — derive `Copy` where every field allows it**, and let a table hold such a
+  struct. The rule is mechanical and the emitter can see it; what it changes is
+  that adding a `String` field to a struct silently removes it from every
+  `Fixed` that held it, one file away.
+* **B — a second read.** `Fixed::get` keeps `V: Copy` and gains a sibling that
+  hands back a view, with the checker picking by what `V` is. Two spellings
+  below and one in the source.
+* **C — leave it**, with a sentence that says *a table's value is a number, a
+  `bool` or text* rather than `NK1127`'s *cannot evaluate*, which is the wrong
+  claim: the value evaluated fine.
+
+**What this page recommends: C now, B later.** C is one message and closes a
+diagnostic that is currently untrue — [Part III C.2](specification/30-nikaia-tooling.md)
+asks for the reason and `NK1127` gives the wrong one. B is the right shape when
+somebody wants it, because it leaves `Copy` alone; A makes a struct's
+copyability a consequence of its fields, which is the inference
+[ADR-107](specification/adr/adr-107.md) D3 is written against.
+
+**What it costs if wrong**: C costs nothing and buys a true sentence. A is the
+one that is hard to undo — once a struct is `Copy`, every program that relied on
+it being copied keeps a `Fixed` alive across a field change nobody meant.
