@@ -7,13 +7,15 @@
 //! [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class and
 //! the one this compiler refuses on principle.
 //!
-//! **What this does not do** is refuse a path whose head names nothing at all.
-//! `nowhere::wobble` could be a module, a foreign crate's item or a name no
-//! ledger has been told about, and from inside the checker those three look
-//! alike — so refusing on absence would refuse correct programs. That half is
-//! [`open-work.md`](../../../docs/open-work.md) §1.2. The line between them is
-//! what this file is about: the compiler speaks where it has **read the
-//! declaration**, and stays quiet where it has not.
+//! **And a path whose head names nothing at all is `NK1181`**
+//! ([ADR-183](../../../docs/specification/adr/adr-183.md)), which used to be
+//! the half this file recorded as open. `nowhere::wobble` could have been a
+//! module, a foreign crate's item or a name no ledger had been told about, and
+//! from inside the checker those three looked alike — until the list of what a
+//! head may legally be was written down and asked in order. The line between
+//! the two refusals is what this file is about: `NK1171` is a **member** a
+//! type this compiler read does not have, and `NK1181` is a **head** nothing
+//! declares.
 
 use nikaia::check::Finding;
 use nikaia::contracts::{Ledger, STD};
@@ -221,14 +223,84 @@ fn a_variant_the_enum_has_is_not_refused() {
 /// look like from inside the checker
 /// ([ADR-010](../../../docs/specification/adr/adr-010.md) D1 read the other
 /// way: a wrong refusal is worse than a missing one).
+/// **A head nothing declares is `NK1181` and not this refusal**
+/// ([ADR-183](../../../docs/specification/adr/adr-183.md)).
+///
+/// The two are different questions and the messages say so: `NK1171` has read
+/// the declaration and is naming a misspelling; this one has read nothing
+/// under that word at all.
 #[test]
-fn a_head_nothing_declares_is_not_this_refusal() {
+fn a_head_nothing_declares_is_its_own_refusal() {
     let source = "fn main() {\n\
          \x20   println(f\"{nowhere::wobble}\")\n\
          }";
+    let found = findings(source);
+    assert!(found.iter().all(|f| f.code != "NK1171"), "{found:#?}");
+    let head = found
+        .iter()
+        .find(|f| f.code == "NK1181")
+        .unwrap_or_else(|| panic!("{found:#?}"));
     assert!(
-        findings(source).iter().all(|found| found.code != "NK1171"),
-        "{:#?}",
-        findings(source)
+        head.message.contains("nothing declares `nowhere`"),
+        "{head:#?}"
+    );
+    // **A way out that can be taken** (Part III C.2): each of the three names
+    // a file the reader writes.
+    let help = head.help.as_deref().unwrap_or("");
+    assert!(
+        help.contains(".nika") && help.contains("[dependencies]") && help.contains("describe"),
+        "{head:#?}"
+    );
+}
+
+/// **Every head the corpus writes still passes**, which is the measurement
+/// `open-work.md`'s entry rested on: seven distinct paths used as values, each
+/// either a variant of an enum the program declares or a key a ledger records.
+///
+/// And the three the entry named as the reason to fail open — a module of this
+/// package, a package the manifest declares, a `std` module — are each a head
+/// this compiler has read, which is why the refusal can be written at all.
+#[test]
+fn a_head_this_program_has_is_not_refused() {
+    let source = "enum Op { Times, Divide }\n\
+         \n\
+         struct Summary { total: i64 }\n\
+         \n\
+         impl Summary {\n\
+         \x20   fn merge(self, other: Summary) -> Summary {\n\
+         \x20       Summary { total: self.total + other.total }\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   let op = Op::Times\n\
+         \x20   let one = Summary { total: 1 }\n\
+         \x20   let two = one.merge(Summary { total: 2 })\n\
+         \x20   println(f\"{two.total}\")\n\
+         }";
+    let found = findings(source);
+    assert!(
+        found.iter().all(|f| f.code != "NK1181"),
+        "a head this compiler has read is never this refusal: {found:#?}"
+    );
+}
+
+/// **A `std` module is a head**, and it is the one an empty package still has:
+/// these findings are taken with no manifest and no second file, so `io` can
+/// only be answered by `std`'s own ledger.
+///
+/// The member here is deliberately one `std` does **not** have, because that is
+/// where the two refusals could be confused: a head this compiler has read and
+/// a member it has not is not `NK1181`, whatever else it may be. What the head
+/// may hold is the ledger's question and not this one's.
+#[test]
+fn a_std_module_is_a_head_whatever_stands_after_it() {
+    let source = "fn main() {\n\
+         \x20   println(f\"{io::wobble}\")\n\
+         }";
+    let found = findings(source);
+    assert!(
+        found.iter().all(|f| f.code != "NK1181"),
+        "`io` is a head `std` declares: {found:#?}"
     );
 }

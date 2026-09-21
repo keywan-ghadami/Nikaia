@@ -2931,6 +2931,87 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **`NK1181`: nothing declares the head of this path.**
+    ///
+    /// [`Checker::nothing_declares_it`] one segment down, and the same
+    /// fail-safe direction: `nowhere::wobble` used to lower, and the language
+    /// below answered *failed to resolve: use of unresolved module or unlinked
+    /// crate* — a sentence with *crate* in it about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **What a head may legally be**, asked in order and every one of them
+    /// something this compiler has already read: a **type** declared here or
+    /// recorded by either ledger, a **module** of this package, a **package**
+    /// the manifest declares, a **crate** a description covers, a `std`
+    /// module, a **grammar**, an opaque handle, or a type parameter. A ledger
+    /// that records *anything* under `head::` answers too, because a crate is
+    /// known by its items rather than by a list of its names.
+    ///
+    /// **Anything this cannot see is a name it must not refuse**
+    /// ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)), which
+    /// is why the list fails open rather than closed: a head nobody has told
+    /// this compiler about is the one case, and every other reading of an
+    /// absent key had to be ruled out first.
+    fn a_head_nothing_declares(&mut self, head: &str, written: &str, span: &Span) {
+        let head = self.parsed.unaliased(head).to_string();
+        let head = head.as_str();
+        let prefix = format!("{head}::");
+        fn under<V>(table: &BTreeMap<String, V>, prefix: &str) -> bool {
+            table
+                .range(prefix.to_string()..)
+                .next()
+                .is_some_and(|(key, _)| key.starts_with(prefix))
+        }
+        let declared = self.structs.contains_key(head)
+            || self.enums.contains_key(head)
+            // **And a type the package's other files declare.** The files of a
+            // package share one namespace (Part I 9.1), so `Shade::Even` in
+            // `main.nika` names an `enum` that may stand in `shapes.nika` —
+            // and the three tables above are this **unit's**. Without this the
+            // refusal is a correct program refused across a file boundary,
+            // which is [Part III C.4](../../docs/specification/30-nikaia-tooling.md)
+            // and the shape [ADR-182](../../docs/specification/adr/adr-182.md)'s
+            // package had one construct over.
+            || self.beside.iter().any(|other| declares_a_type(other, head))
+            || self.grammars.contains_key(head)
+            || self.variant_owner.contains_key(head)
+            || self.type_parameters.contains_key(head)
+            || self.opaque_handles.contains(head)
+            || self.foreign_names.contains(head)
+            || self.own.types.contains_key(head)
+            || self.library.types.contains_key(head)
+            || self.modules.contains(head)
+            || self.std_modules.contains(head)
+            // A ledger that records anything under this head knows the head:
+            // a described crate is a list of its **items**, and no table
+            // carries the crate's own word on a line of its own.
+            || under(&self.own.functions, &prefix)
+            || under(&self.own.types, &prefix)
+            || under(&self.library.functions, &prefix)
+            || under(&self.library.types, &prefix);
+        if declared {
+            return;
+        }
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1181",
+            message: format!("nothing declares `{head}`, which `{written}` is written under"),
+            notes: vec![
+                "a name in front of a `::` is a type, a module of this package, a package the \
+                 manifest declares, a crate a description covers, or a `std` module - and this \
+                 compiler has read all five, so one that answers to none of them is a name \
+                 nobody has written down (Part I, 9.1)"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "declare `{head}`: a `.nika` file beside this one gives the package a module of \
+                 that name, a `[dependencies]` line gives it a package, and \
+                 `nikaia describe {head}` gives it a foreign crate"
+            )),
+        });
+    }
+
     /// Part I 3.5: `?.` is for a value that may be absent.
     ///
     /// `"Ada"?.len` reaches through something that cannot be missing, and the
@@ -10626,6 +10707,9 @@ impl<'a> Checker<'a> {
             return;
         }
         let Some(fields) = self.fields_of(ty) else {
+            // **And if the head is not a name this program has either**, the
+            // path is `NK1181` rather than silence.
+            self.a_head_nothing_declares(ty, &format!("{ty}::{member}"), span);
             return;
         };
         // **`T::fields` is specified and unbuilt**, and that is worth its own
@@ -12886,6 +12970,26 @@ fn a_word_that_was_reserved(name: &str) -> Option<&'static str> {
         ),
         _ => None,
     }
+}
+
+/// **Whether this file declares a type by this name**
+/// ([ADR-183](../../docs/specification/adr/adr-183.md) D1).
+///
+/// For the package's *other* files, which share one namespace with this one
+/// (Part I 9.1). It reads the item tree rather than a ledger because a ledger
+/// records what a type **promises**, and what is asked here is only that the
+/// word was written down: a private `enum` a neighbouring file declares is a
+/// head, whatever its contract says.
+fn declares_a_type(parsed: &Parsed, name: &str) -> bool {
+    parsed.program.items.iter().any(|item| {
+        let written = match &item.node {
+            Item::Struct { name, .. } | Item::Enum { name, .. } => Some(*name),
+            Item::Grammar(def) => Some(def.name),
+            Item::Trait { name, .. } => Some(*name),
+            _ => None,
+        };
+        written.is_some_and(|written| parsed.text(written) == name)
+    })
 }
 
 fn element_of(over: &Ty, bindings: usize) -> Ty {

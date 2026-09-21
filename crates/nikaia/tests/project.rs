@@ -1848,3 +1848,66 @@ fn a_shape_walk_reaches_across_the_files_of_a_package() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A head the package's *other* file declares is not `NK1181`**
+/// ([ADR-183](../../../docs/specification/adr/adr-183.md) D1).
+///
+/// The files of a package share one namespace (Part I 9.1), so `Shade::Even`
+/// in `main.nika` names an `enum` that may stand in `shapes.nika` — and the
+/// tables the refusal asks first are this **unit's**. Written against those
+/// alone the refusal is a correct program refused
+/// ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)), which
+/// is the one thing this compiler may never do, and the same shape
+/// [ADR-182](../../../docs/specification/adr/adr-182.md)'s package had one
+/// construct over.
+///
+/// **This builds and runs**, because a single-file test cannot see it: every
+/// unit test of the refusal passed while this program did not build.
+#[test]
+fn a_head_the_next_file_declares_is_not_refused() {
+    let dir = a_project(
+        "project-head",
+        "[package]\nname = \"shades\"\nversion = \"0.1.0\"\n",
+        "fn main() {\n\
+         \x20   let s = Shade::Even\n\
+         \x20   match s {\n\
+         \x20       Shade::Even => { println(\"even\") }\n\
+         \x20       Shade::Odd => { println(\"odd\") }\n\
+         \x20   }\n\
+         }\n",
+    );
+    std::fs::write(dir.join("src/shades.nika"), "enum Shade { Even, Odd }\n")
+        .expect("the second file");
+
+    let ran = nikaia(&["run"], &dir);
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert!(
+        String::from_utf8_lossy(&ran.stdout).contains("even"),
+        "{}",
+        said(&ran)
+    );
+
+    // **And a head nothing declares is still refused**, in this compiler's
+    // words rather than the language below's *unresolved module or unlinked
+    // crate*.
+    std::fs::write(
+        dir.join("src/main.nika"),
+        "fn main() {\n\
+         \x20   println(f\"{nowhere::wobble}\")\n\
+         }\n",
+    )
+    .expect("rewrite the entry");
+    let refused = nikaia(&["run"], &dir);
+    assert!(!refused.status.success(), "{}", said(&refused));
+    let told = said(&refused);
+    assert!(
+        told.contains("NK1181") && told.contains("nothing declares `nowhere`"),
+        "{told}"
+    );
+    assert!(
+        !told.contains("unlinked crate"),
+        "the language below does not get to answer this: {told}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

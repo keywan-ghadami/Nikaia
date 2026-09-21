@@ -68,7 +68,7 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Four entries are open.** §1.3 and §1.4 closed at 0.0.131 and §1.6 opened with them; the two closed numbers stay where they were, because this file is cited by number.
+**Three entries are open.** §1.3 and §1.4 closed at 0.0.131 and §1.6 opened with them; §1.2 closed at 0.0.132. The closed numbers stay where they were, because this file is cited by number.
 
 ### 1.1. A grammar's entry does not say what it keeps
 
@@ -123,39 +123,6 @@ rather than guessed at, and it waits on the same mechanism
 
 *Every example still runs*, at both settings, which is what said this cost
 information rather than correctness.
-
-### 1.2. A path whose head names nothing is not refused
-
-**The other half of `NK1171`**, and it is written down because the half that
-*was* built is what makes this one visible. `Op::Mul` beside
-`enum Op { Add, Sub }` used to lower, and `rustc` refused the **generated
-file** — [Part III C.1](specification/30-nikaia-tooling.md)'s class. That is
-fixed: the compiler has read the declaration, so it can say the name is not in
-it.
-
-`nowhere::wobble` is not fixed, and the reason is that the compiler has read
-nothing. A module of a package, an item of a foreign crate and a name no ledger
-has been told about all look the same from inside the checker — an absent key —
-and refusing on absence would refuse correct programs, which is the direction
-[Part III C.4](specification/30-nikaia-tooling.md) forbids and the one
-[ADR-010](specification/adr/adr-010.md) D1 is careful about in the other
-polarity.
-
-*Measured, and it is what keeps the entry small.* Instrumenting the checker's
-path arm and running the whole corpus — `examples/`, `benches/`,
-`tests/samples/` — turns up **seven distinct paths used as values**:
-`Summary::merge`, `Report::merge`, `Refused::NoStatement`, `Refused::NoDatabase`,
-`Op::Times`, `Op::Divide`, `Json::Null`. Every one of them is either a variant
-of an enum this program declares or a key a ledger records. **Not one** has a
-head this compiler has not read. So the case this entry names is one no program
-here writes, which is why refusing it can wait for the mechanism that would make
-the refusal right rather than for the next package.
-
-*What would make it right* is knowing what a head may legally be: a module of
-this package, a package named in the manifest, a foreign crate the ledger
-describes, or a type. Three of those four are already written down somewhere;
-what is missing is one walk that asks them in order and a sentence for the case
-where none of them answers — the same shape `NK1117` has one segment down.
 
 ### 1.5. A grammar entry in tail position over a local that owns its input
 

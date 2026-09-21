@@ -4,6 +4,42 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.132] — 2026-09-21
+
+**A path's head is one of five things, and a name that is none of them is
+refused** — [ADR-183](docs/specification/adr/adr-183.md), closing
+[`open-work.md`](docs/open-work.md) §1.2 and with it the other half of
+`NK1171`.
+
+### What the reader used to get
+
+- **`nowhere::wobble` lowered**, and the language below answered *failed to resolve: use of unresolved module or unlinked crate `nowhere`*. **Crate** is not a word this language has, and the file it is about is one nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)).
+- **The entry that carried it open had a good reason.** A module of a package, an item of a foreign crate and a name no ledger has been told about all look the same from inside the checker — an absent key — so refusing on absence would refuse correct programs, which [C.4](docs/specification/30-nikaia-tooling.md) forbids.
+
+### The measurement is what made it answerable
+
+- **Seven distinct paths are used as values in the whole corpus** — `Summary::merge`, `Report::merge`, `Refused::NoStatement`, `Refused::NoDatabase`, `Op::Times`, `Op::Divide`, `Json::Null` — and **not one** has a head this compiler has not read. So the case the entry named is one no program here writes, and the refusal has nothing to break.
+
+### The list, written down and asked in order
+
+- **A type** declared here or recorded by either ledger, **a module of this package**, **a package the manifest declares**, **a crate a description covers**, **a `std` module**. Every one of the five is something this compiler had already read; the walk that asks them in order is what was missing.
+- **A ledger that records anything under `head::` answers for the head**, because a description is a list of its **items** and no table carries the crate's own word on a line of its own. Without that prefix, `nikaia describe`'s own output would be refused by the compiler that asked for it.
+- **The way out names a file, three times over** ([C.2](docs/specification/30-nikaia-tooling.md)): a `.nika` file beside this one for a module, a `[dependencies]` line for a package, `nikaia describe <head>` for a foreign crate. That is the whole difference from *unresolved module or unlinked crate*, where the reader is told what failed and not what to do.
+- **It fails open.** The list is one of permissions and not of prohibitions, which is [ADR-010](docs/specification/adr/adr-010.md) D1's polarity turned on a refusal: a missing refusal costs a `rustc` message, a wrong one costs a correct program.
+
+### And a head the next file declares is a head
+
+- **`Shade::Even` in `main.nika` names an `enum` that may stand in `shades.nika`**, because the files of a package share one namespace ([Part I 9.1](docs/specification/10-nikaia-light.md)) — and the tables the refusal asks first are this **unit's**. Written against those alone it refuses a correct program, which is the one thing this checker may never do, and the same shape [0.0.130](#00130--2026-09-21)'s package had one construct over. `tests/project.rs` **builds and runs** that program, because a single-file test cannot see it: every unit test of the refusal passed while it did not build.
+- **Read off the item tree of the other files and not off a ledger**, because a ledger records what a type *promises* and what is asked here is only that the word was written down.
+
+### Two blocks of the specification stopped lowering, and both are the point
+
+- **`tests/specification/COMPILES.txt` recorded each of them as refused** — by `rustc`, after lowering — so neither was ever a program. What changed is **who says so and in what words**: a head the block does not declare is this compiler's sentence with a way out now, before the language below is handed anything. The two baselines together are what show it, which is why the page keeps both.
+
+### Where the two refusals divide
+
+- **`NK1171` is a member a type this compiler read does not have; `NK1181` is a head nothing declares.** `io::wobble` is neither: the head is a module `std`'s ledger declares, and what that module holds is the ledger's question ([ADR-140](docs/specification/adr/adr-140.md) D5's *a module nothing describes yet*, seen from the other side).
+
 ## [0.0.131] — 2026-09-21
 
 **A `for` lends, and everything downstream of the binding has to know it** —
