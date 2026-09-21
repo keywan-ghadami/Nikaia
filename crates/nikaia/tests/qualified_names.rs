@@ -137,16 +137,19 @@ fn a_struct_has_no_members_under_the_separator() {
     );
 }
 
-/// **`T::fields` is specified and unbuilt, and the refusal says so**
-/// ([ADR-088](../../../docs/specification/adr/adr-088.md) §5, Part II 10.3).
+/// **A type's shape is reached through a **bound** and not by name**
+/// ([ADR-088](../../../docs/specification/adr/adr-088.md) D2, built by
+/// [ADR-181](../../../docs/specification/adr/adr-181.md)).
 ///
-/// A reader who writes it read the specification, so *`Point` has nothing
-/// called `fields`* would send them looking for a spelling that does not exist.
-/// [Part III C.2](../../../docs/specification/30-nikaia-tooling.md) asks for a
-/// way out that can be taken, and the only one here is writing the fields out —
-/// so that is what it offers, rather than a rewrite of the same line.
+/// A reader who writes `Point::fields` read the specification, so *`Point` has
+/// nothing called `fields`* would send them looking for a spelling that does
+/// not exist. [Part III C.2](../../../docs/specification/30-nikaia-tooling.md)
+/// asks for a way out that can be taken, and since 0.0.129 there is one: the
+/// note names the shape 10.3 actually writes. **A type named outright has its
+/// fields written down already**, which is why this stays a refusal now that
+/// the feature is built.
 #[test]
-fn the_shape_of_a_type_is_refused_as_specified_and_unbuilt() {
+fn the_shape_of_a_type_is_reached_through_a_bound() {
     let found = one("struct Point { x: i64, y: i64 }\n\
          \n\
          fn main() {\n\
@@ -160,7 +163,7 @@ fn the_shape_of_a_type_is_refused_as_specified_and_unbuilt() {
         "`Point::fields` is specified and this compiler does not have it"
     );
     assert!(
-        found.notes[0].contains("Part II 10.3") && found.notes[0].contains("ADR-088 §5"),
+        found.notes[0].contains("Part II 10.3") && found.notes[0].contains("ADR-181"),
         "{:#?}",
         found.notes
     );
@@ -168,8 +171,8 @@ fn the_shape_of_a_type_is_refused_as_specified_and_unbuilt() {
         found
             .help
             .as_deref()
-            .is_some_and(|help| help.contains("write the fields out by hand")),
-        "{:?}",
+            .is_some_and(|help| help.contains("[T: Struct]")),
+        "and the way out is the one 10.3 writes: {:?}",
         found.help
     );
 }

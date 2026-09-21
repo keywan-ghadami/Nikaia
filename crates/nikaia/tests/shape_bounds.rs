@@ -239,16 +239,18 @@ fn a_program_that_declares_the_trait_keeps_it() {
     );
 }
 
-/// **What the bound makes reachable is not built**, and the refusal says which
-/// half is which ([ADR-088](../../../docs/specification/adr/adr-088.md) §5).
+/// **And what the bound makes reachable is built since 0.0.129**
+/// ([ADR-181](../../../docs/specification/adr/adr-181.md)), which is what this
+/// test used to assert the absence of.
 ///
-/// This is the hole the package would have opened: before `[T: Struct]` was a
-/// legal bound, `T::fields` was refused one line up with `NK1135`. Making the
-/// bound legal turned that into **silence**, and from there into `rustc` about
-/// the generated file.
+/// The hole it was written for is still closed and is now closed the other
+/// way: before `[T: Struct]` was a legal bound, `T::fields` was refused one
+/// line up with `NK1135`; making the bound legal turned that into **silence**,
+/// and `NK1171` stood in for the feature until the feature arrived.
+/// `tests/reflection.rs` is where it runs.
 #[test]
-fn the_shape_the_bound_reaches_is_refused_by_name() {
-    let found = one("struct Point { x: i64, y: i64 }\n\
+fn the_shape_the_bound_reaches_is_built() {
+    let source = "struct Point { x: i64, y: i64 }\n\
          \n\
          fn describe[T: Struct](value: T) -> &str {\n\
          \x20   for field in T::fields {\n\
@@ -259,24 +261,47 @@ fn the_shape_the_bound_reaches_is_refused_by_name() {
          \n\
          fn main() {\n\
          \x20   println(describe(Point { x: 1, y: 2 }))\n\
+         }";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lower(source);
+    assert!(rust.contains("fn describe__Point("), "{rust}");
+    assert!(!rust.contains("T::fields"), "{rust}");
+}
+
+/// **`variants` is the half that is not built**, and the refusal says which is
+/// which ([ADR-181](../../../docs/specification/adr/adr-181.md) D4).
+///
+/// An `enum`'s shape is a different value: a variant carries a payload where a
+/// field carries a type, so the two are one feature only on the page.
+#[test]
+fn the_other_shape_is_refused_by_name() {
+    let found = one("enum Shade { Odd, Even }\n\
+         \n\
+         fn tell[T: Enum](value: T) -> &str {\n\
+         \x20   for v in T::variants {\n\
+         \x20       println(\"x\")\n\
+         \x20   }\n\
+         \x20   return \"done\"\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(tell(Shade::Odd))\n\
          }");
     assert_eq!(found.code, "NK1171");
     assert_eq!(
         found.message,
-        "`T::fields` is specified and this compiler does not have it"
+        "`T::variants` is specified and this compiler does not have it"
     );
     assert!(
-        found.notes[0].contains("is a bound this compiler answers")
-            && found.notes[0].contains("D4"),
+        found.notes[0].contains("`T::fields` are built"),
         "it says which half is built: {:#?}",
         found.notes
     );
 }
 
 /// **And without the bound it says the bound is what reaches it** (D2), which
-/// is a way out the reader can take one step at a time — even though the step
-/// after it is not built yet, and the note says so rather than letting them
-/// find out.
+/// is the way out the reader takes: the step after it is built now, so the
+/// note names it rather than warning them off.
 #[test]
 fn the_shape_without_a_bound_names_the_bound() {
     let found = one("fn plain[T](value: T) -> &str {\n\
@@ -291,7 +316,7 @@ fn the_shape_without_a_bound_names_the_bound() {
          }");
     assert_eq!(found.code, "NK1171");
     assert!(
-        found.notes[0].contains("`[T: Struct]`") && found.notes[0].contains("D4 to D6"),
+        found.notes[0].contains("`[T: Struct]`") && found.notes[0].contains("ADR-181"),
         "{:#?}",
         found.notes
     );

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.128 (Draft)
+**Version:** 0.0.129 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -254,24 +254,29 @@ print their own analyses. There is no syntax for it.
 ([ADR-088](adr/adr-088.md) D7). A program may not use them as names. The macro
 system built out of the three is withdrawn ([ADR-088](adr/adr-088.md)).
 
-> **Implementation status:** Partially implemented. **The bound is built**
-> ([ADR-088](adr/adr-088.md) D2): `[T: Struct]` and `[T: Enum]` are bounds this
-> compiler answers, and what answers them is the **declaration** rather than an
-> `impl`. So is the refusal the bound exists to make — a caller that passes
-> something which is not a struct is `NK1164` **at the call** (D3), which is the
-> one class of failure a bound moves out of the body. Neither bound reaches the
-> language below, which has no trait by either name.
+> **Implementation status:** Implemented but for `T::variants` and
+> `--comptime`. **The bound is built** ([ADR-088](adr/adr-088.md) D2):
+> `[T: Struct]` and `[T: Enum]` are bounds this compiler answers, and what
+> answers them is the **declaration** rather than an `impl`. So is the refusal
+> the bound exists to make — a caller that passes something which is not a
+> struct is `NK1164` **at the call** (D3). Neither bound reaches the language
+> below, which has no trait by either name.
 >
-> **What the bound reaches is not built.** `T::fields` is `NK1171`, which says
-> that this section is specified, that the compiler does not have it, and which
-> half of it is built — rather than sending a reader looking for a spelling that
-> does not exist. The **loop** has arrived since this note was first written: a
-> `comptime` initialiser evaluates calls, methods, `for` and `while`, and hands
-> arrays, text, structs and a fixed map to the program below (10.2,
-> [ADR-175](adr/adr-175.md), [ADR-176](adr/adr-176.md)). So what is left is a
-> type's **shape as data**, the unrolled loop, the per-iteration check with the
-> field named in the diagnostic, and `--comptime`. `macro`, `quote` and `with`
-> are reserved ([ADR-088](adr/adr-088.md) §5).
+> **And what the bound reaches is built since 0.0.129**
+> ([ADR-181](adr/adr-181.md)): the example above compiles and runs. `T::fields`
+> is a list of reflected fields, the loop over it is **unrolled once per type a
+> call gave the function**, and what is emitted is one copy per type with no
+> generic original and nothing left at run time. A function walks a shape when
+> its **body** says so: a `[T: Struct]` function that never writes `T::fields`
+> is an ordinary generic one. The body is checked once per turn and every
+> message carries the field it came from; a member a reflected field does not
+> have is `NK1180`.
+>
+> **`T::variants` is not built** and is `NK1171`, whose sentence says which half
+> is which: an `enum`'s shape is a different value, because a variant carries a
+> payload where a field carries a type. Nor is D6's `--comptime`, which is the
+> same information the diagnostic carries offered on demand. `macro`, `quote`
+> and `with` are reserved ([ADR-088](adr/adr-088.md) §5).
 
 Capturing an *expression* as a tree, `u.age > 18` for a provider to translate,
 is not part of the language. A query is written in the database's own SQL and

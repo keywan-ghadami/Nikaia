@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.129] — 2026-09-21
+
+**`T::fields` is a list the build walks, and the loop over it is unrolled per
+type** — [ADR-181](docs/specification/adr/adr-181.md), building
+[ADR-088](docs/specification/adr/adr-088.md) D2, D4 and D5. **Part II 10.3's own
+`describe` compiles and runs**, which is the first time anything in that section
+did.
+
+### What was specified, and which half was built
+
+- [ADR-088](docs/specification/adr/adr-088.md) decided the whole section and built two of its six decisions: the **bound** at 0.0.120, and with it D3's `NK1164` at the call. What the bound *reaches* was `NK1171` — a refusal whose entire content was *this is specified and this compiler does not have it*, which was the only honest thing to say, since the member had no value, the loop had no unrolling and the body had no check.
+- **Three records had been waiting on the build-time evaluator**, and by 0.0.128 two were answered. This is the third, and it needed what the other two did not: a type's shape as a value, and a loop that is not a loop in the language below.
+
+### The loop is unrolled, and that is a derivation rather than a keyword
+
+- **`T::fields` is known while the program is built, so a loop over it cannot be anything but unrolled** ([ADR-088](docs/specification/adr/adr-088.md) D4) — there is no run-time reading to rule out. The loop means what a loop always means; only the **stage** is earlier.
+- **One copy per type a call gave the function**, named `describe__User`, and **no generic original**: the generic body holds a loop over a shape, which has no form below. `field.name` becomes a literal and `field.of(value)` becomes `value.name`, so at run time **nothing is left** — no loop, no descriptor, no dispatch (D5's *what remains is the code somebody would have written by hand*).
+- **A function walks a shape when its body says so**, not when its bound allows it. `fn tell[T: Struct](v: T)` that never writes `T::fields` stays an ordinary generic, generic below and emitted once.
+- **The instantiations are the checker's**, handed over keyed by the byte a call stands at, because the emitter has no types ([ADR-028](docs/specification/adr/adr-028.md)) and *which copy `describe(u)` means* is a question about one. One function writes the name at the call and at the definition, so the two cannot drift.
+
+### The body is checked once per turn, and the message says which turn
+
+- **`field.of(value)` is a `String` for one field and an `i64` for the next**, so there is no single type to check the body against — and a body wrong for one field is **right** for the others, on the same line. `total + field.of(value)` over a `User` is one finding, and it carries `unrolling `T::fields` for `User`, at field `name``. Without that line this is the error class C++ templates carried for twenty years.
+- **What the generic walk already said is not said again.** That walk is about the **function** — a misspelled member, say — and repeating it once per turn would turn one mistake into as many as the type has fields. It also refuses nothing about a field it cannot see, because a refusal from there would be a refusal about every turn at once.
+- **`NK1180`** is a member a reflected field does not have: `.name` and `.of(value)` are the whole of what Part II 10.3 gives one, and the list is short enough to print.
+
+### What is still out
+
+- **`T::variants` is not built**, and `NK1171` now says which half is which rather than listing D4 to D6 as open: an `enum`'s shape is a different value, because a variant carries a payload where a field carries a type. The way out names `match`.
+- **D6's `--comptime`** — the report that prints what was unrolled, which is the same information the diagnostic carries offered on demand instead of on failure.
+- **A method that walks a shape**, which would need the instantiation read off a receiver, and a shape walked through a second parameter: the type argument is read off the **first** argument, which is the shape 10.3 writes, and a call whose first argument this checker did not type is left alone rather than guessed at ([ADR-010](docs/specification/adr/adr-010.md) D1).
+- **[`open-work.md`](docs/open-work.md) §2.8 closes** with this, and with it the last of the three records the build-time evaluator was wanted by.
+
 ## [0.0.128] — 2026-09-21
 
 **A fixed table holds a declared type, as a view of one** —

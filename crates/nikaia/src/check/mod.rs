@@ -179,6 +179,35 @@ pub struct Checked {
     /// that knows no types, and a second inference living in it would be the
     /// two halves free to disagree about one program.
     pub with_types: BTreeMap<usize, String>,
+    /// **What a `T::fields` loop was unrolled over**
+    /// ([ADR-181](../../docs/specification/adr/adr-181.md) D1), keyed by the
+    /// function's name and the type argument a call gave it.
+    ///
+    /// The fields in **declaration order**, each with the type it has on that
+    /// type - which is what the per-unrolling check reads and what the emitter
+    /// writes the field reads from. One entry per (function, type) actually
+    /// used, which is [ADR-088](../../docs/specification/adr/adr-088.md) D5's
+    /// *fields × instantiations* counted honestly: a function nobody calls is
+    /// not unrolled at all.
+    pub unrolled: BTreeMap<(String, String), Vec<FieldContract>>,
+    /// **The functions whose body walks a type's fields**, and which parameter
+    /// each walks ([ADR-181](../../docs/specification/adr/adr-181.md) D2).
+    ///
+    /// Beside `unrolled` rather than derived from it, because the two differ in
+    /// the case that matters: a function that walks a shape and is **never
+    /// called** has no instantiation and still may not be emitted, since its
+    /// body holds a loop over a shape and that has no form in the language
+    /// below. Part II 10.3's own block is exactly that shape — a `describe`
+    /// with no call under it — and without this it reached `rustc`, which is
+    /// [Part III C.1](../../docs/specification/30-nikaia-tooling.md)'s class.
+    pub walks_fields: BTreeMap<String, String>,
+    /// The call sites that go to a specialised copy, by the byte the call
+    /// starts at and the name to write there.
+    ///
+    /// **Keyed by the byte** for the reason `comptime_values` is: the emitter
+    /// has no types ([ADR-028](../../docs/specification/adr/adr-028.md)) and
+    /// cannot work out which copy `describe(u)` means.
+    pub unrolled_calls: BTreeMap<usize, String>,
     /// The `for` statements whose **step can fail** (ADR-025 D1), by the byte
     /// the statement starts at.
     ///
@@ -574,6 +603,8 @@ pub fn check_against<'a>(
         structs: BTreeMap::new(),
         enums: BTreeMap::new(),
         variant_owner: BTreeMap::new(),
+        walks_fields: BTreeMap::new(),
+        unrolling: None,
         grammars: parsed
             .program
             .items
@@ -675,6 +706,10 @@ pub fn check_against<'a>(
     };
     checker.collect_types();
     checker.program();
+    // **And once more per unrolled turn** (ADR-088 D5, ADR-181 D2), which the
+    // walk above is what found: a call may stand above the function it names.
+    checker.unroll();
+    checker.checked.walks_fields = checker.walks_fields.clone();
     // ADR-007 D5: the DSL parameters a call forgot, and the ones it invented.
     // A separate walk because it answers a question about a *statement's
     // holes* rather than about a type, and it needs no ledger to answer it.
@@ -966,6 +1001,12 @@ pub struct Propagation {
     pub comptime_values: BTreeMap<usize, (String, String)>,
     /// [`Checked::with_types`].
     pub with_types: BTreeMap<usize, String>,
+    /// [`Checked::unrolled`].
+    pub unrolled: BTreeMap<(String, String), Vec<FieldContract>>,
+    /// [`Checked::walks_fields`].
+    pub walks_fields: BTreeMap<String, String>,
+    /// [`Checked::unrolled_calls`].
+    pub unrolled_calls: BTreeMap<usize, String>,
     /// [`Checked::concatenations`].
     pub concatenations: BTreeSet<usize>,
     /// [`Checked::lent_lets`].
@@ -1039,6 +1080,9 @@ pub fn propagation_against(
         task_handles: checked.task_handles,
         comptime_values: checked.comptime_values,
         with_types: checked.with_types,
+        unrolled: checked.unrolled,
+        walks_fields: checked.walks_fields,
+        unrolled_calls: checked.unrolled_calls,
         concatenations: checked.concatenations,
         lent_lets: checked.lent_lets,
         array_literals: checked.array_literals,
@@ -1107,6 +1151,50 @@ fn rust_constant_type(ty: &Ty) -> Option<String> {
         _ => None,
     }
 }
+
+/// **Whether this body writes `P::fields` anywhere in it**
+/// ([ADR-181](../../docs/specification/adr/adr-181.md) D1).
+///
+/// The **body** and not the bound, because a bound says only that a shape may
+/// be asked for: a `[T: Struct]` function that never asks is an ordinary
+/// generic one and stays generic in the language below.
+///
+/// `crate::emit::visit_block` rather than a walk of this file's own, for the
+/// reason that function is `pub(crate)` at all: a second walk over one shape is
+/// a second thing to keep in step with the AST.
+fn walks_the_fields_of(parsed: &Parsed, body: &crate::ast::Block, parameter: &str) -> bool {
+    let mut found = false;
+    crate::emit::visit_block(body, &mut |expr| {
+        if let Expr::Path(segments) = expr {
+            let names: Vec<&str> = segments.iter().map(|s| parsed.text(*s)).collect();
+            if matches!(names.as_slice(), [ty, member]
+                if *ty == parameter && *member == FIELDS)
+            {
+                found = true;
+            }
+        }
+    });
+    found
+}
+
+/// **The name of one specialised copy** — `describe__User`
+/// ([ADR-181](../../docs/specification/adr/adr-181.md) D2).
+///
+/// `pub(crate)` because the emitter writes the same name at the call and at the
+/// definition, and two spellings of one name is the defect that arrangement
+/// exists to prevent. A double underscore because a `.nika` name may hold one
+/// and this is not a name a program can collide with by accident: `describe__User`
+/// would have to be **written** to clash, and `NK1148` catches that.
+pub(crate) fn specialised(function: &str, on: &str) -> String {
+    format!("{function}__{on}")
+}
+
+/// The member Part II 10.3 writes, and the one this compiler answers.
+///
+/// `variants` is its neighbour in that section and is **not** built: an
+/// `enum`'s shape is a different value, and `NK1171` says so rather than
+/// pretending the two are one feature.
+const FIELDS: &str = "fields";
 
 /// What a `&[T]` is a view of, and `None` for anything else.
 ///
@@ -1408,6 +1496,22 @@ struct Checker<'a> {
     structs: BTreeMap<String, Vec<FieldContract>>,
     /// Every enum declared here, with its variant names.
     enums: BTreeMap<String, BTreeSet<String>>,
+    /// **The functions whose body walks a type's fields**, and which type
+    /// parameter each one walks ([ADR-181](../../docs/specification/adr/adr-181.md)
+    /// D1): `describe` → `T`.
+    ///
+    /// Collected before any body is walked, because a call may stand **above**
+    /// the function it names - items are order-independent here - and what a
+    /// call has to do about one of these is decided at the call.
+    walks_fields: BTreeMap<String, String>,
+    /// The fields the **current** unrolling is over, where this walk is one
+    /// ([ADR-088](../../docs/specification/adr/adr-088.md) D5): the concrete
+    /// type's name and the field this turn stands at.
+    ///
+    /// `None` in the generic body, which is walked once with nothing known -
+    /// so `field.of(value)` answers `?` there and refuses nothing, and the
+    /// refusals that matter come from the unrolled walks.
+    unrolling: Option<(String, FieldContract)>,
     /// `Shape::Spot` → `Shape`, for every variant that carries **named**
     /// fields — the ones a struct literal builds.
     ///
@@ -1958,6 +2062,45 @@ impl<'a> Checker<'a> {
                     }
                 }
                 _ => {}
+            }
+        }
+        self.collect_field_walks();
+    }
+
+    /// **Which functions walk a type's fields, and which parameter each walks**
+    /// ([ADR-181](../../docs/specification/adr/adr-181.md) D1).
+    ///
+    /// Read off the **body** rather than off the bound, because the bound says
+    /// only that a shape *may* be asked for: `fn tell[T: Struct](v: T)` that
+    /// never writes `T::fields` is an ordinary generic function and stays one,
+    /// generic in the language below and emitted once.
+    ///
+    /// Collected before any body is walked, because a call may stand **above**
+    /// the function it names — items are order-independent here — and what a
+    /// call has to do about one of these is decided at the call.
+    fn collect_field_walks(&mut self) {
+        for item in &self.parsed.program.items {
+            let Item::Fn {
+                name: Some(name),
+                generics,
+                body,
+                ..
+            } = &item.node
+            else {
+                continue;
+            };
+            let walked = generics.iter().find_map(|g| {
+                let parameter = self.parsed.text(g.name).to_string();
+                let bounded = g
+                    .bounds
+                    .iter()
+                    .any(|b| self.parsed.text(*b) == crate::types::SHAPE_BOUNDS[0]);
+                let asked = bounded && walks_the_fields_of(self.parsed, body, &parameter);
+                asked.then_some(parameter)
+            });
+            if let Some(parameter) = walked {
+                self.walks_fields
+                    .insert(self.parsed.text(*name).to_string(), parameter);
             }
         }
     }
@@ -4572,6 +4715,23 @@ impl<'a> Checker<'a> {
                 self.a_constructor_written_as_new(&names.join("::"), span);
                 match names.as_slice() {
                     [ty, variant] if self.is_variant(ty, variant) => Ty::named(*ty),
+                    // **`T::fields` is a list of the type's fields**
+                    // ([ADR-088](../../docs/specification/adr/adr-088.md) D2,
+                    // built by [ADR-181](../../docs/specification/adr/adr-181.md)).
+                    // What it hands back is a sequence, so the `for` over it is
+                    // the `for` this checker already reads — D4's *one loop*,
+                    // arrived at rather than added.
+                    [ty, member]
+                        if *member == FIELDS
+                            && self.walks_fields.values().any(|p| p == ty)
+                            && self.type_parameters.contains_key(*ty) =>
+                    {
+                        Ty::Named {
+                            name: "Vec".to_string(),
+                            args: vec![Ty::named(ty::FIELD)],
+                            view: false,
+                        }
+                    }
                     [ty, member] => {
                         self.a_member_this_type_does_not_have(ty, member, span);
                         Ty::Unknown
@@ -4825,6 +4985,33 @@ impl<'a> Checker<'a> {
                     return self.grammar_call(&entered, args, span);
                 }
                 let on = self.expr(receiver, span);
+                // **`field.of(value)`, the one method a reflected field has**
+                // ([ADR-088](../../docs/specification/adr/adr-088.md) D2).
+                //
+                // What it answers is the field's type **on this unrolling**, and
+                // `?` where there is none — which is the generic body, walked
+                // once with nothing known. That walk must refuse nothing about a
+                // field it cannot see, because a body wrong for one field is
+                // wrong at one unrolled copy and right at the others (D5), and
+                // saying so from the generic walk would be saying it about all
+                // of them.
+                if matches!(&on, Ty::Named { name, .. } if name == ty::FIELD) {
+                    args.iter().for_each(|a| {
+                        self.expr(a, span);
+                    });
+                    if let Some(at) = witness {
+                        self.expr(&config[at].value, span);
+                    }
+                    let named = self.parsed.text(*method).to_string();
+                    if named != "of" {
+                        self.a_reflected_field_has_two_members(&format!("{named}(…)"), span);
+                        return Ty::Unknown;
+                    }
+                    return match &self.unrolling {
+                        Some((_, field)) => field.ty.clone(),
+                        None => Ty::Unknown,
+                    };
+                }
                 if let Ty::Nullable(_) = &on {
                     let name = self.parsed.text(*method).to_string();
                     self.reaches_into_a_nullable(&on, Reached::Method(&name), span);
@@ -5066,6 +5253,21 @@ impl<'a> Checker<'a> {
                 if self.opaque_handles.contains(ty) {
                     let ty = ty.clone();
                     self.a_handle_has_nothing_inside(&ty, &format!("the field `{field}`"), span);
+                    return Ty::Unknown;
+                }
+                // **A reflected field answers two members and no others**
+                // ([ADR-088](../../docs/specification/adr/adr-088.md) D2):
+                // `.name` here, and `.of(value)` where a method is called.
+                if ty == ty::FIELD {
+                    if field == "name" {
+                        return Ty::Named {
+                            name: "str".to_string(),
+                            args: Vec::new(),
+                            view: true,
+                        };
+                    }
+                    let held = field.clone();
+                    self.a_reflected_field_has_two_members(&held, span);
                     return Ty::Unknown;
                 }
                 let Some(fields) = self.fields_of(ty) else {
@@ -6410,6 +6612,20 @@ impl<'a> Checker<'a> {
         if let Some(entered) = self.grammar_path(&name) {
             return self.grammar_call(&entered, args, span);
         }
+
+        // **A call to a function that walks a type's fields is an
+        // *instantiation*** ([ADR-181](../../docs/specification/adr/adr-181.md)
+        // D2): the shape is the caller's to supply, so the loop is unrolled
+        // once per type argument actually used and this is where the type
+        // argument is known.
+        //
+        // Recorded here and walked afterwards, because the body has to be read
+        // with the fields in hand and this walk is in the middle of another
+        // one. What is refused at the call itself is `NK1164` — *you passed
+        // something that is not a struct*
+        // ([ADR-088](../../docs/specification/adr/adr-088.md) D3) — which the
+        // bound already answers and which is why this can assume a struct.
+        self.an_instantiation(&name, args, span);
 
         // **A struct literal written like a call**
         // ([ADR-140](../../docs/specification/adr/adr-140.md) D1). `Stats(min: 1)`
@@ -10247,21 +10463,24 @@ impl<'a> Checker<'a> {
         let under_a_bound = parameter
             .is_some_and(|bounds| bounds.iter().any(|b| SHAPE_BOUNDS.contains(&b.as_str())));
         let note = if under_a_bound {
-            // The bound is there and the member is not, which is the honest
-            // half-built state: D2 and D3 are built and D4 to D6 are not.
+            // **`fields` is built and `variants` is not**, which is the honest
+            // half-built state since 0.0.129
+            // ([ADR-181](../../docs/specification/adr/adr-181.md)): a `struct`'s
+            // shape is a list of fields and an `enum`'s is a list of variants,
+            // and only the first is a value this compiler makes.
             format!(
-                "`[{ty}: Struct]` is a bound this compiler answers, and a caller that passes \
-                 something that is not a struct is refused at the call (ADR-088 D3) - but the \
-                 **shape** it makes reachable is not: D4's unrolled loop, D5's per-iteration \
-                 check and D6's report are what ADR-088 §5 still lists as open"
+                "`[{ty}: Struct]` and `{ty}::fields` are built (ADR-181): the loop is \
+                 unrolled, the body is checked once per turn and the diagnostic names the \
+                 field. **`variants` is not** - an `enum`'s shape is a different value, \
+                 and a variant carries a payload where a field carries a type, so the two \
+                 are one feature only on the page"
             )
         } else if parameter.is_some() {
             format!(
                 "Part II 10.3 reads a type's shape as ordinary data, and the **bound** is what \
-                 makes it reachable - `for field in {ty}::{member}` under a `[{ty}: Struct]` \
-                 (ADR-088 D2). That bound is built; what it reaches is not, and ADR-088 §5 \
-                 lists D4 to D6 as open - so writing the bound changes this message and not \
-                 the outcome"
+                 makes it reachable - `for field in {ty}::fields` under a `[{ty}: Struct]` \
+                 (ADR-088 D2, built by ADR-181). Without the bound this parameter is a type \
+                 nothing describes, so writing `[{ty}: Struct]` is what this line needs"
             )
         } else {
             // A type written by name, which is not what 10.3 writes at all: the
@@ -10270,8 +10489,8 @@ impl<'a> Checker<'a> {
             format!(
                 "Part II 10.3 reads a type's shape through a **bound** rather than by name - \
                  `fn describe[T: Struct](value: T)`, and then `T::{member}` inside it \
-                 (ADR-088 D2). The bound is built; what it reaches is not, and ADR-088 §5 \
-                 lists D4 to D6 as open"
+                 (ADR-088 D2, built by ADR-181). A type named outright has its fields \
+                 written down already, so there is nothing for a shape to tell you here"
             )
         };
         self.checked.findings.push(Finding {
@@ -10280,11 +10499,14 @@ impl<'a> Checker<'a> {
             code: "NK1171",
             message: format!("`{ty}::{member}` is specified and this compiler does not have it"),
             notes: vec![note],
-            help: Some(
-                "write the fields out by hand for now - there is no other spelling that does \
-                 what this would"
+            help: Some(match member {
+                "variants" => "walk the variants with a `match`, which is what this language \
+                               has for an `enum`'s shape"
                     .to_string(),
-            ),
+                _ => "write `fn describe[T: Struct](value: T)` and `for field in T::fields` \
+                      inside it (Part II 10.3)"
+                    .to_string(),
+            }),
         });
     }
 
@@ -10451,6 +10673,132 @@ impl<'a> Checker<'a> {
             message: format!("this build may not read `{path}`"),
             notes: vec![note],
             help: Some(way_out),
+        });
+    }
+
+    /// **The body, once per unrolled turn**
+    /// ([ADR-088](../../docs/specification/adr/adr-088.md) D5).
+    ///
+    /// `field.of(value)` has a different type in each turn, so there is no one
+    /// type to check the body against — and a body that is wrong for one field
+    /// is **right** for the others, on the same line. So the walk is repeated
+    /// with the field bound, and every finding it makes carries the note that
+    /// says which turn it came from. Without that line this is the error class
+    /// C++ templates carried for twenty years.
+    ///
+    /// **After the ordinary walk**, because the instantiations are what that
+    /// walk found: a call may stand above the function it names, and which
+    /// types a function is used with is not knowable until every call has been
+    /// read.
+    ///
+    /// The cost is fields × instantiations, and only for the functions that
+    /// walk a shape and only for the types actually used (D5). A function
+    /// nobody calls is not unrolled at all.
+    fn unroll(&mut self) {
+        let instantiations: Vec<(String, String, Vec<FieldContract>)> = self
+            .checked
+            .unrolled
+            .iter()
+            .map(|((name, on), fields)| (name.clone(), on.clone(), fields.clone()))
+            .collect();
+        for (name, on, fields) in instantiations {
+            let Some(item) = self.parsed.program.items.iter().find(|item| {
+                matches!(&item.node, Item::Fn { name: Some(written), .. }
+                    if self.parsed.text(*written) == name)
+            }) else {
+                continue;
+            };
+            let item = item.clone();
+            for field in fields {
+                let before = self.checked.findings.len();
+                let outer = self.unrolling.replace((on.clone(), field.clone()));
+                self.function(&item.node, None);
+                self.unrolling = outer;
+                // **What the generic walk already said is not said again.**
+                // The same body was walked once with nothing known, and a
+                // message from that walk is about the **function** — a
+                // misspelled member, say — so repeating it once per field
+                // would turn one mistake into as many as the type has fields.
+                // What is left is what this turn alone found, which is D5's
+                // whole point.
+                let already: BTreeSet<(&'static str, usize)> = self.checked.findings[..before]
+                    .iter()
+                    .map(|f| (f.code, f.span.start))
+                    .collect();
+                let mut fresh: Vec<Finding> = self.checked.findings.split_off(before);
+                fresh.retain(|f| !already.contains(&(f.code, f.span.start)));
+                for found in &mut fresh {
+                    found.notes.push(format!(
+                        "unrolling `{}::fields` for `{on}`, at field `{}`",
+                        self.walks_fields
+                            .get(&name)
+                            .map(String::as_str)
+                            .unwrap_or("T"),
+                        field.name
+                    ));
+                }
+                self.checked.findings.extend(fresh);
+            }
+        }
+    }
+
+    /// **One instantiation of a function that walks a type's fields**
+    /// ([ADR-181](../../docs/specification/adr/adr-181.md) D2).
+    ///
+    /// The type argument is read off the **first argument**, which is the shape
+    /// Part II 10.3 writes and the only one this compiler can read: a bound
+    /// binds `T` from a parameter's type, and `describe(u)` is where `u`'s type
+    /// says which struct. A call whose argument this checker did not type is
+    /// left alone rather than guessed at — `?` fits everything
+    /// ([ADR-024](../../docs/specification/adr/adr-024.md) D1) and an
+    /// instantiation made from one would be a wrong answer where a missing one
+    /// is right ([ADR-010](../../docs/specification/adr/adr-010.md) D1).
+    fn an_instantiation(&mut self, name: &str, args: &[Expr], span: &Span) {
+        if !self.walks_fields.contains_key(name) {
+            return;
+        }
+        let Some(first) = args.first() else {
+            return;
+        };
+        // **Walked with the walk switched off**, because the argument is walked
+        // again by the ordinary path below and a message said twice is two
+        // problems to a reader.
+        let before = self.checked.findings.len();
+        let given = self.expr(first, span);
+        self.checked.findings.truncate(before);
+        let Ty::Named { name: on, .. } = &given else {
+            return;
+        };
+        let Some(fields) = self.fields_of(on) else {
+            return;
+        };
+        let (on, name) = (on.clone(), name.to_string());
+        self.checked
+            .unrolled_calls
+            .insert(span.start, specialised(&name, &on));
+        self.checked.unrolled.insert((name, on), fields);
+    }
+
+    /// **`NK1180`: a reflected field answers `.name` and `.of(value)`**
+    /// ([ADR-088](../../docs/specification/adr/adr-088.md) D2).
+    ///
+    /// The two are the whole of what Part II 10.3 gives one, and the list is
+    /// short enough to print — which is what makes this a misspelling rather
+    /// than something nobody has told the compiler about.
+    fn a_reflected_field_has_two_members(&mut self, member: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1180",
+            message: format!("a field of `T::fields` has no `{member}`"),
+            notes: vec![
+                "what a reflected field answers is `.name`, the field's own name as text, \
+                 and `.of(value)`, what that field holds on this value (Part II 10.3, \
+                 ADR-088 D2) - and nothing else, because a field descriptor is a shape \
+                 this compiler makes rather than a type a program declares"
+                    .to_string(),
+            ],
+            help: Some("write `.name` or `.of(value)`".to_string()),
         });
     }
 

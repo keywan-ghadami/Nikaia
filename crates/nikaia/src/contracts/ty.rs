@@ -227,6 +227,22 @@ pub const PAUSES: &str = "pauses";
 /// [`Ty::Count`].
 pub const ARRAY: &str = "Array";
 
+/// **What `T::fields` walks**, one element of it
+/// ([ADR-088](../../../docs/specification/adr/adr-088.md) D2,
+/// [ADR-181](../../../docs/specification/adr/adr-181.md)).
+///
+/// A name **no program can write**: `$` is not in an identifier, so a reader
+/// never meets it and a `.nika` file cannot declare one. It is the type a
+/// `for field in T::fields` binding has, and the two members it answers —
+/// `.name` and `.of(value)` — are the whole of what Part II 10.3 gives a
+/// reflected field.
+///
+/// **A type and not a `struct` in `std`**, because it never reaches the
+/// language below: the loop is **unrolled**, so what is emitted is the field
+/// reads a program would have written by hand and there is nothing left for a
+/// descriptor to be at run time.
+pub const FIELD: &str = "$Field";
+
 /// A type's own name, with the module it lives in taken off.
 ///
 /// **Since [ADR-154](../../../docs/specification/adr/adr-154.md) D3 a `std`

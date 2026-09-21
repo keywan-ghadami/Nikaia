@@ -1135,6 +1135,27 @@ struct Emitter<'p> {
     /// this walk has no types, so it is told. A `with` with no entry never
     /// arrives: the checker refused it as `NK1173` first.
     with_types: std::collections::BTreeMap<usize, String>,
+    /// **What a `T::fields` loop was unrolled over**
+    /// ([ADR-181](../../docs/specification/adr/adr-181.md) D2), handed over by
+    /// the checker because this emitter has no types
+    /// ([ADR-028](../../docs/specification/adr/adr-028.md)) and a type argument
+    /// is what decides which copy a call means.
+    unrolled: std::collections::BTreeMap<(String, String), Vec<crate::contracts::FieldContract>>,
+    /// The functions whose body walks a type's fields, whether or not anything
+    /// called them ([`check::Checked::walks_fields`]).
+    walks_fields: std::collections::BTreeMap<String, String>,
+    /// The calls that go to a specialised copy, by the byte the call starts at.
+    unrolled_calls: std::collections::BTreeMap<usize, String>,
+    /// **The copy being written**, while one is: the concrete type the
+    /// parameter stands for, and the parameter's own name.
+    ///
+    /// A `RefCell` because the emitter is `&self` everywhere — it writes rather
+    /// than decides, and this is the one place it carries a position down a
+    /// walk it does not own.
+    specialising: std::cell::RefCell<Option<(String, String)>>,
+    /// The field this unrolled turn stands at: the binding the `for` wrote, and
+    /// the field's own name.
+    at_field: std::cell::RefCell<Option<(String, String)>>,
     /// Part I 3.5: the `?.` reaches whose field is itself nullable and which
     /// therefore flatten (`check::Checked::flattened_reaches`).
     flattened_reaches: std::collections::BTreeSet<(usize, String)>,
@@ -2013,6 +2034,11 @@ impl<'p> Emitter<'p> {
             array_literals: propagation.array_literals,
             comptime_values: propagation.comptime_values,
             with_types: propagation.with_types,
+            unrolled: propagation.unrolled,
+            walks_fields: propagation.walks_fields,
+            unrolled_calls: propagation.unrolled_calls,
+            specialising: std::cell::RefCell::new(None),
+            at_field: std::cell::RefCell::new(None),
             flattened_reaches: propagation.flattened,
             nullable_fields: propagation.nullable_in_fields,
             lent_args: propagation.lent_args,
@@ -2063,12 +2089,161 @@ impl<'p> Emitter<'p> {
         escaped(self.text(sym))
     }
 
+    /// The name of a function whose body walks a type's fields, where this item
+    /// is one ([ADR-181](../../docs/specification/adr/adr-181.md) D2).
+    ///
+    /// Read off the **checker's** answer rather than off the body, which is
+    /// this emitter's rule everywhere: what a type is, and therefore which
+    /// functions were instantiated with what, is the checker's
+    /// ([ADR-028](../../docs/specification/adr/adr-028.md)).
+    fn walks_a_shape(&self, item: &Item) -> Option<String> {
+        let Item::Fn {
+            name: Some(name), ..
+        } = item
+        else {
+            return None;
+        };
+        let name = self.text(*name).to_string();
+        // **Off `walks_fields` and not off `unrolled`**, because the two differ
+        // where it matters: a function that walks a shape and is never called
+        // has no copies, and the generic original still may not be written —
+        // its body holds a loop over a shape. Part II 10.3's own block is that
+        // shape, and it reached `rustc` until this line read the right map.
+        self.walks_fields.contains_key(&name).then_some(name)
+    }
+
+    /// The concrete type the parameter stands for, while a copy is being
+    /// written.
+    fn standing_for(&self) -> Option<String> {
+        self.specialising
+            .borrow()
+            .as_ref()
+            .map(|(_, on)| on.clone())
+    }
+
+    /// The fields a `for` over `T::fields` walks, where this is one
+    /// ([ADR-181](../../docs/specification/adr/adr-181.md) D2).
+    ///
+    /// Asked of the **iterated expression** rather than of the statement,
+    /// because that is where the shape is named — and answered from the
+    /// checker's table, which is the only thing that knows which copy this is.
+    fn unrolls_here(&self, iter: &Expr) -> Option<Vec<crate::contracts::FieldContract>> {
+        let (name, on) = self.specialising.borrow().clone()?;
+        let Expr::Path(segments) = iter else {
+            return None;
+        };
+        let names: Vec<String> = segments.iter().map(|s| self.text(*s).to_string()).collect();
+        let [parameter, member] = names.as_slice() else {
+            return None;
+        };
+        if *parameter != name || member != "fields" {
+            return None;
+        }
+        self.unrolled
+            .get(&(self.enclosing_shape_walk()?, on))
+            .cloned()
+    }
+
+    /// The name of the function this copy is of, while one is being written.
+    ///
+    /// The parameter's name is what `specialising` holds beside the type, so
+    /// the function's own name is looked up the way the copy was chosen: there
+    /// is exactly one entry per (function, type) and the type is in hand.
+    fn enclosing_shape_walk(&self) -> Option<String> {
+        let (parameter, on) = self.specialising.borrow().clone()?;
+        let _ = parameter;
+        self.unrolled
+            .keys()
+            .find(|(_, held)| *held == on)
+            .map(|(written, _)| written.clone())
+    }
+
+    /// **The field this unrolled turn stands at**, where `base.member` is a
+    /// read of the loop's own binding ([ADR-181](../../docs/specification/adr/adr-181.md)
+    /// D2).
+    ///
+    /// `None` everywhere else, which is every program that does not walk a
+    /// shape: the binding's name has to match the one the `for` wrote and the
+    /// member has to be the one asked for, so an ordinary `x.name` on a struct
+    /// called `field` is untouched.
+    fn reflected(&self, base: &Expr, member: Symbol, wanted: &str) -> Option<String> {
+        let (bound, field) = self.at_field.borrow().clone()?;
+        let Expr::Variable(name) = base else {
+            return None;
+        };
+        (self.text(*name) == bound && self.text(member) == wanted).then_some(field)
+    }
+
+    /// The type parameter a shape walk stands on — the `T` of
+    /// `fn describe[T: Struct](value: T)`.
+    ///
+    /// The **first** one, which is what the checker bound: a second parameter
+    /// beside it is an ordinary generic and keeps its place in the signature.
+    fn walked_parameter(&self, item: &Item) -> String {
+        let Item::Fn { generics, .. } = item else {
+            return String::new();
+        };
+        generics
+            .first()
+            .map(|g| self.text(g.name).to_string())
+            .unwrap_or_default()
+    }
+
     /// A module's items and nothing else - no preamble, no `mod` header.
     fn items_only(&self) -> Result<Lowered> {
         let mut out = Out::default();
         self.shadow_types(&mut out);
         self.write_error_sums(&mut out);
         for item in &self.parsed.program.items {
+            // **One copy per type it was used with, and no generic original**
+            // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the
+            // generic body holds a loop over a shape, which has no form in the
+            // language below. It is **unrolled**, which is
+            // [ADR-088](../../docs/specification/adr/adr-088.md) D4's *one loop*
+            // arrived at rather than added - `T::fields` is known while the
+            // program is built, so there is no run-time reading to rule out.
+            if let Some(name) = self.walks_a_shape(&item.node) {
+                let copies: Vec<String> = self
+                    .unrolled
+                    .keys()
+                    .filter(|(written, _)| *written == name)
+                    .map(|(_, on)| on.clone())
+                    .collect();
+                for on in copies {
+                    *self.specialising.borrow_mut() = Some((self.walked_parameter(&item.node), on));
+                    let written =
+                        out.from(&item.span, |out| self.item(out, &item.node, &item.span));
+                    *self.specialising.borrow_mut() = None;
+                    written?;
+                    out.push("\n");
+                }
+                continue;
+            }
+            // **One copy per type it was used with, and no generic original**
+            // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the
+            // generic body holds a loop over a shape, which has no form in the
+            // language below. It is **unrolled**, which is
+            // [ADR-088](../../docs/specification/adr/adr-088.md) D4's *one
+            // loop* arrived at rather than added — `T::fields` is known while
+            // the program is built, so there is no run-time reading to rule
+            // out.
+            if let Some(name) = self.walks_a_shape(&item.node) {
+                let copies: Vec<String> = self
+                    .unrolled
+                    .keys()
+                    .filter(|(written, _)| *written == name)
+                    .map(|(_, on)| on.clone())
+                    .collect();
+                for on in copies {
+                    *self.specialising.borrow_mut() = Some((self.walked_parameter(&item.node), on));
+                    let written =
+                        out.from(&item.span, |out| self.item(out, &item.node, &item.span));
+                    *self.specialising.borrow_mut() = None;
+                    written?;
+                    out.push("\n");
+                }
+                continue;
+            }
             out.from(&item.span, |out| self.item(out, &item.node, &item.span))?;
             out.push("\n");
         }
@@ -2116,6 +2291,55 @@ impl<'p> Emitter<'p> {
         self.write_error_sums(&mut out);
 
         for item in &self.parsed.program.items {
+            // **One copy per type it was used with, and no generic original**
+            // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the
+            // generic body holds a loop over a shape, which has no form in the
+            // language below. It is **unrolled**, which is
+            // [ADR-088](../../docs/specification/adr/adr-088.md) D4's *one loop*
+            // arrived at rather than added - `T::fields` is known while the
+            // program is built, so there is no run-time reading to rule out.
+            if let Some(name) = self.walks_a_shape(&item.node) {
+                let copies: Vec<String> = self
+                    .unrolled
+                    .keys()
+                    .filter(|(written, _)| *written == name)
+                    .map(|(_, on)| on.clone())
+                    .collect();
+                for on in copies {
+                    *self.specialising.borrow_mut() = Some((self.walked_parameter(&item.node), on));
+                    let written =
+                        out.from(&item.span, |out| self.item(out, &item.node, &item.span));
+                    *self.specialising.borrow_mut() = None;
+                    written?;
+                    out.push("\n");
+                }
+                continue;
+            }
+            // **One copy per type it was used with, and no generic original**
+            // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the
+            // generic body holds a loop over a shape, which has no form in the
+            // language below. It is **unrolled**, which is
+            // [ADR-088](../../docs/specification/adr/adr-088.md) D4's *one
+            // loop* arrived at rather than added — `T::fields` is known while
+            // the program is built, so there is no run-time reading to rule
+            // out.
+            if let Some(name) = self.walks_a_shape(&item.node) {
+                let copies: Vec<String> = self
+                    .unrolled
+                    .keys()
+                    .filter(|(written, _)| *written == name)
+                    .map(|(_, on)| on.clone())
+                    .collect();
+                for on in copies {
+                    *self.specialising.borrow_mut() = Some((self.walked_parameter(&item.node), on));
+                    let written =
+                        out.from(&item.span, |out| self.item(out, &item.node, &item.span));
+                    *self.specialising.borrow_mut() = None;
+                    written?;
+                    out.push("\n");
+                }
+                continue;
+            }
             out.from(&item.span, |out| self.item(out, &item.node, &item.span))?;
             out.push("\n");
         }
@@ -3151,11 +3375,19 @@ impl<'p> Emitter<'p> {
         // no slot for one - so a program that passed every stage of this
         // compiler asked `rustc` about a type nobody had declared, which is
         // Part III C.1's class exactly.
-        let declared: Vec<String> = generics
-            .iter()
-            .map(|g| self.bounded(g))
-            .chain(dsl.clone())
-            .collect();
+        //
+        // **A copy has no type parameter left**
+        // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the whole of
+        // what the parameter was for is the shape, and the shape is written out
+        // here. What stands in the signature is the type itself.
+        let declared: Vec<String> = match self.specialising.borrow().is_some() {
+            true => dsl.clone().into_iter().collect(),
+            false => generics
+                .iter()
+                .map(|g| self.bounded(g))
+                .chain(dsl.clone())
+                .collect(),
+        };
 
         // Kap 7.1: `throws` becomes a `Result` in the emitted Rust, over
         // `Box<dyn Error>` because Nikaia's own error types are not lowered
@@ -3266,6 +3498,14 @@ impl<'p> Emitter<'p> {
         } else {
             escaped(&name).into_owned()
         };
+        // **One copy per type this was used with**
+        // ([ADR-181](../../docs/specification/adr/adr-181.md) D2), named so the
+        // call and the definition cannot drift: `check::specialised` writes
+        // both.
+        let emitted = match self.standing_for() {
+            Some(on) => crate::check::specialised(&emitted, &on),
+            None => emitted,
+        };
 
         // ADR-055 D1: a function that can pause is an `async fn`, and one the
         // ledger's `sync` column says cannot is a plain `fn`. The property is
@@ -3292,6 +3532,15 @@ impl<'p> Emitter<'p> {
         } else {
             ""
         };
+        // **A name this compiler chose is not one the program wrote**
+        // ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)):
+        // `describe__User` is a copy's name ([ADR-181](../../docs/specification/adr/adr-181.md)
+        // D2) and Rust's own lint would ask the author to rename a function
+        // they wrote as `describe`.
+        if self.specialising.borrow().is_some() {
+            out.push("#[allow(non_snake_case)]\n");
+            out.push(&pad);
+        }
         out.push(&format!(
             "{vis}{pausing}fn {emitted}{}({}){ret} ",
             angled(&declared),
@@ -4030,6 +4279,29 @@ impl<'p> Emitter<'p> {
             return format!("({})", parts.join(", "));
         }
 
+        // **The parameter stands for the type, while a copy is written**
+        // ([ADR-181](../../docs/specification/adr/adr-181.md) D2). A specialised
+        // copy has no `T` left in its signature, so every position that wrote
+        // one writes the type instead — which is what makes the copy an
+        // ordinary function the language below compiles.
+        //
+        // **The borrow is taken and let go before the recursion**, because the
+        // call below reaches this line again and a `RefCell` held across it is
+        // a panic rather than a message.
+        let standing = self.specialising.borrow().clone();
+        if let Some((parameter, on)) = standing {
+            if ty.generics.is_empty() && ty.code.is_none() && self.text(ty.name) == parameter {
+                let concrete = crate::ast::Type {
+                    name: self.parsed.interner.intern_string(&on),
+                    ..ty.clone()
+                };
+                let held = self.specialising.replace(None);
+                let written = self.ty_counted(&concrete, lifetimes, count);
+                *self.specialising.borrow_mut() = held;
+                return written;
+            }
+        }
+
         // **A parameter that is code**
         // ([ADR-102](../../docs/specification/adr/adr-102.md) D1), lowered as
         // D5's **run** case: a closure argument, which is what `std`'s own
@@ -4610,6 +4882,28 @@ impl<'p> Emitter<'p> {
                 iter,
                 body,
             } => {
+                // **A loop over a type's fields is not a loop below**
+                // ([ADR-088](../../docs/specification/adr/adr-088.md) D4,
+                // [ADR-181](../../docs/specification/adr/adr-181.md) D2): it is
+                // known while the program is built, so what is emitted is the
+                // block once per field — the code somebody would have written
+                // by hand, with no loop and no dispatch (D5's *at run time:
+                // nothing*).
+                if let Some(fields) = self.unrolls_here(iter) {
+                    let bound = bindings
+                        .first()
+                        .map(|b| self.text(*b).to_string())
+                        .unwrap_or_default();
+                    for field in fields {
+                        let outer = self
+                            .at_field
+                            .replace(Some((bound.clone(), field.name.clone())));
+                        let written = self.block(out, body, depth, flow, Tail::Statement);
+                        *self.at_field.borrow_mut() = outer;
+                        written?;
+                    }
+                    return Ok(());
+                }
                 let names = bindings
                     .iter()
                     .map(|b| self.name(*b))
@@ -4948,6 +5242,17 @@ impl<'p> Emitter<'p> {
                 args,
                 config,
             } => {
+                // **`field.of(value)` is the field read a program would have
+                // written by hand** ([ADR-088](../../docs/specification/adr/adr-088.md)
+                // D2, D5's *at run time: nothing*): `value.name`, with no
+                // descriptor and no dispatch left.
+                if let Some(field) = self.reflected(receiver, *method, "of") {
+                    if let Some(value) = args.first() {
+                        self.postfix_base(out, value, depth, flow)?;
+                        out.push(&format!(".{}", escaped(&field)));
+                        return Ok(());
+                    }
+                }
                 // **`error.full()` in a handler a named channel reached**
                 // ([ADR-157](../../docs/specification/adr/adr-157.md) D2). Part
                 // I 7.1 writes it as an ordinary call, and it is one — but the
@@ -5086,6 +5391,13 @@ impl<'p> Emitter<'p> {
                 out.push("]");
             }
             Expr::Field { base, name } => {
+                // **`field.name` is the field's own name as text**
+                // ([ADR-088](../../docs/specification/adr/adr-088.md) D2): a
+                // literal, because the turn this copy stands at is known.
+                if let Some(field) = self.reflected(base, *name, "name") {
+                    out.push(&format!("\"{}\"", field));
+                    return Ok(());
+                }
                 self.postfix_base(out, base, depth, flow)?;
                 out.push(&format!(".{}", self.name(*name)));
             }
@@ -5878,6 +6190,24 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        // **A call to a function that walks a type's fields goes to the copy**
+        // ([ADR-181](../../docs/specification/adr/adr-181.md) D2), and which
+        // copy is the checker's answer: this emitter has no types
+        // ([ADR-028](../../docs/specification/adr/adr-028.md)), so the name is
+        // handed over keyed by the byte the call stands at.
+        if let Some(copy) = self.unrolled_calls.get(&flow.statement) {
+            if matches!(func, Expr::Variable(_)) {
+                out.push(&format!("{copy}("));
+                for (at, arg) in args.iter().enumerate() {
+                    if at > 0 {
+                        out.push(", ");
+                    }
+                    self.expr(out, arg, depth, flow)?;
+                }
+                out.push(")");
+                return Ok(());
+            }
+        }
         if let Expr::Variable(name) = func {
             let text = self.text(*name);
 

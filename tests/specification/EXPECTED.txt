@@ -80,7 +80,7 @@
 20-nikaia-advance.md #2 refused (as written) [NK1175]  // The compiler runs the Json grammar at build time.
 20-nikaia-advance.md #3 lowered (as written)  fn parse_input(input: String) throws {
 20-nikaia-advance.md #4 lowered (as written)  comptime ROUTES: Fixed[&str, i64] = [("get", 1), ("post…
-20-nikaia-advance.md #5 refused (as written) [NK1171]  fn describe[T: Struct](value: T) {
+20-nikaia-advance.md #5 lowered (as written)  fn describe[T: Struct](value: T) {
 20-nikaia-advance.md #6 fragment (as written)  use nikaia_sql::{Database, mysql}
 20-nikaia-advance.md #7 refused (as written) [sketch NK1117,NK1135]  impl SqlParser {
 20-nikaia-advance.md #8 fragment (as written)  rule expr -> Expr # "expression" =
