@@ -1125,14 +1125,19 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
             // array of it is an array of views: `[&str; N]`, which a `const`
             // holds for the same reason `const X: &str` is one.
             build_time::Value::Text(_) => "&str".to_string(),
+            // **A struct is its own name below**, which is the same answer the
+            // single struct gets one shape in: a declaration the program wrote
+            // is a type the language below has, and what a `const` needs is the
+            // name. Whether the *fields* can be written is the declaration's
+            // question, and `unwritable_field` asks it.
+            build_time::Value::Struct { name, .. } => name.clone(),
             // An array of arrays has a length per level and this reads one, so
             // it says nothing rather than guessing.
             build_time::Value::List(_)
             // A tuple's `const` form is the pair it is, and the only place one
             // stands is inside a `Fixed` — where the two halves are written
             // into two tables rather than beside each other.
-            | build_time::Value::Tuple(_)
-            | build_time::Value::Struct { .. } => return None,
+            | build_time::Value::Tuple(_) => return None,
         };
         match &found {
             // `[1, 3_000_000_000]` is an `i64` array and not a mixed one: the
@@ -1191,9 +1196,9 @@ fn rust_array_value(items: &[build_time::Value]) -> Option<String> {
             build_time::Value::Bool(yes) => yes.to_string(),
             // The same literal the single text crosses as, element for element.
             build_time::Value::Text(text) => format!("\"{}\"", build_time::written(text)),
-            build_time::Value::List(_)
-            | build_time::Value::Tuple(_)
-            | build_time::Value::Struct { .. } => return None,
+            // …and a struct is the literal `rust_value` writes for one.
+            value @ build_time::Value::Struct { .. } => rust_value(value)?,
+            build_time::Value::List(_) | build_time::Value::Tuple(_) => return None,
         });
     }
     Some(format!("[{}]", written.join(", ")))
@@ -8447,6 +8452,10 @@ impl<'a> Checker<'a> {
                 self.a_path_that_is_not_a_literal(span);
                 (None, true)
             }
+            Err(build_time::Refusal::GrammarWall { grammar, rule, why }) => {
+                self.a_grammar_that_did_not_run(&grammar, &rule, &why, span);
+                (None, true)
+            }
         }
     }
 
@@ -9298,6 +9307,41 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **What a declared type is called below**, where `rust_constant_type`
+    /// cannot say.
+    ///
+    /// That function knows the types Part I 2.2 offers and nothing else, which
+    /// is right for a free function: it has no program to ask. This has one —
+    /// a `struct` a `.nika` file declares is a `struct` in the generated file
+    /// under the same name, so `const P: Point = …` and
+    /// `const ROWS: [Setting; 2] = …` are both things the language below holds.
+    ///
+    /// **Only the shape, never the fields.** Whether a `Point`'s fields can be
+    /// written into a `const` is [`Checker::unwritable_field`]'s question, and
+    /// it asks the declaration.
+    fn declared_below(&self, ty: &Ty) -> Option<String> {
+        match ty {
+            Ty::Named {
+                name,
+                args,
+                view: false,
+            } if args.is_empty() && self.fields_of(name).is_some() => Some(name.clone()),
+            Ty::Named {
+                name,
+                args,
+                view: false,
+            } if name == ty::ARRAY => match args.as_slice() {
+                [element, Ty::Count(n)] => {
+                    let element =
+                        rust_constant_type(element).or_else(|| self.declared_below(element))?;
+                    Some(format!("[{element}; {n}]"))
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// **The first field of a declared `struct` that has no `const` form.**
     ///
     /// Asked of the **declaration** and not of the value, which is the whole of
@@ -9956,6 +10000,96 @@ impl<'a> Checker<'a> {
             span: span.clone(),
             code: "NK1175",
             message: format!("this build may not read `{path}`"),
+            notes: vec![note],
+            help: Some(way_out),
+        });
+    }
+
+    /// **`NK1178`: a grammar this compiler could not run while it built**
+    /// ([`open-work.md`](../../docs/open-work.md) §2.9).
+    ///
+    /// One code and six sentences, because what a reader can do about it
+    /// differs completely: input the parser refused is theirs to fix, a parser
+    /// that did not compile is this compiler's, and a result with no crossed
+    /// form is a decision [ADR-079](../../docs/specification/adr/adr-079.md)
+    /// has not taken yet.
+    fn a_grammar_that_did_not_run(
+        &mut self,
+        grammar: &str,
+        rule: &str,
+        why: &crate::grammar_run::Wall,
+        span: &Span,
+    ) {
+        use crate::grammar_run::Wall;
+        let entry = format!("{grammar}::{rule}");
+        let (message, note, way_out) = match why {
+            // **The input's own diagnostic, relayed whole.** It is in the
+            // grammar's vocabulary and counts its line and column against the
+            // bytes that were parsed, which is what Part II 10.2 A means by
+            // *invalid input fails the build*.
+            Wall::Refused { detail } => (
+                format!("`{entry}` refused the bytes this build gave it"),
+                format!(
+                    "the parser's own words, against the input:\n{}",
+                    indented(detail)
+                ),
+                "fix the input, or widen the grammar to accept it".to_string(),
+            ),
+            Wall::NoCrossedForm { ty, because } => (
+                format!("`{entry}` hands back a `{ty}`, which has no build-time form"),
+                format!(
+                    "a grammar runs here and its result has to **cross** into the program \
+                     (ADR-079 D1): {because}"
+                ),
+                "write a rule whose result is a whole number, a `bool`, text, a list of \
+                 those or a `struct` whose fields are those"
+                    .to_string(),
+            ),
+            Wall::InsideAnother { grammar: outer } => (
+                format!("`{entry}` would run while `{outer}` is running"),
+                "running a grammar compiles a parser, so one inside another would have \
+                 this compiler start a second compiler inside the first - which is a \
+                 build that does not end rather than one that is slow"
+                    .to_string(),
+                "run the inner grammar in a `comptime` of its own, and read its value here"
+                    .to_string(),
+            ),
+            Wall::NowhereToBuild => (
+                format!("`{entry}` has nowhere to compile its parser"),
+                "a grammar is run by compiling the parser it generates, which needs a \
+                 directory to build in - and this build has none"
+                    .to_string(),
+                "run this through `nikaia build` or `nikaia --input`, which both have one"
+                    .to_string(),
+            ),
+            Wall::DidNotBuild { detail } => (
+                format!("the parser `{entry}` generates did not compile"),
+                format!(
+                    "that is this compiler's fault and not this program's: the parser built \
+                     here is the parser the program links, so a program that runs cannot \
+                     have a parser that does not.\n{}",
+                    indented(detail)
+                ),
+                "please report it - a `.nika` file and this message are the whole of what \
+                 is needed"
+                    .to_string(),
+            ),
+            Wall::Unreadable { detail } => (
+                format!("`{entry}` ran and printed something this compiler could not read"),
+                format!(
+                    "the encoder is generated and the decoder is written by hand, which is \
+                     two halves of one format: {detail}"
+                ),
+                "please report it - this is a defect in the compiler rather than in the \
+                 program"
+                    .to_string(),
+            ),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1178",
+            message,
             notes: vec![note],
             help: Some(way_out),
         });
@@ -11020,15 +11154,17 @@ impl<'a> Checker<'a> {
             // *value* is what says it is one: `rust_constant_type` knows the
             // types Part I 2.2 offers and cannot know a `Point`, where a
             // `Value::Struct` names the very type the declaration did.
-            (Some(want), _, _) => rust_constant_type(want).or_else(|| match &evaluated {
-                Some(build_time::Value::Struct { name, .. })
-                    if matches!(want, Ty::Named { name: wanted, args, view: false }
+            (Some(want), _, _) => rust_constant_type(want)
+                .or_else(|| self.declared_below(want))
+                .or_else(|| match &evaluated {
+                    Some(build_time::Value::Struct { name, .. })
+                        if matches!(want, Ty::Named { name: wanted, args, view: false }
                         if wanted == name && args.is_empty()) =>
-                {
-                    Some(name.clone())
-                }
-                _ => None,
-            }),
+                    {
+                        Some(name.clone())
+                    }
+                    _ => None,
+                }),
             (None, Some(folded), _) => Some(match &folded.pinned {
                 Some(pinned) => pinned.clone(),
                 None => match i32::try_from(folded.value) {
@@ -11880,6 +12016,20 @@ fn moves_away(ty: &Ty) -> bool {
         Ty::Tuple(parts) => parts.iter().any(moves_away),
         _ => false,
     }
+}
+
+/// A relayed diagnostic, moved under the note that introduces it.
+///
+/// **Relayed whole and not re-worded**: the parser's message is in the
+/// grammar's own vocabulary and counts its line and column against the bytes
+/// that were parsed, which is the one place they mean anything. What this does
+/// is put it where the eye is already looking.
+fn indented(text: &str) -> String {
+    text.trim_end()
+        .lines()
+        .map(|line| format!("       {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Whether a name is one of the types **Part I 2.2** offers, which no

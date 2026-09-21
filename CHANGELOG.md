@@ -4,6 +4,38 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.124] — 2026-09-21
+
+**A grammar runs while the program is built, by compiling the parser it
+generates** — [ADR-177](docs/specification/adr/adr-177.md), and Part II 10.2 A
+is a program.
+
+### The decision is what *not* to do
+
+- **The compiler holds the grammar tree, so walking it is the short path — and it is refused.** `winnow-grammar` is a code **generator**: its model crate parses the grammar language, validates it and hands the result to a macro that writes a parser. There is no interpreter in it to borrow, so interpreting here would be a **second implementation of the same semantics**, and Part II 10.2's *one grammar, two stages* would stop being a property and become a hope.
+- **The disagreements would not land where anybody looked.** Implicit whitespace, repetition bounds, the commit point, frames and resynchronisation, interning, spans — and they would present as *this file parsed while the program was built and fails while it runs*, for the same file and the same grammar.
+
+### So the generated parser is compiled and run
+
+- **The compiler writes a small Cargo project** holding the grammar's own lowering, the types its rules produce and a driver, builds it, and runs it over the bytes. One implementation, so the agreement is a tautology rather than a claim. `comptime SETTINGS: Array[Setting, 2] = Cfg::file(asset("app.conf"))` reaches the generated file as `const SETTINGS: [Setting; 2] = [Setting { key: "host", value: "example.com" }, …];` — with the grammar's own `s.trim()` already applied, and **no parser left in the program**.
+- **The cost is [ADR-026](docs/specification/adr/adr-026.md) Q4's second compilation**, keyed on what went into it: written and built when the grammar changes, reused otherwise.
+- **It needs no new security model.** A grammar's actions are Nikaia and [ADR-075](docs/specification/adr/adr-075.md) says what a build-time body may do; the bytes come from `asset("…")` and [ADR-072](docs/specification/adr/adr-072.md) says which. Neither the permission nor the input is new here.
+
+### Refused
+
+- **`NK1178`**, one code and six sentences, because what a reader can do differs completely. **Invalid input fails the build in the parser's own words** — relayed whole rather than re-worded, because it is in the grammar's vocabulary and counts its line and column against the bytes that were parsed. A result with **no build-time form** is refused from the rule's *declaration*, before a parser is compiled: there is no point building one to learn that its answer has nowhere to go. A grammar inside a grammar would have this compiler start a second compiler inside the first.
+- **And the sentence differs by reason.** A float is not refused because *a `const` cannot hold one* — Rust holds `const X: f64` happily; it is refused because a value this compiler carries while it builds is a whole number, a `bool`, text, a list or a `struct`, and there is no float among the five. An `enum` variant is the same absence one shape over.
+
+### Measured, and it is the finding worth keeping
+
+- **Neither grammar in the corpus produces a result that crosses.** `examples/json.nika`'s `Json` is an `enum` with `Vec` payloads; `examples/config.nika`'s `Section` holds a `Vec[Setting]`, a field that owns memory. So the mechanism runs and [ADR-079](docs/specification/adr/adr-079.md) D1 is what stops both.
+- **Part II 10.2 A's own example is in that set**, and the baseline records the move: `Json::value(asset("config.json"))` used to be `NK1127` — *this compiler cannot evaluate it* — and is `NK1175` without a list and `NK1178` with one. Which is this working, and the crossing being the next question.
+- **What does cross, and what the tests run**, is a rule handing back a list of `struct`s whose fields are text — the shape a configuration file has, and the shape the database driver ([`open-work.md`](docs/open-work.md) §2.40) wants.
+
+### Also
+
+- **A `struct` this program declares is its own name below**, in an array as well as alone: `const ROWS: [Setting; 2]` needed `rust_constant_type` to know a type it cannot know, so the checker answers it — that function has no program to ask and this has one.
+
 ## [0.0.123] — 2026-09-21
 
 **A file a build reads is named three times** —

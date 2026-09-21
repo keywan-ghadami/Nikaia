@@ -644,7 +644,11 @@ those is the one that needs something new. The rest are shapes this compiler
 has.
 
 *What it does **not** include:* running a **grammar**. That looks like the same
-job and is not; it is the next entry's, and the reason is there.
+job and is not, and it is built elsewhere: the generated parser is compiled and
+run rather than the grammar interpreted ([ADR-177](specification/adr/adr-177.md)),
+because `winnow-grammar` is a code generator with no interpreter in it and a
+second implementation of one semantics is what Part II 10.2's promise cannot
+survive.
 
 ### 2.43. The escape set is Rust's, and no page says so
 
@@ -676,59 +680,6 @@ that needs the set written down first.
 refusal in this compiler's words. The first half is the owner's sentence, since
 *which escapes this language has* is a decision even where the answer is
 *Rust's*.
-
-### 2.9. Running a grammar while the program is built is not interpretation
-
-*The distinction, because it is the whole entry.* A grammar could be run at build
-time by interpreting the grammar tree the compiler already holds. **It must not
-be**, and the reason is not the size of the work.
-
-`winnow-grammar` is a code **generator**: its model crate parses the grammar
-language, validates and analyses it, and hands the result to a macro that writes
-a parser. Its own summary says so — *"intended to be used by procedural macros
-that generate parsers"*. There is no interpreter in it to borrow.
-
-So interpreting a grammar here would be a **second implementation of the same
-semantics**, and the two would have to agree exactly. Part II 10.2 promises that
-one grammar means the same thing at both stages; with two implementations that
-stops being a property and becomes a hope. The disagreements would land in the
-corners — implicit whitespace, repetition bounds, the commit point, frames and
-resynchronisation, interning, spans — and would present as *"this file parsed
-while the program was built and fails while it runs"*, for the same file and the
-same grammar.
-
-*What to do instead:* compile the **generated** parser during the build and run
-it. Then there is one implementation and the agreement is a tautology rather than
-a claim. The cost is a second compilation, which
-[ADR-026](specification/adr/adr-026.md) Q4 named — and which the build cache
-turns from *every build* into *when the grammar changes*, since
-[ADR-021](specification/adr/adr-021.md) keys on the source. The compiler already
-emits Rust and already drives Cargo, so the machinery is not new.
-
-*Why this needs no new security model:* a grammar's action blocks are Nikaia, and
-[ADR-075](specification/adr/adr-075.md) already says what a build-time body may
-do. Running a generated parser is covered by the same rule as any other
-build-time call.
-
-*And what stood in front of it is gone, and the front door is built.*
-[ADR-072](specification/adr/adr-072.md) said *built: no* because *`const` has no
-syntax, so there is nothing to check yet*; the order that record implied has
-been walked — `comptime` since [ADR-097](specification/adr/adr-097.md), Q4's
-evaluation rules as [ADR-075](specification/adr/adr-075.md)'s two ledger
-columns, the evaluator at 0.0.108 to 0.0.120 — and at 0.0.123 the check landed
-with `asset("…")` under it. `comptime CONFIG: &str = asset("config.txt")` is a
-`const` holding the file's text, under a list named in three places. So
-[ADR-026](specification/adr/adr-026.md) is down to one open thing, what bounds a
-build-time body's **memory**, and what this entry needs is no longer a rule at
-the front: it is the second compilation itself.
-
-*What it unblocks:* `comptime CONFIG = Config.value(from "config.toml")` — the
-case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
-[ADR-072](specification/adr/adr-072.md) decided the permission for — **and the
-database driver**, below, whose whole first step is a grammar declaring what
-columns a query returns. That entry says what the narrow half costs, which is
-less than this one's general case: a flat list of declarations rather than an
-arbitrary value.
 
 ### 2.10. The cleanup point the ledger should narrate
 
@@ -1404,19 +1355,12 @@ approximation, and `dsl html { … }` is the one block this compiler runs at all
 by [ADR-017](specification/adr/adr-017.md), because `html` is the target it
 compiles itself.
 
-*Measured, and the measurement is the point:* the emitter already writes a
-complete `grammar! { … }` for a grammar item, and `sysroot.rs` already knows
-where `winnow_grammar` and `winnow` are. What is missing is the **harness** — a
-crate holding one grammar and a `main` that parses the block's bytes, compiled
-and run during the build, keyed in the cache on the grammar's source — and a way
-for what it found to come **back**: for this record that is narrow (a flat list
-of declared columns and parameters), where the general case of §2.9's own
-example (`comptime CONFIG = Config.value(from "config.toml")`) has to carry an
-arbitrary value.
-
-*So the order inside this entry is not the record's:* the harness first, then
-step 1. Neither is small, and the harness delivers nothing a reader of a program
-would notice — which is worth knowing before it is started rather than after.
+*And the harness this waited on is built* ([ADR-177](specification/adr/adr-177.md)):
+a crate holding the grammar and a `main` that parses the bytes, compiled and run
+during the build, keyed on what went into it. What comes **back** is a
+build-time value, and the shape this record needs — a flat list of declared
+columns and parameters — is one of the five that cross. So what is left here is
+the driver's own work rather than the machinery under it.
 
 ### 2.41. One name the prelude promises and `std` does not have
 

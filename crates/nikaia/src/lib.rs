@@ -15,6 +15,7 @@ pub mod emit;
 pub mod fixed;
 pub mod fold;
 pub mod foreign;
+pub mod grammar_run;
 pub mod interpreter;
 pub mod manifest;
 pub mod modules;

@@ -178,6 +178,17 @@ pub enum Refusal {
     /// is read, the path is in hand, and the answer is no — with a reason that
     /// differs per shape, so the sentence is the checker's to write.
     MayNotRead { path: String, why: Denied },
+    /// **A grammar this compiler could not run**
+    /// ([`open-work.md`](../../../docs/open-work.md) §2.9).
+    ///
+    /// Six reasons and one variant, because the sentence is the checker's to
+    /// write and they share nothing but the code: a parser that did not compile
+    /// is this compiler's fault, and input the parser refused is the input's.
+    GrammarWall {
+        grammar: String,
+        rule: String,
+        why: crate::grammar_run::Wall,
+    },
     /// **A path that is not a literal** (D4).
     ///
     /// Its own variant because it is answered *before* the argument is
@@ -427,6 +438,30 @@ impl<'a> BuildTime<'a> {
                 self.call(&key, &given)
             }
             Expr::MethodCall { method, .. } => Err(self.no_method_here(*method)),
+            // **A grammar's entry, run by compiling the parser it generates**
+            // ([`open-work.md`](../../../docs/open-work.md) §2.9, Part II
+            // 10.2 A). `Json::value(asset("config.json"))` says *when* with the
+            // `comptime` around it, *where the bytes come from* with `asset`,
+            // and *what is done with them* here.
+            Expr::Call { func, args, config }
+                if config.is_empty() && matches!(func.as_ref(), Expr::Path(_)) =>
+            {
+                let Expr::Path(path) = func.as_ref() else {
+                    return Err(Refusal::Unevaluable);
+                };
+                let names: Vec<&str> = path.iter().map(|s| self.parsed.text(*s)).collect();
+                let [grammar, rule] = names.as_slice() else {
+                    return Err(Refusal::Unevaluable);
+                };
+                let (grammar, rule) = (grammar.to_string(), rule.to_string());
+                let [input] = args.as_slice() else {
+                    return Err(Refusal::Unevaluable);
+                };
+                let Value::Text(input) = self.expr(input, frame)? else {
+                    return Err(Refusal::Unevaluable);
+                };
+                self.grammar(&grammar, &rule, &input)
+            }
             Expr::Call { func, args, config } if config.is_empty() => {
                 let Expr::Variable(name) = func.as_ref() else {
                     return Err(Refusal::Unevaluable);
@@ -690,6 +725,63 @@ impl<'a> BuildTime<'a> {
                       to a function of this file",
         }
     }
+    /// **A grammar, run while the program is built**
+    /// ([`open-work.md`](../../../docs/open-work.md) §2.9).
+    ///
+    /// Not interpreted: the generated parser is compiled and run, so there is
+    /// one implementation of the grammar language and Part II 10.2's *the same
+    /// syntax and the same meaning* is a tautology rather than a claim.
+    /// [`crate::grammar_run`] says why at length.
+    ///
+    /// **The grammar may be in another file**, which is the same rule a call
+    /// across a file boundary already follows: a program's files share one
+    /// namespace (Part I 9.1), and each owns the interner its symbols resolve
+    /// in — so the parser is compiled from the file that *declared* it.
+    fn grammar(&mut self, grammar: &str, rule: &str, input: &str) -> Result<Value, Refusal> {
+        let Some((parsed, result)) = self.rule_of(grammar, rule) else {
+            return Err(Refusal::Unevaluable);
+        };
+        let ask = crate::grammar_run::Ask {
+            grammar,
+            rule,
+            input,
+            result: &result,
+        };
+        match self.reads.workshop().run(parsed, &ask) {
+            Ok(dump) => crate::grammar_run::decode(&dump).map_err(|why| Refusal::GrammarWall {
+                grammar: grammar.to_string(),
+                rule: rule.to_string(),
+                why,
+            }),
+            Err(why) => Err(Refusal::GrammarWall {
+                grammar: grammar.to_string(),
+                rule: rule.to_string(),
+                why,
+            }),
+        }
+    }
+
+    /// The file a grammar was declared in, and what its `pub` rule hands back.
+    fn rule_of(&self, grammar: &str, rule: &str) -> Option<(&'a Parsed, crate::contracts::ty::Ty)> {
+        std::iter::once(self.parsed)
+            .chain(self.beside.iter().copied())
+            .find_map(|parsed| {
+                let found = parsed
+                    .program
+                    .items
+                    .iter()
+                    .find_map(|item| match &item.node {
+                        Item::Grammar(def) if parsed.text(def.name) == grammar => def
+                            .rules
+                            .iter()
+                            .find(|r| r.is_public && parsed.text(r.name) == rule),
+                        _ => None,
+                    })?;
+                let ty = found.ret_type.as_ref()?;
+                Some((parsed, crate::contracts::ty::Ty::from_ast(parsed, ty)))
+            })
+    }
+
     /// **The file a build reads**
     /// ([ADR-116](../../../docs/specification/adr/adr-116.md) D2).
     ///

@@ -360,6 +360,30 @@ pub struct Parsed {
 }
 
 impl Parsed {
+    /// The same file with only the items `keep` says yes to.
+    ///
+    /// **The interner travels with them**, which is the whole reason this is a
+    /// method rather than a struct literal somewhere: a `Symbol` is meaningful
+    /// only with the context it was interned into, so a subset of the items has
+    /// to keep the same one. Written for the sub-project a grammar run compiles
+    /// ([`crate::grammar_run`]), which wants the types and the grammar and not
+    /// the program's `fn main`.
+    pub fn keeping(&self, keep: impl Fn(&ast::Item) -> bool) -> Parsed {
+        Parsed {
+            program: ast::Program {
+                items: self
+                    .program
+                    .items
+                    .iter()
+                    .filter(|item| keep(&item.node))
+                    .cloned()
+                    .collect(),
+            },
+            interner: self.interner.clone(),
+            aliases: self.aliases.clone(),
+        }
+    }
+
     /// Resolve an identifier back to its text.
     pub fn text(&self, sym: Symbol) -> &str {
         self.interner.resolve(sym)

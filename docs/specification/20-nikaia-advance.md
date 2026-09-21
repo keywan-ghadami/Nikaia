@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.123 (Draft)
+**Version:** 0.0.124 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -169,13 +169,20 @@ switched off without editing anything ([ADR-072](adr/adr-072.md) D3).
 > `comptime CONFIG: &str = asset("config.txt")` is a `const` holding the file's
 > text, `NK1175` says which of the three namings a refused read is missing,
 > `NK1176` refuses a path the build worked out, and `NK1177` refuses an `asset`
-> written outside a `comptime` with the name of the run-time read. Not
-> implemented are **running a grammar** while the program is built, which
-> compiles the generated parser rather than interpreting the grammar
-> (`docs/open-work.md` §2.9) — so `Json::value(asset("…"))`, the binding in A,
-> reads its bytes and has nothing to run over them yet — and
-> [ADR-079](adr/adr-079.md) D5's serialised blob, which waits for a table large
-> enough to ask for it.
+> written outside a `comptime` with the name of the run-time read.
+>
+> **And A is implemented** ([ADR-177](adr/adr-177.md)): a grammar runs here by
+> **compiling the parser it generates** rather than by interpreting the grammar,
+> so there is one implementation of the grammar language and this section's *the
+> same syntax and the same meaning* is a tautology. Invalid input fails the build
+> in the parser's own words. What A's own example still meets is the
+> **crossing**: `Json::Value` is an `enum`, and a build-time value is a whole
+> number, a `bool`, text, a list and a `struct` — so it is `NK1178` with the
+> reason rather than a parse that happens and has nowhere to land. A rule whose
+> result is one of the five crosses and runs.
+>
+> Not implemented is [ADR-079](adr/adr-079.md) D5's serialised blob, which waits
+> for a table large enough to ask for it.
 
 ### 10.3. Generating Code from a Type's Shape
 Where 10.1 reads data, this section reads **types**. A function such as

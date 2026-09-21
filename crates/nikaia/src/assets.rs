@@ -117,6 +117,17 @@ pub struct Reads {
     root: PathBuf,
     /// `None` is D1, and D1 is the default.
     list: Option<Allowlist>,
+    /// **Where this build compiles the parsers it runs**
+    /// ([`crate::grammar_run`], [`open-work.md`](../../../docs/open-work.md)
+    /// §2.9).
+    ///
+    /// Here rather than threaded a second time through the same six
+    /// signatures, and it belongs with the reads for the reason they belong
+    /// with each other: both are facts about the **invocation** that no ledger
+    /// can carry, both are wanted by the evaluator, and both are off for a
+    /// caller that says nothing. A grammar run's bytes come through
+    /// `asset("…")`, so the two arrive together in practice as well.
+    workshop: crate::grammar_run::Workshop,
     /// Path (as the literal wrote it) to the SHA-256 of what was read.
     ///
     /// **Behind a lock because the evaluator holds a `&Reads`** and the cache
@@ -140,8 +151,35 @@ impl Reads {
         Reads {
             root: root.into(),
             list: Some(list),
-            taken: Mutex::new(BTreeMap::new()),
+            ..Reads::default()
         }
+    }
+
+    /// A build with a root and **no** list: it reads nothing (D1), and it has
+    /// somewhere to resolve a path against. What it can still do is run a
+    /// grammar over text the program wrote down.
+    pub fn at(root: impl Into<PathBuf>) -> Reads {
+        Reads {
+            root: root.into(),
+            ..Reads::default()
+        }
+    }
+
+    /// The same, told where to compile the parsers it runs.
+    ///
+    /// **Not under the source tree**, which is the rule the build cache already
+    /// keeps: a loose `.nika` file outside a project has nothing written beside
+    /// it, so this is handed the cache's own neighbour rather than the root.
+    pub fn building_in(self, at: impl Into<PathBuf>) -> Reads {
+        Reads {
+            workshop: crate::grammar_run::Workshop::at(at),
+            ..self
+        }
+    }
+
+    /// Where a parser is compiled, for the evaluator that runs one.
+    pub fn workshop(&self) -> &crate::grammar_run::Workshop {
+        &self.workshop
     }
 
     /// Whether a list is in effect at all — D1 read as a question.

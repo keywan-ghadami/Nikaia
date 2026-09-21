@@ -962,7 +962,7 @@ const RESERVED_BELOW: &[&str] = &[
 ///
 /// Borrowed where nothing changes, which is every name in every program written
 /// today.
-fn escaped(name: &str) -> std::borrow::Cow<'_, str> {
+pub fn escaped(name: &str) -> std::borrow::Cow<'_, str> {
     match RESERVED_BELOW.contains(&name) {
         true => std::borrow::Cow::Owned(format!("r#{name}")),
         false => std::borrow::Cow::Borrowed(name),

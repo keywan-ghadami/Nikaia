@@ -573,8 +573,12 @@ pub fn lower_reading(
     // sentence about the wrong thing.
     let reads = match allowlist {
         Some(list) => assets::Reads::with(&layout.root, assets::Allowlist::read(list)?),
-        None => assets::Reads::none(),
-    };
+        None => assets::Reads::at(&layout.root),
+    }
+    // **Where a grammar's parser is compiled** (`open-work.md` §2.9). Beside
+    // the cache rather than under the root, which is the rule that file already
+    // keeps: a loose `.nika` outside a project has nothing written next to it.
+    .building_in(layout.store.with_file_name("build-time"));
     let choices = match reads.list_digest() {
         Some(digest) => settings.choices().reading(digest),
         None => settings.choices(),
@@ -2042,6 +2046,24 @@ fn run_directly(binary: &std::path::Path, args: &[String]) -> Result<i32> {
     // report for one, and the alternative - claiming success - is the one answer
     // that must not be given.
     Ok(status.code().unwrap_or(1))
+}
+
+/// The same, for a program this compiler wrote for its own use — the parser a
+/// grammar run compiles ([`crate::grammar_run`]).
+///
+/// **The same table a program gets**, rendered: a parser compiled against a
+/// different `winnow` from the one the program links is a type error at every
+/// `Stream`, and the point of compiling the generated parser at all is that it
+/// *is* the program's parser.
+pub fn runtime_dependencies_for(rust: &str) -> Vec<(String, String)> {
+    runtime_dependencies(rust, crate::emit::ReentrancyCheck::default())
+        .map(|table| {
+            table
+                .into_iter()
+                .map(|(name, value)| (format!("{name:?}"), value.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn runtime_dependencies(
