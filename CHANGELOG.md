@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.117] — 2026-09-21
+
+**The fixed map's threshold is measured** — [ADR-079](docs/specification/adr/adr-079.md)
+D3 said *how it is looked up is the compiler's* and named no number, and
+[`staging-candidates.md`](docs/staging-candidates.md) ends on the rule that says
+one is needed before any of it is built.
+
+### Measured
+
+- **[`docs/fixed-map-lookup.md`](docs/fixed-map-lookup.md): the crossover is between 8 and 16 keys.** At eight a `match` is ahead by **2.4×** on a hit and **4.3×** on a miss — a handful of keys is ruled out by length and one comparison, and no hash beats that. From sixteen the perfect hash is ahead on both paths and never gives the lead back: flat at 12–14 ns whatever `N` is, where the `match` climbs to 25 at 256.
+- **The third contender was never in the room.** [ADR-073](docs/specification/adr/adr-073.md) §3 measured a `match` against a `HashMap` — 9.05 against 18.65 on 200 keys — and [ADR-079](docs/specification/adr/adr-079.md) §3 reads it as *200 keys favour a `match`*. Against a **perfect hash**, which is what a compiler that owns its key set can build, a `match` of 200 keys is **behind by 1.9×**. That record now says so.
+- **Both paths, because they are not the same shape.** A table of keywords is asked *is this a keyword* far more often than *which one*, and a `match` rules a miss out by length where a perfect hash pays one hash either way.
+
+### The trap, which is the most useful line in that file
+
+- **The first run said the crossover was between 128 and 256, and it was wrong.** The probes cycled through the keys **in order**, so the branch predictor learned the *benchmark* rather than the lookup. A shuffled probe order says something else entirely. `staging-candidates.md` §5 warns about picking a benchmark that does not exercise the change; this is the same mistake one level down, and only a fairness check found it.
+- **A harness baseline is what says it is not still happening**: a function returning the key's length costs 1.78 ns through the same loop, so the rows are the lookup rather than the loop.
+
+### Asked
+
+- **What does a program write, for a map the build can see?** In [`open-decisions.md`](docs/open-decisions.md). The lowering is now decidable and the *input* is not: a program builds a map with `collections::HashMap()` and `insert`, both `std`'s, whose bodies are Rust — and there is no map literal. Three options, and the recommendation is the one that adds **no new syntax**: a list of pairs whose **declared type** says it crosses as a map, which is [ADR-152](docs/specification/adr/adr-152.md) D4's rule already used twice.
+
 ## [0.0.116] — 2026-09-21
 
 **A constant is an item, and an item is visible wherever its file is** — which
