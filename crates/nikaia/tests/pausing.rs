@@ -197,7 +197,7 @@ fn a_program_with_both_kinds_runs() {
          \x20   return n * 2\n\
          }\n\
          \n\
-         fn size(path: &str) -> i64 throws {\n\
+         fn size(path: ref String) -> i64 throws {\n\
          \x20   let text = fs::read_to_string(path)\n\
          \x20   return text.len()\n\
          }\n\

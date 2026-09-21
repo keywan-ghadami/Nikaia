@@ -187,7 +187,7 @@ fn a_comptime_binding_over_text_folds() {
 #[test]
 fn a_comptime_list_of_text_crosses_as_an_array_of_views() {
     let rust = lower(
-        "comptime NAMES: Array[&str, 3] = [\"get\", \"post\", \"put\"]\n\
+        "comptime NAMES: Array[ref String, 3] = [\"get\", \"post\", \"put\"]\n\
          fn main() { for name in NAMES { println(name) } }",
     );
     assert!(

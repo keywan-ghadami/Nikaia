@@ -169,7 +169,7 @@ fn a_break_is_how_an_unconditional_loop_ends() {
 fn a_break_in_a_catch_handler_leaves_the_loop() {
     let source = "use std::fs\n\
          \n\
-         fn read_them(paths: Vec[&str]) -> i64 {\n\
+         fn read_them(paths: Vec[ref String]) -> i64 {\n\
          \x20   let mut seen = 0\n\
          \x20   for p in paths {\n\
          \x20       let text = fs::read_to_string(p) catch {\n\

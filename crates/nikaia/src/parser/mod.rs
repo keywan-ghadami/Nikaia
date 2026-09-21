@@ -587,6 +587,32 @@ fn split_mut(params: Vec<(bool, Symbol)>) -> (Vec<Symbol>, Vec<Symbol>) {
     (params.into_iter().map(|(_, name)| name).collect(), mutable)
 }
 
+/// **The note a parse error gets where the program wrote the spelling `ref`
+/// replaced** ([ADR-184](../../../docs/specification/adr/adr-184.md) D4).
+///
+/// `&` left the language at 0.0.134 and the grammar has no rule for it, so what
+/// a program written before that gets is *found unexpected token `&`* — true,
+/// and no help at all. A way out that cannot be taken is not one
+/// ([Part III C.2](../../../docs/specification/30-nikaia-tooling.md)), and here
+/// there is one and it is a single word.
+///
+/// **Only for a bare `&`.** `&&` is a program's *and* and is untouched, which
+/// is the one place the character is still the language's.
+fn the_spelling_ref_replaced_note(rendered: &str) -> String {
+    const MARK: &str = "found unexpected token `";
+    let Some(after) = rendered.split(MARK).nth(1) else {
+        return String::new();
+    };
+    if after.split('`').next() != Some("&") {
+        return String::new();
+    }
+    "\nnote: a view is written `ref T` (Part I, 6.5): `ref String` for text, \
+     `ref Array[T]` for a run of elements, `ref value` for the borrow an \
+     expression writes. `&` was the spelling until 0.0.134 and is not one now - \
+     `&&` is still this language's *and*."
+        .to_string()
+}
+
 fn reserved_word_note(rendered: &str) -> String {
     const MARK: &str = "found unexpected token `";
     let Some(after) = rendered.split(MARK).nth(1) else {
@@ -830,8 +856,9 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
                 return crate::diagnostics::refuse(rendered);
             }
             let note = format!(
-                "{}{}{}",
+                "{}{}{}{}",
                 reserved_word_note(&rendered),
+                the_spelling_ref_replaced_note(&rendered),
                 coalesce_fallback_note(&rendered),
                 let_names_note(&rendered)
             );
@@ -1443,10 +1470,6 @@ grammar! {
                 Receiver { is_ref: true, is_mut: true }
             }
           | KW_REF KW_SELF -> { Receiver { is_ref: true, is_mut: false } }
-          | "&" KW_MUT KW_SELF -> {
-                Receiver { is_ref: true, is_mut: true }
-            }
-          | "&" KW_SELF -> { Receiver { is_ref: true, is_mut: false } }
           // Before the bare arm: `self: i64` is a parameter somebody named
           // `self`, and the bare arm would take the word and leave the `: i64`
           // to fail as the *next* parameter - at the colon, with nothing to say.
@@ -1671,23 +1694,15 @@ grammar! {
         //
         // **First**, because the named alternative below begins with the same
         // optional `&` and would take the `&` and then fail on the `[`.
+        // **`ref Array[T]` is the run, and the bracket form is gone with the
+        // `&`** ([ADR-184](../../../../docs/specification/adr/adr-184.md) D3,
+        // D4): `Array[T]` with no count names a run and `ref` makes it a view
+        // of one, which is the second alternative below reading its own name.
+        // Two spellings for one idea is what that record exists to remove.
         rule type_ref -> Type # "type" =
-            view:amp "[" element:type_ref "]" -> {
-                Type {
-                    name: _state.intern("slice"),
-                    generics: vec![element],
-                    is_view: true,
-                    is_tuple: false,
-                    is_nullable: false,
-                    code: None,
-                    count: None,
-                    is_mut: view,
-                    is_slice: true,
-                }
-            }
-          // `&str` is a view marker (Part II, 10.6), not a lifetime - the `&`
-          // is recorded and the emitter decides what it becomes.
-          | view:amp?
+          // `ref String` is a view marker (Part II, 10.6), not a lifetime - the
+          // word is recorded and the emitter decides what it becomes.
+            view:amp?
             name:type_name
             generics:generic_type_args?
             nullable:question?
@@ -1788,9 +1803,7 @@ grammar! {
         // **`ref` is the word and `&` is the spelling it replaces**
         // ([ADR-184](../../../../docs/specification/adr/adr-184.md) D1). Both
         // parse while the corpus moves; D4 is where the second one leaves.
-        rule amp -> bool =
-            KW_REF m:kw_mut? -> { m.is_some() }
-          | "&" m:kw_mut? -> { m.is_some() }
+        rule amp -> bool = KW_REF m:kw_mut? -> { m.is_some() }
 
         // Part I 2.3: the trailing `?` that makes a type nullable. It comes
         // last, after the arguments, so `Vec[i64]?` is a nullable list and not
@@ -2548,7 +2561,6 @@ grammar! {
           // after it is not this arm at all, which is what leaves `ref` an
           // ordinary name.
           | KW_REF -> { UnaryOp::Ref }
-          | "&" -> { UnaryOp::Ref }
 
         rule postfix_expr -> Expr =
             base:primary_expr tail:postfix_tail* -> { fold_postfix(base, tail) }

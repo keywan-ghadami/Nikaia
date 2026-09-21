@@ -71,12 +71,12 @@ fn output(purpose: &str, source: &str) -> String {
 
 /// Part I 7.1's error type, with both variant shapes it writes.
 const CONFIG_ERROR: &str = "enum ConfigError {\n\
-                            \x20   NotFound(&str),\n\
-                            \x20   BadSyntax { line: i64, expected: &str },\n\
+                            \x20   NotFound(ref String),\n\
+                            \x20   BadSyntax { line: i64, expected: ref String },\n\
                             }\n\
                             \n\
                             impl Error for ConfigError {\n\
-                            \x20   fn message(&self) -> String {\n\
+                            \x20   fn message(ref self) -> String {\n\
                             \x20       match self {\n\
                             \x20           ConfigError::NotFound(p) => f\"no config at {p}\"\n\
                             \x20           ConfigError::BadSyntax { line, expected } => f\"line {line}: expected {expected}\"\n\
@@ -135,7 +135,7 @@ fn two_error_types_are_a_sum() {
     let source = format!(
         "{CONFIG_ERROR}enum NetError {{ Down }}\n\
          impl Error for NetError {{\n\
-         \x20   fn message(&self) -> String {{ return \"down\" }}\n\
+         \x20   fn message(ref self) -> String {{ return \"down\" }}\n\
          }}\n\
          fn load(down: bool) -> i64 throws {{\n\
          \x20   if down {{ throw NetError::Down }}\n\
@@ -178,7 +178,7 @@ fn an_error_that_borrows_the_caller_s_buffer_compiles() {
     let printed = output(
         "error-borrowing",
         &format!(
-            "{CONFIG_ERROR}fn load(path: &str) -> i64 throws {{\n\
+            "{CONFIG_ERROR}fn load(path: ref String) -> i64 throws {{\n\
              \x20   throw ConfigError::NotFound(path)\n\
              }}\n\
              fn main() {{\n\
@@ -361,8 +361,8 @@ fn a_handler_that_ignores_the_error_is_untouched() {
 fn a_librarys_error_type_is_a_channel() {
     let rust = lowered(
         "use std::fs\n\
-         fn load(path: &str) -> String throws {\n\
-         \x20   return fs::read_to_string(&path)\n\
+         fn load(path: ref String) -> String throws {\n\
+         \x20   return fs::read_to_string(ref path)\n\
          }\n\
          fn main() { }\n",
     );
@@ -377,8 +377,8 @@ fn a_librarys_error_type_is_a_channel() {
 fn a_librarys_error_needs_no_envelope() {
     let rust = lowered(
         "use std::fs\n\
-         fn load(path: &str) -> String throws {\n\
-         \x20   return fs::read_to_string(&path)\n\
+         fn load(path: ref String) -> String throws {\n\
+         \x20   return fs::read_to_string(ref path)\n\
          }\n\
          fn main() { }\n",
     );
@@ -394,8 +394,8 @@ fn a_failure_from_std_is_matched_by_variant() {
         "library-error-matched",
         "use std::fs\n\
          use std::io\n\
-         fn load(path: &str) -> String throws {\n\
-         \x20   return fs::read_to_string(&path)\n\
+         fn load(path: ref String) -> String throws {\n\
+         \x20   return fs::read_to_string(ref path)\n\
          }\n\
          fn main() {\n\
          \x20   let text = load(\"nope.txt\") catch {\n\
@@ -419,8 +419,8 @@ fn the_long_form_says_there_is_no_site() {
     let printed = output(
         "library-error-full",
         "use std::fs\n\
-         fn load(path: &str) -> String throws {\n\
-         \x20   return fs::read_to_string(&path)\n\
+         fn load(path: ref String) -> String throws {\n\
+         \x20   return fs::read_to_string(ref path)\n\
          }\n\
          fn main() {\n\
          \x20   let text = load(\"nope.txt\") catch {\n\

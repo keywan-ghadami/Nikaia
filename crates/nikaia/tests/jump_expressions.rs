@@ -34,7 +34,7 @@ const BAD: &str = "enum Bad { OutOfRange(i64), Missing }\n";
 #[test]
 fn an_arm_may_throw_and_the_match_keeps_its_type() {
     let source = format!(
-        "{BAD}fn grade(score: i64) -> &str throws {{\n\
+        "{BAD}fn grade(score: i64) -> ref String throws {{\n\
          \x20   return match score {{\n\
          \x20       90..100 => \"A\",\n\
          \x20       else => throw Bad::OutOfRange(score),\n\
@@ -168,7 +168,7 @@ fn a_loop_body_may_be_one_return() {
 #[test]
 fn the_braced_forms_are_unchanged() {
     let source = format!(
-        "{BAD}fn grade(score: i64) -> &str throws {{\n\
+        "{BAD}fn grade(score: i64) -> ref String throws {{\n\
          \x20   return match score {{\n\
          \x20       90..100 => \"A\",\n\
          \x20       else => {{ throw Bad::OutOfRange(score) }},\n\

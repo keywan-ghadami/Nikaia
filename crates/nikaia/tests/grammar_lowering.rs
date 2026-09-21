@@ -379,7 +379,7 @@ fn a_tuple_of_views_ties_its_struct_to_the_input() {
     let source = concat!(
         "@borrowed\n",
         "pub struct Pair {\n",
-        "    both: (&str, i64),\n",
+        "    both: (ref String, i64),\n",
         "}\n"
     );
     let emitted = emit(source, Build::default());
@@ -452,7 +452,7 @@ fn an_enum_lowers_its_three_variant_shapes() {
 /// lifetime the same way (ADR-008, and `borrowing_structs`).
 #[test]
 fn an_enum_that_carries_a_view_takes_the_input_lifetime() {
-    let source = "enum Token {\n    End,\n    Word(&str),\n}\n";
+    let source = "enum Token {\n    End,\n    Word(ref String),\n}\n";
     let emitted = emit(source, Build::default());
     assert!(emitted.contains("enum Token<'a>"), "{emitted}");
     assert!(emitted.contains("Word(&'a str)"), "{emitted}");
@@ -640,7 +640,7 @@ fn a_type_argument_is_written_with_brackets_and_emitted_with_angles() {
     let source = r#"
 grammar Ids {
     rule N -> i32 = n:dec[i32](digit{1,2}) -> { n }
-    rule T -> &str = t:text(alpha1 digit*) -> { t }
+    rule T -> ref String = t:text(alpha1 digit*) -> { t }
     pub rule entry -> i32 = n:N -> { n }
 }
 "#;
@@ -698,7 +698,7 @@ fn a_rule_reached_through_a_dot_is_refused() {
                   \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d }\n\
                   }\n\
                   \n\
-                  fn read(text: &str) { let n = Nums.number(text) catch { 0 } }\n";
+                  fn read(text: ref String) { let n = Nums.number(text) catch { 0 } }\n";
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's ledger");

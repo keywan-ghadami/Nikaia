@@ -53,7 +53,7 @@ fn a_method_that_calls_itself_and_pauses_is_boxed() {
         "use std::fs\n\nstruct Node { n: i64 }\n\
          \n\
          impl Node {\n\
-         \x20   fn walk(&self, depth: i64) -> i64 {\n\
+         \x20   fn walk(ref self, depth: i64) -> i64 {\n\
          \x20       if depth == 0 { return self.n }\n\
          \x20       let text = fs::read_to_string(\"x\") catch { return 0 }\n\
          \x20       return self.walk(depth - 1) + (text.len() as i64)\n\
@@ -77,12 +77,12 @@ fn a_cycle_of_two_pausing_methods_is_boxed() {
         "use std::fs\n\nstruct Node { n: i64 }\n\
          \n\
          impl Node {\n\
-         \x20   fn down(&self, depth: i64) -> i64 {\n\
+         \x20   fn down(ref self, depth: i64) -> i64 {\n\
          \x20       if depth == 0 { return self.n }\n\
          \x20       let text = fs::read_to_string(\"x\") catch { return 0 }\n\
          \x20       return self.up(depth - 1) + (text.len() as i64)\n\
          \x20   }\n\
-         \x20   fn up(&self, depth: i64) -> i64 {\n\
+         \x20   fn up(ref self, depth: i64) -> i64 {\n\
          \x20       if depth == 0 { return 0 }\n\
          \x20       return self.down(depth - 1)\n\
          \x20   }\n\
@@ -107,11 +107,11 @@ fn a_pausing_method_that_does_not_recur_is_not_boxed() {
         "use std::fs\n\nstruct Node { n: i64 }\n\
          \n\
          impl Node {\n\
-         \x20   fn read(&self) -> i64 {\n\
+         \x20   fn read(ref self) -> i64 {\n\
          \x20       let text = fs::read_to_string(\"x\") catch { return 0 }\n\
          \x20       return text.len() as i64\n\
          \x20   }\n\
-         \x20   fn twice(&self) -> i64 { return self.read() + self.read() }\n\
+         \x20   fn twice(ref self) -> i64 { return self.read() + self.read() }\n\
          }\n\
          \n\
          fn main() {\n\
@@ -132,7 +132,7 @@ fn a_recursive_sync_method_is_left_alone() {
         "struct Node { n: i64 }\n\
          \n\
          impl Node {\n\
-         \x20   fn count(&self, depth: i64) -> i64 sync {\n\
+         \x20   fn count(ref self, depth: i64) -> i64 sync {\n\
          \x20       if depth == 0 { return self.n }\n\
          \x20       return self.count(depth - 1) + 1\n\
          \x20   }\n\

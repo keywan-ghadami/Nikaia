@@ -68,7 +68,7 @@ fn one(source: &str, reads: &Reads) -> Finding {
     found.remove(0)
 }
 
-const READS_IT: &str = "comptime CONFIG: &str = asset(\"config.txt\")\n\
+const READS_IT: &str = "comptime CONFIG: ref String = asset(\"config.txt\")\n\
      \n\
      fn main() {\n\
      \x20   print(CONFIG)\n\
@@ -195,7 +195,7 @@ fn a_path_that_leaves_the_root_is_refused() {
     for path in ["../secret.txt", "/etc/passwd"] {
         let dir = scratch("reads-escaping", &[], &[path]);
         let source = format!(
-            "comptime A: &str = asset(\"{path}\")\n\
+            "comptime A: ref String = asset(\"{path}\")\n\
              \n\
              fn main() {{ print(A) }}"
         );
@@ -220,8 +220,8 @@ fn a_path_that_leaves_the_root_is_refused() {
 #[test]
 fn a_path_the_build_works_out_is_refused_even_when_it_would_have_been_allowed() {
     let dir = scratch("reads-computed", &[("config.txt", "x")], &["config.txt"]);
-    let source = "comptime NAME: &str = \"config.txt\"\n\
-         comptime A: &str = asset(NAME)\n\
+    let source = "comptime NAME: ref String = \"config.txt\"\n\
+         comptime A: ref String = asset(NAME)\n\
          \n\
          fn main() { print(A) }";
     let found = one(source, &reads(&dir));
@@ -241,7 +241,7 @@ fn bytes_that_are_not_text_are_refused() {
     let dir = common::scratch_dir("reads-binary");
     std::fs::write(dir.join("bin.dat"), [0xff, 0xfe, 0x00]).expect("write it");
     std::fs::write(dir.join("reads.txt"), "bin.dat\n").expect("write the list");
-    let source = "comptime A: &str = asset(\"bin.dat\")\n\
+    let source = "comptime A: ref String = asset(\"bin.dat\")\n\
          \n\
          fn main() { print(A) }";
     let found = one(source, &reads(&dir));

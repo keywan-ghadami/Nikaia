@@ -491,7 +491,7 @@ fn a_safe_reach_calls_a_method_and_short_circuits() {
 struct User { name: String }
 
 impl User {
-    fn greet(&self, greeting: &str) -> String {
+    fn greet(ref self, greeting: ref String) -> String {
         return f\"{greeting}, {self.name}\"
     }
 }
@@ -531,7 +531,7 @@ use std::fs
 struct Store { root: String }
 
 impl Store {
-    fn read(&self, path: &str) -> String throws {
+    fn read(ref self, path: ref String) -> String throws {
         return fs::read_to_string(path)
     }
 }
@@ -575,12 +575,12 @@ fn long_enough(name: String) -> String? {
 }
 
 impl User {
-    fn nickname(&self) -> String? {
+    fn nickname(ref self) -> String? {
         return long_enough(self.name.clone())
     }
 }
 
-fn find(name: &str) -> User? {
+fn find(name: ref String) -> User? {
     return User { name: name.to_string() }
 }
 
@@ -602,7 +602,7 @@ fn a_reached_method_on_a_plain_value_is_refused_in_the_spelling_it_was_written()
     let found = findings(
         "\
 struct U { name: String }
-impl U { fn n(&self) -> i64 { return 1 } }
+impl U { fn n(ref self) -> i64 { return 1 } }
 fn main() {
     let u = U { name: \"a\".to_string() }
     let x = u?.n()
@@ -666,7 +666,7 @@ fn a_reach_that_answers_null_falls_through_to_the_next_fallback() {
 struct User { name: String }
 
 impl User {
-    fn greet(&self) -> String { return f\"hi, {self.name}\" }
+    fn greet(ref self) -> String { return f\"hi, {self.name}\" }
 }
 
 fn find(id: i64) -> User? {
@@ -792,8 +792,8 @@ fn a_value_of_unknown_type_is_converted_rather_than_left_alone() {
 struct U { name: String }
 
 impl U {
-    fn copy(&self) -> String? { return self.name.clone() }
-    fn rest(&self) -> &str? { return self.name.strip_prefix(\"A\") }
+    fn copy(ref self) -> String? { return self.name.clone() }
+    fn rest(ref self) -> ref String? { return self.name.strip_prefix(\"A\") }
 }
 
 fn main() {
@@ -827,8 +827,8 @@ fn a_value_of_known_type_still_gets_the_constructor() {
 struct U { name: String }
 
 impl U {
-    fn known(&self) -> String? { return \"lit\".to_string() }
-    fn unknown(&self) -> String? { return self.name.repeat(1) }
+    fn known(ref self) -> String? { return \"lit\".to_string() }
+    fn unknown(ref self) -> String? { return self.name.repeat(1) }
 }
 
 fn free() -> String? { return \"lit\".to_string() }

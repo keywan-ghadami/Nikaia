@@ -226,7 +226,7 @@ fn the_pages_own_example_runs() {
          enum Timeout { TooSlow }\n\
          \n\
          impl Error for Timeout {\n\
-         \x20   fn message(&self) -> String {\n\
+         \x20   fn message(ref self) -> String {\n\
          \x20       match self {\n\
          \x20           Timeout::TooSlow => { return \"too slow\".to_string() }\n\
          \x20       }\n\

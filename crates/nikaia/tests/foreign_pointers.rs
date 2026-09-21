@@ -46,10 +46,10 @@ fn lowered(source: &str) -> String {
 fn a_view_in_a_declaration_is_the_pointer() {
     let rust = lowered(
         "extern \"C\" {\n\
-         \x20   fn strlen(s: &[u8]) -> usize\n\
-         \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
-         \x20   fn takes_one(n: &i32) -> i32\n\
-         \x20   fn fills_one(n: &mut i32) -> i32\n\
+         \x20   fn strlen(s: ref Array[u8]) -> usize\n\
+         \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
+         \x20   fn takes_one(n: ref i32) -> i32\n\
+         \x20   fn fills_one(n: ref mut i32) -> i32\n\
          }\n\
          \n\
          fn main() { println(\"x\") }\n",
@@ -64,14 +64,14 @@ fn a_view_in_a_declaration_is_the_pointer() {
     }
 }
 
-/// **And the call is where the address is made.** A declaration says `&[u8]`
+/// **And the call is where the address is made.** A declaration says `ref Array[u8]`
 /// and C takes the first element's address, so `bytes` becomes
 /// `bytes.as_ptr()` — one call that a `Vec`, an `Array` and text all answer.
 #[test]
 fn a_call_hands_over_the_address() {
     let rust = lowered(
         "extern \"C\" {\n\
-         \x20   fn strlen(s: &[u8]) -> usize\n\
+         \x20   fn strlen(s: ref Array[u8]) -> usize\n\
          }\n\
          \n\
          fn main() {\n\
@@ -100,13 +100,13 @@ fn a_value_parameter_is_passed_as_it_was_written() {
     assert!(rust.contains("abs(-3)"), "{rust}");
 }
 
-/// **A `&[u8]` takes what lends a run of bytes** (D1), and the fit is where the
+/// **A `ref Array[u8]` takes what lends a run of bytes** (D1), and the fit is where the
 /// declaration and the caller meet: a list, a fixed-size array and text all
 /// hand over the same thing.
 #[test]
 fn what_a_caller_may_hand_a_run() {
-    let run = Ty::parse("&[u8]");
-    for written in ["Vec[u8]", "Array[u8, 3]", "String", "&str", "?"] {
+    let run = Ty::parse("ref Array[u8]");
+    for written in ["Vec[u8]", "Array[u8, 3]", "String", "ref String", "?"] {
         assert!(
             Ty::parse(written).fits(&run),
             "`{written}` lends a run of bytes"
@@ -121,18 +121,21 @@ fn what_a_caller_may_hand_a_run() {
 /// declaration ship in the ledger (Part III 13.5).
 #[test]
 fn the_boundary_types_round_trip_through_their_text() {
-    for written in ["ref [u8]", "ref mut [u8]", "ref mut i32"] {
+    for written in ["ref Array[u8]", "ref mut Array[u8]", "ref mut i32"] {
         let ty = Ty::parse(written);
         assert_eq!(ty.text(), written);
         assert_eq!(Ty::parse(&ty.text()), ty);
         assert!(matches!(ty, Ty::Pointed { .. }), "{ty:?}");
     }
-    // **And the spelling `ref` replaces reads back as the same type**
-    // ([ADR-184](../../../docs/specification/adr/adr-184.md) D1, D4), which is
-    // what lets a ledger written before 0.0.133 still be read.
+    // **And every spelling this one replaced reads back as the same type**
+    // ([ADR-184](../../../docs/specification/adr/adr-184.md) D1, D3, D4), which
+    // is what lets a ledger written before 0.0.134 still be read: `&` left the
+    // **language** and this is a machine format the compiler reads, not a
+    // program a person writes.
     for (old, new) in [
-        ("&[u8]", "ref [u8]"),
-        ("&mut [u8]", "ref mut [u8]"),
+        ("&[u8]", "ref Array[u8]"),
+        ("ref [u8]", "ref Array[u8]"),
+        ("&mut [u8]", "ref mut Array[u8]"),
         ("&mut i32", "ref mut i32"),
     ] {
         assert_eq!(Ty::parse(old), Ty::parse(new), "{old}");
@@ -143,15 +146,15 @@ fn the_boundary_types_round_trip_through_their_text() {
     assert!(matches!(Ty::parse("ref String"), Ty::Named { .. }));
 }
 
-/// **A `&mut [u8]` is not a `&[u8]`**, because the second promises not to
+/// **A `ref mut Array[u8]` is not a `ref Array[u8]`**, because the second promises not to
 /// write; and neither is a `&u8`, because one is a run and the other is one
 /// element.
 #[test]
 fn the_shapes_do_not_fit_each_other() {
-    assert!(!Ty::parse("&mut [u8]").fits(&Ty::parse("&[u8]")));
-    assert!(!Ty::parse("&[u8]").fits(&Ty::parse("&mut [u8]")));
-    assert!(!Ty::parse("&mut i32").fits(&Ty::parse("&mut [i32]")));
-    assert!(Ty::parse("&mut [u8]").fits(&Ty::parse("&mut [u8]")));
+    assert!(!Ty::parse("ref mut Array[u8]").fits(&Ty::parse("ref Array[u8]")));
+    assert!(!Ty::parse("ref Array[u8]").fits(&Ty::parse("ref mut Array[u8]")));
+    assert!(!Ty::parse("ref mut i32").fits(&Ty::parse("ref mut Array[i32]")));
+    assert!(Ty::parse("ref mut Array[u8]").fits(&Ty::parse("ref mut Array[u8]")));
 }
 
 /// **`&mut` is the C boundary's and nowhere else's** (`NK1158`), and since
@@ -171,11 +174,11 @@ fn the_shapes_do_not_fit_each_other() {
 #[test]
 fn the_mut_is_the_boundarys_and_the_run_is_not() {
     let found = findings(
-        "fn fill(out: &mut Vec[i64]) {\n\
+        "fn fill(out: ref mut Vec[i64]) {\n\
          \x20   out.push(1)\n\
          }\n\
          \n\
-         fn total(xs: &[i64]) -> i64 {\n\
+         fn total(xs: ref Array[i64]) -> i64 {\n\
          \x20   return xs.len()\n\
          }\n\
          \n\
@@ -205,8 +208,8 @@ fn the_mut_is_the_boundarys_and_the_run_is_not() {
 fn the_boundary_itself_is_left_alone() {
     let found = findings(
         "extern \"C\" {\n\
-         \x20   fn strlen(s: &[u8]) -> usize\n\
-         \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
+         \x20   fn strlen(s: ref Array[u8]) -> usize\n\
+         \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
          }\n\
          \n\
          fn main() { println(\"x\") }\n",
@@ -220,20 +223,20 @@ fn the_boundary_itself_is_left_alone() {
 }
 
 /// **The declaration reaches the ledger as it was written** (Part III 13.5), so
-/// a consumer reads `&[u8]` and not the pointer it lowers to — which is
+/// a consumer reads `ref Array[u8]` and not the pointer it lowers to — which is
 /// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s rule for
 /// every message this compiler writes.
 #[test]
 fn a_declaration_ships_in_this_languages_words() {
     let parsed = parse_to_ast(
         "extern \"C\" {\n\
-         \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
+         \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
          }\n",
     )
     .expect("the source parses");
     let written = Ledger::infer(&parsed).render();
     assert!(
-        written.contains("signature = \"(fd: i32, buf: ref mut [u8], count: usize) -> i64\""),
+        written.contains("signature = \"(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\""),
         "{written}"
     );
 }
@@ -248,7 +251,7 @@ fn the_boundary_compiles_and_runs() {
     let rust = lowered(
         r#"
 extern "C" {
-    fn strlen(s: &[u8]) -> usize
+    fn strlen(s: ref Array[u8]) -> usize
     fn abs(n: i32) -> i32
 }
 
@@ -297,7 +300,7 @@ fn a_length_a_buffer_covers_is_accepted() {
     for count in ["room.len()", "32", "0"] {
         let source = format!(
             "extern \"C\" {{\n\
-             \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
+             \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
              }}\n\
              \n\
              fn main() {{\n\
@@ -325,7 +328,7 @@ fn a_length_a_buffer_covers_is_accepted() {
 #[test]
 fn a_constant_within_a_known_length_is_accepted() {
     let source = "extern \"C\" {\n\
-                  \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
+                  \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
                   }\n\
                   \n\
                   fn main() {\n\
@@ -343,7 +346,7 @@ fn a_constant_within_a_known_length_is_accepted() {
 fn a_length_that_cannot_be_shown_to_fit_is_refused() {
     let found: Vec<_> = findings(
         "extern \"C\" {\n\
-         \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
+         \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
          }\n\
          \n\
          fn main() {\n\
@@ -378,7 +381,7 @@ fn a_length_that_cannot_be_shown_to_fit_is_refused() {
 #[test]
 fn a_size_takes_an_i64_and_the_conversion_is_written() {
     let source = "extern \"C\" {\n\
-                  \x20   fn read(fd: i32, buf: &mut [u8], count: usize) -> i64\n\
+                  \x20   fn read(fd: i32, buf: ref mut Array[u8], count: usize) -> i64\n\
                   }\n\
                   \n\
                   fn main() {\n\
@@ -429,7 +432,7 @@ fn an_opaque_handle_is_an_address_and_a_cleanup() {
     let rust = lowered(
         "extern \"C\" {\n\
          \x20   opaque type FILE released by fclose\n\
-         \x20   fn fopen(path: &[u8], mode: &[u8]) -> FILE\n\
+         \x20   fn fopen(path: ref Array[u8], mode: ref Array[u8]) -> FILE\n\
          \x20   fn fclose(f: FILE) -> i32\n\
          }\n\
          \n\
@@ -441,7 +444,7 @@ fn an_opaque_handle_is_an_address_and_a_cleanup() {
     // The hull is **non-null**, which is
     // [ADR-155](../../../docs/specification/adr/adr-155.md) D2: a handle holds
     // an address and `T?` is the absence of one, so `Option<T>` is the same
-    // machine word and `&mut T?` is `T **`.
+    // machine word and `ref mut T?` is `T **`.
     assert!(
         rust.contains("pub struct FILE(core::ptr::NonNull<core::ffi::c_void>);"),
         "{rust}"
@@ -470,7 +473,7 @@ fn a_handle_is_lent_and_only_its_release_takes_it() {
     let rust = lowered(
         "extern \"C\" {\n\
          \x20   opaque type FILE released by fclose\n\
-         \x20   fn fopen(path: &[u8], mode: &[u8]) -> FILE\n\
+         \x20   fn fopen(path: ref Array[u8], mode: ref Array[u8]) -> FILE\n\
          \x20   fn fclose(f: FILE) -> i32\n\
          \x20   fn fileno(f: FILE) -> i32\n\
          }\n\
@@ -495,7 +498,7 @@ fn nothing_reaches_inside_a_handle() {
     let found: Vec<_> = findings(
         "extern \"C\" {\n\
          \x20   opaque type FILE released by fclose\n\
-         \x20   fn fopen(path: &[u8], mode: &[u8]) -> FILE\n\
+         \x20   fn fopen(path: ref Array[u8], mode: ref Array[u8]) -> FILE\n\
          \x20   fn fclose(f: FILE) -> i32\n\
          }\n\
          \n\
@@ -555,7 +558,7 @@ fn a_handle_compiles_and_runs_and_is_released_once() {
         r#"
 extern "C" {
     opaque type FILE released by fclose
-    fn fopen(path: &[u8], mode: &[u8]) -> FILE
+    fn fopen(path: ref Array[u8], mode: ref Array[u8]) -> FILE
     fn fclose(f: FILE) -> i32
     fn fileno(f: FILE) -> i32
 }
@@ -603,7 +606,7 @@ fn main() {
 #[test]
 fn returned_text_is_copied_by_std() {
     let source = "use std::foreign\n\nextern \"C\" {\n\
-                  \x20   fn getenv(name: &[u8]) -> foreign::CStr\n\
+                  \x20   fn getenv(name: ref Array[u8]) -> foreign::CStr\n\
                   }\n\
                   \n\
                   fn main() throws {\n\
@@ -639,7 +642,7 @@ fn returned_text_is_copied_by_std() {
 fn the_copy_is_a_call_that_can_fail() {
     let found: Vec<_> = findings(
         "use std::foreign\n\nextern \"C\" {\n\
-         \x20   fn getenv(name: &[u8]) -> foreign::CStr\n\
+         \x20   fn getenv(name: ref Array[u8]) -> foreign::CStr\n\
          }\n\
          \n\
          fn main() {\n\
@@ -665,7 +668,7 @@ fn a_c_string_compiles_and_runs() {
 use std::foreign
 
 extern "C" {
-    fn getenv(name: &[u8]) -> foreign::CStr
+    fn getenv(name: ref Array[u8]) -> foreign::CStr
 }
 
 fn main() throws {
@@ -703,7 +706,7 @@ fn main() throws {
 #[test]
 fn a_handle_may_be_absent() {
     let source = "use std::foreign\n\nextern \"C\" {\n\
-                  \x20   fn getenv(name: &[u8]) -> foreign::CStr?\n\
+                  \x20   fn getenv(name: ref Array[u8]) -> foreign::CStr?\n\
                   }\n\
                   \n\
                   fn main() throws {\n\
@@ -731,7 +734,7 @@ fn a_declaration_that_claims_a_handle_is_checked() {
     let rust = lowered(
         "extern \"C\" {\n\
          \x20   opaque type FILE released by fclose\n\
-         \x20   fn fopen(path: &[u8], mode: &[u8]) -> FILE\n\
+         \x20   fn fopen(path: ref Array[u8], mode: ref Array[u8]) -> FILE\n\
          \x20   fn fclose(f: FILE) -> i32\n\
          }\n\
          \n\
@@ -751,13 +754,13 @@ fn a_declaration_that_claims_a_handle_is_checked() {
 ///
 /// A handle holds an address and `T?` is the absence of one — the two states C
 /// spells with a pointer and `NULL` — so Rust lays `Option<T>` over the same
-/// word and `&mut T?` is `T **` exactly as C writes it.
+/// word and `ref mut T?` is `T **` exactly as C writes it.
 #[test]
 fn a_nullable_handle_is_one_machine_word() {
     let rust = lowered(
         "extern \"C\" {\n\
          \x20   opaque type Block released by free\n\
-         \x20   fn posix_memalign(out: &mut Block?, alignment: usize, size: usize) -> i32\n\
+         \x20   fn posix_memalign(out: ref mut Block?, alignment: usize, size: usize) -> i32\n\
          \x20   fn free(b: Block)\n\
          }\n\
          \n\
@@ -787,13 +790,17 @@ fn a_nullable_handle_is_one_machine_word() {
 
 /// **At the boundary a `?` on a view belongs to what it points at** (D5), and
 /// it is the one place Part I 2.3's own reading is turned around — only for
-/// `&mut T` and `&[T]`. A plain `&T?` stays a nullable view.
+/// `ref mut T` and `ref Array[T]`. A plain `ref T?` stays a nullable view.
 #[test]
 fn the_question_mark_binds_to_the_pointee() {
     let out = Ty::parse("ref mut sqlite3?");
     assert_eq!(out.text(), "ref mut sqlite3?");
     assert_eq!(Ty::parse(&out.text()), out);
-    assert_eq!(Ty::parse("&mut sqlite3?"), out, "the spelling it replaces");
+    assert_eq!(
+        Ty::parse("ref mut sqlite3?"),
+        out,
+        "the spelling it replaces"
+    );
     let Ty::Pointed { item, .. } = &out else {
         panic!("{out:?}")
     };
@@ -834,7 +841,7 @@ fn an_absent_handle_is_a_value_and_runs() {
 use std::foreign
 
 extern "C" {
-    fn getenv(name: &[u8]) -> foreign::CStr?
+    fn getenv(name: ref Array[u8]) -> foreign::CStr?
 }
 
 fn main() throws {

@@ -37,7 +37,7 @@ fn a_pausing_call_in_an_action_is_refused() {
         "use std::io\n\ngrammar Nums {\n\
          \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { let t = io::read_to_string() return d }\n\
          }\n\
-         fn read(text: &str) -> i64 { return Nums::number(text) catch { 0 } }\n",
+         fn read(text: ref String) -> i64 { return Nums::number(text) catch { 0 } }\n",
     )
     .into_iter()
     .filter(|f| f.code == "NK2209")
@@ -114,7 +114,7 @@ fn a_function_that_parses_stays_sync() {
         "grammar Nums {\n\
          \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d }\n\
          }\n\
-         fn read(text: &str) -> i64 { return Nums::number(text) catch { 0 } }\n",
+         fn read(text: ref String) -> i64 { return Nums::number(text) catch { 0 } }\n",
     );
     assert!(
         ledger.functions["read"].sync.is_sync(),

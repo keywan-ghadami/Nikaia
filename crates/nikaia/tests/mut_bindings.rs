@@ -241,7 +241,7 @@ fn a_mut_receiver_is_what_it_always_was() {
         "receiver",
         "struct Stats { n: i64 }\n\
          impl Stats {\n\
-         \x20   fn add(&mut self, by: i64) sync { self.n += by }\n\
+         \x20   fn add(ref mut self, by: i64) sync { self.n += by }\n\
          }\n\
          fn main() {\n\
          \x20   let mut s = Stats { n: 0 }\n\

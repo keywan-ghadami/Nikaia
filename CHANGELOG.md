@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.134] — 2026-09-21
+
+**`Array[T]` is an array of any length, and `&` leaves the language** —
+[ADR-184](docs/specification/adr/adr-184.md) D3 and D4, finishing the record
+0.0.133 began.
+
+### `Array[T]` is defined and not forbidden
+
+- **The first draft of D3 refused it**, on the reasoning that a run whose length the type does not carry has no size. The owner's correction is the better reading and it is now the decision: *beliebig, aber fest* — arbitrary, and **fixed for each use**. A run has no size only where nothing can give it one, and a **parameter** always can.
+- **In a parameter the call says which.** `fn total(xs: Array[i64])` takes an array of three and an array of two; the language below has the same shape and the same name for it, a `const` parameter, so the function is written once and monomorphised per length. Two arrays in one signature are two lengths.
+- **Under a `ref` the pointer carries it.** `ref Array[T]` is a view of a run — Rust's own `&[T]` — and needs no length in the type at all. That is not a second rule: **owning needs a size and viewing does not**, which is [ADR-107](docs/specification/adr/adr-107.md)'s own arrangement for text one type over, where the compiler picks the state per use.
+- **In a field or a result it is `NK1182`**, because there is no call to ask and the two readings left are both something else: a struct generic over its length makes two `Section`s of different lengths two **types**, which is exactly not what a parser produces ([ADR-179](docs/specification/adr/adr-179.md)'s own motivating case), and a result's length would be bound by nothing. The message names **three** ways out, because which was meant is not something this compiler can know.
+
+### `&` leaves, and the bracket form with it
+
+- **One spelling for the run**: `ref Array[T]`, in all four writers that had the bracket form — the type printer, the emitter, the C boundary and the call that makes the address.
+- **A program written with `&` gets a way out.** The grammar's own *found unexpected token `&`* is true and helps nobody, so the parse error carries a note naming the word and the three shapes it writes ([Part III C.2](docs/specification/30-nikaia-tooling.md)).
+- **A ledger still reads the old spelling**, and that is the one exception: a `.contracts` file is a machine format this compiler reads, not a program a person writes. `&str`, `&[T]` and `&mut T` all parse back — as the types their new spellings name — so a stale checkout keeps building.
+
+### A third printer of a written type, found the hard way
+
+- **After both type printers were fixed, a message still said `name: &String`.** `views.rs` writes the AST's type **itself** — a third writer — because what a message quotes back has to be what the program wrote, arguments and all. Two doors were not enough; the test that found it is `NK2302`'s, which quotes the parameter back at its author.
+
+### What the mechanical half cost, honestly
+
+- **Sixty-eight test binaries went red** the moment `&` left the grammar, and getting them back was four rounds of a script that could not tell a **Nikaia fixture** from an **expected Rust** string — both are string literals in the same file, and rewriting the second breaks a test that was right. What finally worked was not a cleverer heuristic but the compiler: every parse error names the line, and the last twenty were fixed one at a time. **A rename across a language is not a `sed`**, and the tests are what say so.
+
 ## [0.0.133] — 2026-09-21
 
 **A view is spelled `ref X`, and text has one noun** —

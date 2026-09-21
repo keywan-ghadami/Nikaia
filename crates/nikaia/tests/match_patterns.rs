@@ -33,7 +33,7 @@ const OP: &str = "enum Op { Plus, Minus, Times }\n";
 /// **A tuple pattern**, which is the shape `calc.nika` wanted.
 #[test]
 fn a_tuple_pattern_reads_the_pair() {
-    let source = "fn describe(point: (i64, i64)) -> &str {\n\
+    let source = "fn describe(point: (i64, i64)) -> ref String {\n\
                   \x20   return match point {\n\
                   \x20       (0, 0) => \"origin\",\n\
                   \x20       else => \"elsewhere\",\n\
@@ -51,7 +51,7 @@ fn a_tuple_pattern_reads_the_pair() {
 /// **An or-pattern**, and every alternative binds the same names.
 #[test]
 fn an_or_pattern_is_one_arm() {
-    let source = "fn describe(point: (i64, i64)) -> &str {\n\
+    let source = "fn describe(point: (i64, i64)) -> ref String {\n\
                   \x20   return match point {\n\
                   \x20       (0, y) | (y, 0) => \"on an axis\",\n\
                   \x20       else => \"elsewhere\",\n\
@@ -92,7 +92,7 @@ fn alternatives_that_bind_different_names_are_refused() {
 /// **A guard is `if`** (D2), and it stands on the arm.
 #[test]
 fn a_guard_is_written_if() {
-    let source = "fn describe(point: (i64, i64)) -> &str {\n\
+    let source = "fn describe(point: (i64, i64)) -> ref String {\n\
                   \x20   return match point {\n\
                   \x20       (x, y) if x == y => \"diagonal\",\n\
                   \x20       else => \"elsewhere\",\n\
@@ -113,7 +113,7 @@ fn a_guard_is_written_if() {
 #[test]
 fn a_guarded_arm_does_not_cover() {
     let found: Vec<_> = findings(&format!(
-        "{OP}fn word(o: Op) -> &str {{\n\
+        "{OP}fn word(o: Op) -> ref String {{\n\
          \x20   return match o {{\n\
          \x20       rest if true => \"anything\",\n\
          \x20   }}\n\
@@ -129,7 +129,7 @@ fn a_guarded_arm_does_not_cover() {
 /// how the language below spells the same set.
 #[test]
 fn a_range_pattern_includes_both_ends() {
-    let source = "fn band(code: i64) -> &str {\n\
+    let source = "fn band(code: i64) -> ref String {\n\
                   \x20   return match code {\n\
                   \x20       200..299 => \"ok\",\n\
                   \x20       else => \"other\",\n\
@@ -149,7 +149,7 @@ fn a_range_pattern_includes_both_ends() {
 #[test]
 fn an_exclusive_range_is_refused_in_a_pattern() {
     let refused = parse_to_ast(
-        "fn band(code: i64) -> &str {\n\
+        "fn band(code: i64) -> ref String {\n\
          \x20   return match code {\n\
          \x20       200..<300 => \"ok\",\n\
          \x20       else => \"other\",\n\
@@ -210,7 +210,7 @@ fn a_struct_pattern_may_name_no_field_at_all() {
 #[test]
 fn an_or_pattern_covers_each_variant_it_names() {
     let source = format!(
-        "{OP}fn word(o: Op) -> &str {{\n\
+        "{OP}fn word(o: Op) -> ref String {{\n\
          \x20   return match o {{\n\
          \x20       Op::Plus | Op::Minus => \"additive\",\n\
          \x20       Op::Times => \"times\",\n\
@@ -222,7 +222,7 @@ fn an_or_pattern_covers_each_variant_it_names() {
 
     // And one left out is still a case missing.
     let short = format!(
-        "{OP}fn word(o: Op) -> &str {{\n\
+        "{OP}fn word(o: Op) -> ref String {{\n\
          \x20   return match o {{\n\
          \x20       Op::Plus | Op::Minus => \"additive\",\n\
          \x20   }}\n\

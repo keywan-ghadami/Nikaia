@@ -1336,6 +1336,16 @@ impl Method {
 const SELF_DSL: &str = "Self::dsl";
 const DSL_PARAMETER: &str = "NikaiaDsl";
 
+/// **The name a length a parameter left open is declared under**
+/// ([ADR-184](../../docs/specification/adr/adr-184.md) D3).
+///
+/// `xs: Array[T]` says *an array of any length*, and the call is what says
+/// which — so the language below gets a `const` parameter and the position it
+/// belongs to, which is what makes two arrays in one signature two lengths.
+/// The word is this compiler's and no program can collide with it: a Nikaia
+/// name cannot begin with `__`.
+const LENGTH_PARAMETER: &str = "__NIKAIA_N";
+
 /// The name a Nikaia program gives its entry point.
 const MAIN: &str = "main";
 
@@ -2923,7 +2933,13 @@ impl<'p> Emitter<'p> {
     /// Anything that is not a view is the ordinary lowering: an `i32` is an
     /// `i32` at both ends.
     fn foreign_ty(&self, ty: &Type) -> String {
-        if ty.is_slice {
+        // **`ref Array[T]` is what a run is written as**
+        // ([ADR-184](../../docs/specification/adr/adr-184.md) D3, D4), here as
+        // everywhere else. At this boundary it is still D1's address beside
+        // D2's count and not Rust's fat pointer — two writers for one spelling,
+        // which is the arrangement [ADR-147](../../docs/specification/adr/adr-147.md)
+        // chose and this only renames.
+        if self.writes_a_run(ty) {
             let element = match ty.generics.first() {
                 Some(element) => self.foreign_ty(element),
                 None => "u8".to_string(),
@@ -3000,7 +3016,30 @@ impl<'p> Emitter<'p> {
                 });
             }
         }
+        // **A run is an address beside a count and a view is one address**
+        // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D2), and
+        // which of the two a declaration wrote is [`Emitter::writes_a_run`]'s
+        // question since `ref Array[T]` became the spelling
+        // ([ADR-184](../../docs/specification/adr/adr-184.md) D3).
+        if self.writes_a_run(ty) {
+            return Some(Pointer::Run { mutable: ty.is_mut });
+        }
         pointer_for(ty)
+    }
+
+    /// **Whether this written type is a run of elements somebody else keeps**
+    /// ([ADR-184](../../docs/specification/adr/adr-184.md) D3).
+    ///
+    /// `ref Array[T]` is the spelling, and `Array[T, N]` is **not** one: the
+    /// count is what makes an array a type laid out inline
+    /// ([ADR-152](../../docs/specification/adr/adr-152.md) D4), so the number
+    /// of arguments is what tells the two apart and nothing else has to.
+    ///
+    /// `is_slice` is the bracket form the grammar no longer reads (D4); it
+    /// stays here because a ledger written before 0.0.134 still carries it and
+    /// a description is read back through the same tree.
+    fn writes_a_run(&self, ty: &Type) -> bool {
+        ty.is_slice || (ty.is_view && self.text(ty.name) == ARRAY && ty.generics.len() == 1)
     }
 
     /// Whether an `extern "C"` declaration takes this position in `size_t`
@@ -3311,6 +3350,32 @@ impl<'p> Emitter<'p> {
         // twice (`contracts::keeps::lends`), because the two disagreeing is a
         // `&&T` or a moved value in the language below.
         let lent = self.own_contracts.functions.get(&key);
+        // **`xs: Array[T]` is an array of any length, and the call says which**
+        // ([ADR-184](../../docs/specification/adr/adr-184.md) D3). The language
+        // below has the same shape and the same name for it — a `const`
+        // parameter — so the function is written once and monomorphised per
+        // length, which is what *beliebig, aber fest* means when it reaches a
+        // machine.
+        //
+        // **One per parameter**, because two arrays in one signature are two
+        // lengths: `fn zip(a: Array[i64], b: Array[i64])` takes any two and not
+        // two of the same.
+        //
+        // The name carries the position rather than the parameter's own name,
+        // for the reason the escape exists (ADR-076 D2): a parameter may be
+        // called anything, including something the language below reserves.
+        let lengths: Vec<Option<String>> = args
+            .iter()
+            .enumerate()
+            .map(|(at, a)| {
+                let any = !a.ty.is_view
+                    && !a.ty.is_slice
+                    && a.ty.count.is_none()
+                    && a.ty.generics.len() == 1
+                    && self.text(a.ty.name) == ARRAY;
+                any.then(|| format!("{LENGTH_PARAMETER}{at}"))
+            })
+            .collect();
         params.extend(args.iter().enumerate().map(|(at, a)| {
             // The **source** name is what a `Shared` position is counted by
             // (`count_at`), and the **escaped** one is what is written: two uses
@@ -3346,11 +3411,22 @@ impl<'p> Emitter<'p> {
             } else {
                 ""
             };
-            format!(
-                "{}: {reference}{}",
-                escaped(name),
-                self.ty_counted(&a.ty, how(a.name), self.count_at(&key, name))
-            )
+            // **An array of any length is written with the length this
+            // signature declares for it** (ADR-184 D3), rather than through
+            // `ty_counted`, which would write the name `Array` — and there is
+            // no type by that name in the language below.
+            let written = match lengths.get(at.wrapping_sub(usize::from(receiver.is_some()))) {
+                Some(Some(length)) => {
+                    let element =
+                        a.ty.generics
+                            .first()
+                            .map(|e| self.ty_counted(e, how(a.name), self.count_at(&key, name)))
+                            .unwrap_or_else(|| "u8".to_string());
+                    format!("[{element}; {length}]")
+                }
+                _ => self.ty_counted(&a.ty, how(a.name), self.count_at(&key, name)),
+            };
+            format!("{}: {reference}{written}", escaped(name))
         }));
         // Kap 5.1: the language below has neither named arguments nor defaults,
         // so an option becomes an ordinary parameter here - in declaration
@@ -3387,12 +3463,21 @@ impl<'p> Emitter<'p> {
         // ([ADR-181](../../docs/specification/adr/adr-181.md) D2): the whole of
         // what the parameter was for is the shape, and the shape is written out
         // here. What stands in the signature is the type itself.
+        // **And a length a parameter left open is a `const` parameter**
+        // (ADR-184 D3), declared beside the type parameters because that is
+        // what it is: a name the call fills in.
+        let open: Vec<String> = lengths
+            .iter()
+            .flatten()
+            .map(|length| format!("const {length}: usize"))
+            .collect();
         let declared: Vec<String> = match self.specialising.borrow().is_some() {
-            true => dsl.clone().into_iter().collect(),
+            true => dsl.clone().into_iter().chain(open).collect(),
             false => generics
                 .iter()
                 .map(|g| self.bounded(g))
                 .chain(dsl.clone())
+                .chain(open)
                 .collect(),
         };
 
@@ -4414,7 +4499,14 @@ impl<'p> Emitter<'p> {
         // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D2). Two
         // writers for one spelling is the arrangement that record already
         // chose, and this is the second half of it arriving.
-        if ty.is_slice {
+        // **`ref Array[T]` is the run's other spelling**
+        // ([ADR-184](../../docs/specification/adr/adr-184.md) D3): an `Array`
+        // under a `ref` with **one** argument carries no length in the type, so
+        // there is nothing to lay out inline and what it names is a run
+        // somebody else keeps. An `Array[T, N]` has two and is
+        // [ADR-152](../../docs/specification/adr/adr-152.md) D4's `[T; N]`,
+        // written further down.
+        if self.writes_a_run(ty) {
             let element = match ty.generics.first() {
                 Some(element) => self.ty_counted(element, lifetimes, count),
                 None => "u8".to_string(),

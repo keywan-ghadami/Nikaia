@@ -85,7 +85,7 @@ fn ran(purpose: &str, source: &str) -> String {
 #[test]
 fn the_records_three_forms_parse() {
     for source in [
-        "fn route(path: &str, handler: fn(Request) -> Response) { }\n",
+        "fn route(path: ref String, handler: fn(Request) -> Response) { }\n",
         "fn on_tick(handler: fn() sync) { }\n",
         "fn load(reader: fn(Path) -> Bytes throws) { }\n",
     ] {
@@ -152,7 +152,7 @@ fn a_lambda_that_does_less_fits_a_type_that_allows_more() {
     assert!(!fits("fn() throws", "fn()"), "and not the other way");
     assert!(fits("fn(i64) -> i64", "fn(i64) -> i64"));
     assert!(
-        !fits("fn(i64)", "fn(&str)"),
+        !fits("fn(i64)", "fn(ref String)"),
         "the parameters still have to match"
     );
 }
@@ -311,7 +311,7 @@ fn a_pausing_lambda_handed_to_a_sync_type_is_refused() {
 #[test]
 fn a_failing_lambda_handed_to_a_type_without_throws_is_refused() {
     const ERROR: &str = "enum E { Bad }\n\
-                         impl Error for E { fn message(&self) -> String { return \"bad\".to_string() } }\n\
+                         impl Error for E { fn message(ref self) -> String { return \"bad\".to_string() } }\n\
                          fn risky() throws { throw E::Bad }\n";
 
     let refused = findings(&format!(

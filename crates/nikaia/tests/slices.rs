@@ -65,11 +65,11 @@ fn ran(purpose: &str, source: &str) -> String {
 /// number the declaration has no business knowing.
 #[test]
 fn a_run_crosses_and_the_program_reads_it() {
-    let source = "struct Row { a: i64, name: &str }\n\
+    let source = "struct Row { a: i64, name: ref String }\n\
                   \n\
-                  comptime ROWS: &[Row] = [Row { a: 1, name: \"one\" }, Row { a: 2, name: \"two\" }]\n\
-                  comptime NS: &[i64] = [10, 20, 30]\n\
-                  comptime MAGIC: &[u8] = [0x7F, 0x45, 0x4C, 0x46]\n\
+                  comptime ROWS: ref Array[Row] = [Row { a: 1, name: \"one\" }, Row { a: 2, name: \"two\" }]\n\
+                  comptime NS: ref Array[i64] = [10, 20, 30]\n\
+                  comptime MAGIC: ref Array[u8] = [0x7F, 0x45, 0x4C, 0x46]\n\
                   \n\
                   fn main() {\n\
                   \x20   println(f\"{ROWS.len()} {NS.len()} {MAGIC.len()}\")\n\
@@ -106,8 +106,8 @@ fn a_run_crosses_and_the_program_reads_it() {
 /// ([ADR-177](../../../docs/specification/adr/adr-177.md) §5's measurement).
 #[test]
 fn a_field_may_view_a_run() {
-    let source = "struct Setting { key: &str, value: &str }\n\
-                  struct Section { name: &str, settings: &[Setting] }\n\
+    let source = "struct Setting { key: ref String, value: ref String }\n\
+                  struct Section { name: ref String, settings: ref Array[Setting] }\n\
                   \n\
                   comptime MAIN: Section = Section {\n\
                   \x20   name: \"main\",\n\
@@ -131,13 +131,13 @@ fn a_field_may_view_a_run() {
 /// already had): the callee reads and the caller keeps.
 #[test]
 fn a_run_is_lent_to_a_parameter() {
-    let source = "fn total(xs: &[i64]) -> i64 {\n\
+    let source = "fn total(xs: ref Array[i64]) -> i64 {\n\
                   \x20   let mut sum = 0\n\
                   \x20   for n in xs { sum = sum + n }\n\
                   \x20   return sum\n\
                   }\n\
                   \n\
-                  comptime NS: &[i64] = [1, 2, 3]\n\
+                  comptime NS: ref Array[i64] = [1, 2, 3]\n\
                   \n\
                   fn main() {\n\
                   \x20   let mut built: Vec[i64] = []\n\
@@ -159,7 +159,7 @@ fn a_run_is_lent_to_a_parameter() {
 #[test]
 fn a_run_this_body_owns_is_refused_by_name() {
     let found = findings(
-        "struct Bag { items: &[i64] }\n\
+        "struct Bag { items: ref Array[i64] }\n\
          \n\
          fn main() {\n\
          \x20   let mut v: Vec[i64] = []\n\
@@ -207,14 +207,14 @@ fn a_run_this_body_owns_is_refused_by_name() {
 fn an_action_that_fills_a_view_names_the_vec() {
     let found = findings(
         "@borrowed\n\
-         pub struct Setting { key: &str, value: &str }\n\
+         pub struct Setting { key: ref String, value: ref String }\n\
          \n\
          @borrowed\n\
-         pub struct Section { name: &str, settings: &[Setting] }\n\
+         pub struct Section { name: ref String, settings: ref Array[Setting] }\n\
          \n\
          grammar Cfg {\n\
          \x20   rule WS = multispace0 -> { }\n\
-         \x20   rule NAME -> &str = s:raw_ident -> { s }\n\
+         \x20   rule NAME -> ref String = s:raw_ident -> { s }\n\
          \x20   rule setting -> Setting = key:NAME \"=\" value:NAME -> { Setting { key, value } }\n\
          \x20   pub rule section -> Section =\n\
          \x20       \"[\" name:NAME \"]\" settings:setting* -> { Section { name, settings } }\n\

@@ -320,7 +320,7 @@ fn an_ordinary_loop_is_not_touched() {
 #[test]
 fn an_option_becomes_a_positional_argument_in_declaration_order() {
     let rust = emit(
-        "fn request(url: &str; timeout: i32 = 30, method: &str = \"GET\") -> i32 {\n\
+        "fn request(url: ref String; timeout: i32 = 30, method: ref String = \"GET\") -> i32 {\n\
          \x20   return timeout\n\
          }\n\
          fn main() {\n\

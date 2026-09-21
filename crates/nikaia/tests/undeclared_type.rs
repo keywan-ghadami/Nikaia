@@ -55,11 +55,11 @@ fn every_position_a_type_stands_in_is_read() {
         "struct Holder {\n    part: Widgit,\n}\nfn main() { }\n",
         "fn main() {\n    let x: Widgit = 3\n    println(f\"{x}\")\n}\n",
         "fn main() {\n    let x: Vec[Widgit] = 3\n    println(f\"{x}\")\n}\n",
-        "struct Thing { n: i64 }\nimpl Thing {\n    fn m(&self) -> Widgit { }\n}\nfn main() { }\n",
+        "struct Thing { n: i64 }\nimpl Thing {\n    fn m(ref self) -> Widgit { }\n}\nfn main() { }\n",
         "enum Message {\n    Write(Widgit),\n}\nfn main() { }\n",
         "enum Message {\n    Move { to: Widgit },\n}\nfn main() { }\n",
-        "trait Show {\n    fn show(&self) -> Widgit\n}\nfn main() { }\n",
-        "trait Show {\n    fn show(&self, at: Widgit) -> i64\n}\nfn main() { }\n",
+        "trait Show {\n    fn show(ref self) -> Widgit\n}\nfn main() { }\n",
+        "trait Show {\n    fn show(ref self, at: Widgit) -> i64\n}\nfn main() { }\n",
     ] {
         assert!(
             !refused(source).is_empty(),
@@ -84,16 +84,16 @@ fn an_argument_inside_a_type_is_read() {
 #[test]
 fn every_kind_of_declared_name_is_left_alone() {
     for source in [
-        "fn f(a: i64, b: f64, c: bool, d: char, e: String, g: &str) { }\nfn main() { }\n",
+        "fn f(a: i64, b: f64, c: bool, d: char, e: String, g: ref String) { }\nfn main() { }\n",
         "fn f(a: u8, b: usize, c: i128) { }\nfn main() { }\n",
-        "use std::collections\n\nfn f(a: Vec[i64], b: collections::HashMap[&str, i64], c: collections::BTreeMap[&str, i64]) { }\nfn main() { }\n",
+        "use std::collections\n\nfn f(a: Vec[i64], b: collections::HashMap[ref String, i64], c: collections::BTreeMap[ref String, i64]) { }\nfn main() { }\n",
         "fn f(a: Shared[i64], b: SharedMut[i64]) { }\nfn main() { }\n",
         "struct Row { n: i64 }\nfn f(a: Row) { }\nfn main() { }\n",
         "enum Colour { Red, Green }\nfn f(a: Colour) { }\nfn main() { }\n",
         "fn f[T](a: T) -> T { return a }\nfn main() { }\n",
         "struct Box[T] { held: T }\nfn main() { }\n",
-        "struct Row { n: i64 }\nimpl Row {\n    fn me(&self) -> Self { }\n}\nfn main() { }\n",
-        "fn f(a: &str?) { }\nfn main() { }\n",
+        "struct Row { n: i64 }\nimpl Row {\n    fn me(ref self) -> Self { }\n}\nfn main() { }\n",
+        "fn f(a: ref String?) { }\nfn main() { }\n",
         "fn f(a: (i64, String)) { }\nfn main() { }\n",
     ] {
         assert!(
@@ -113,11 +113,11 @@ fn every_kind_of_declared_name_is_left_alone() {
 #[test]
 fn a_name_with_a_package_in_front_is_somebody_elses_question() {
     assert!(
-        refused("fn f(a: &http::Response) { }\nfn main() { }\n").is_empty(),
+        refused("fn f(a: ref http::Response) { }\nfn main() { }\n").is_empty(),
         "a qualified name is the import rules' business, not this walk's"
     );
     assert!(
-        refused("use std::fs\n\nfn f(a: &fs::Mapped) { }\nfn main() { }\n").is_empty(),
+        refused("use std::fs\n\nfn f(a: ref fs::Mapped) { }\nfn main() { }\n").is_empty(),
         "and a `std` type resolves, by its own name and by its suffix"
     );
 }

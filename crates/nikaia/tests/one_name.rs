@@ -64,7 +64,7 @@ fn two_of_one_kind_say_so_once() {
 /// before — through *any* path, including a build with a manifest.
 #[test]
 fn a_trait_and_a_grammar_declare_a_name_too() {
-    let with_trait = refusals("trait Foo { fn s(&self) -> i64 }\nstruct Foo { n: i64 }\n");
+    let with_trait = refusals("trait Foo { fn s(ref self) -> i64 }\nstruct Foo { n: i64 }\n");
     assert_eq!(with_trait.len(), 1, "{with_trait:#?}");
     assert!(
         with_trait[0]
@@ -95,9 +95,9 @@ fn a_trait_and_a_grammar_declare_a_name_too() {
 fn a_method_is_not_a_declaration() {
     let found = refusals(
         "struct A { n: i64 }\n\
-         impl A { fn len(&self) -> i64 { return self.n } }\n\
+         impl A { fn len(ref self) -> i64 { return self.n } }\n\
          struct B { n: i64 }\n\
-         impl B { fn len(&self) -> i64 { return self.n } }\n",
+         impl B { fn len(ref self) -> i64 { return self.n } }\n",
     );
     assert!(found.is_empty(), "{found:#?}");
 }
@@ -121,9 +121,9 @@ fn a_program_that_declares_each_name_once_is_untouched() {
     let found = refusals(
         "struct Reading { name: String, temp: i64 }\n\
          enum Op { Plus, Times }\n\
-         trait Summary { fn s(&self) -> i64 }\n\
+         trait Summary { fn s(ref self) -> i64 }\n\
          grammar Nums { pub rule number -> i64 = d:dec[i64](digit+) -> { d } }\n\
-         fn read(text: &str) -> i64 { return Nums::number(text) catch { 0 } }\n\
+         fn read(text: ref String) -> i64 { return Nums::number(text) catch { 0 } }\n\
          fn main() { println(f\"{read(\\\"7\\\")}\") }\n",
     );
     assert!(found.is_empty(), "{found:#?}");

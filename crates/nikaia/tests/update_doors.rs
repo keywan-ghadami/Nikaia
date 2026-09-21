@@ -254,7 +254,7 @@ fn a_lambda_that_is_not_a_door_is_left_alone() {
         "NK1138",
         "use std::collections\n\nstruct Tally { n: i64 }\n\
          impl Tally {\n\
-         \x20   fn bump(&mut self) sync { self.n += 1 }\n\
+         \x20   fn bump(ref mut self) sync { self.n += 1 }\n\
          }\n\
          fn main() {\n\
          \x20   let mut counts = collections::HashMap()\n\

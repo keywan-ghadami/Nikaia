@@ -112,7 +112,7 @@ const OWN_ERROR: &str = "enum LoadError {\n\
                          }\n\
                          \n\
                          impl Error for LoadError {\n\
-                         \x20   fn message(&self) -> String {\n\
+                         \x20   fn message(ref self) -> String {\n\
                          \x20       match self {\n\
                          \x20           LoadError::Missing(w) => { return f\"{w} is missing\" }\n\
                          \x20           LoadError::Broken(w) => { return f\"{w} is broken\" }\n\
@@ -465,7 +465,7 @@ fn rustc_says_nothing_about_the_generated_file() {
         "enum Boom { Now }\n\
          \n\
          impl Error for Boom {\n\
-         \x20   fn message(&self) -> String { return \"boom\".to_string() }\n\
+         \x20   fn message(ref self) -> String { return \"boom\".to_string() }\n\
          }\n\
          \n\
          fn always() -> String throws {\n\

@@ -114,7 +114,7 @@ fn a_view_of_a_map_read_is_still_nullable() {
          fn main() {\n\
          \x20   let mut m = collections::HashMap()\n\
          \x20   m[\"a\"] = Stats { min: 1 }\n\
-         \x20   let s = &m[\"a\"]\n\
+         \x20   let s = ref m[\"a\"]\n\
          \x20   println(f\"{s.min}\")\n\
          }\n",
     )

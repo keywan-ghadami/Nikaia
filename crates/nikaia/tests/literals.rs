@@ -105,13 +105,14 @@ fn print_is_a_macro_like_println() {
 /// not say so.
 #[test]
 fn a_hole_may_hold_a_string_literal() {
-    let emitted = emit(r#"fn f(s: &str) -> i32 { return 1 } fn main() { println(f"{f(\"a\")}") }"#);
+    let emitted =
+        emit(r#"fn f(s: ref String) -> i32 { return 1 } fn main() { println(f"{f(\"a\")}") }"#);
     assert!(emitted.contains(r#"f("a")"#), "{emitted}");
 
     // A backslash the inner text wants keeps its meaning: only the two
     // characters the enclosing literal had to escape are undone.
     let escaped =
-        emit(r#"fn f(s: &str) -> i32 { return 1 } fn main() { println(f"{f(\"a\\nb\")}") }"#);
+        emit(r#"fn f(s: ref String) -> i32 { return 1 } fn main() { println(f"{f(\"a\\nb\")}") }"#);
     assert!(escaped.contains(r#"f("a\nb")"#), "{escaped}");
 }
 

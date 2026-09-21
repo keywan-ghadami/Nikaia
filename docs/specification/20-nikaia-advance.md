@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.133 (Draft)
+**Version:** 0.0.134 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -125,7 +125,7 @@ not exhaust the compiler's stack.
 
 **What crosses from build time to run time** is decided
 ([ADR-079](adr/adr-079.md)). A result arrives in its **view** form: `Vec[T]` as
-a `ref [T]` — or as an `Array[T, N]` where the program writes the length into the
+a `ref Array[T]` — or as an `Array[T, N]` where the program writes the length into the
 type ([ADR-152](adr/adr-152.md), [ADR-179](adr/adr-179.md) D1) — and `String` as
 a `ref String`. A value built with `push` is fixed once
 it has crossed. A value that owns memory is refused by what it *is* and never by
@@ -187,7 +187,7 @@ switched off without editing anything ([ADR-072](adr/adr-072.md) D3).
 > in the parser's own words. What A's own example still meets is the
 > **crossing**: a build-time value is a whole number, a float, a `bool`, text, a
 > list, a `struct` and an `enum` variant, and a rule whose result is one of the
-> seven crosses and runs — including into a `ref [T]`, which is what a run of
+> seven crosses and runs — including into a `ref Array[T]`, which is what a run of
 > `struct`s arrives as ([ADR-179](adr/adr-179.md) D1, D3). What a rule may
 > **not** hand back is a value it built into a position that views a run, and
 > `NK1179` says so on the action's own line.

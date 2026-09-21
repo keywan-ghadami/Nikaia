@@ -32,7 +32,7 @@ fn an_impl_may_name_a_trait() {
         r#"
         struct User { name: String }
         impl Summarize for User {
-            fn summary(&self) -> String { return self.name }
+            fn summary(ref self) -> String { return self.name }
         }
         "#,
     );
@@ -49,7 +49,7 @@ fn an_inherent_impl_is_unchanged() {
         r#"
         struct User { name: String }
         impl User {
-            fn shout(&self) -> String { return self.name }
+            fn shout(ref self) -> String { return self.name }
         }
         "#,
     );
@@ -66,7 +66,7 @@ fn an_error_impl_brings_what_the_failure_channel_needs() {
         r#"
         enum ConfigError { NotFound }
         impl Error for ConfigError {
-            fn message(&self) -> String { return "no config" }
+            fn message(ref self) -> String { return "no config" }
         }
         "#,
     );
@@ -139,7 +139,7 @@ fn an_error_is_declared_raised_caught_and_printed() {
         enum ConfigError { NotFound(String) }
 
         impl Error for ConfigError {
-            fn message(&self) -> String {
+            fn message(ref self) -> String {
                 match self {
                     ConfigError::NotFound(p) => { return f"no config at {p}" }
                 }
@@ -217,7 +217,7 @@ fn a_written_call_propagates_its_failure() {
         enum ConfigError { NotFound(String) }
 
         impl Error for ConfigError {
-            fn message(&self) -> String {
+            fn message(ref self) -> String {
                 match self {
                     ConfigError::NotFound(p) => { return f"no config at {p}" }
                 }
@@ -299,14 +299,14 @@ fn a_method_call_propagates_its_failure() {
         enum ZuVoll { Voll }
 
         impl Error for ZuVoll {
-            fn message(&self) -> String { return "too full".to_string() }
+            fn message(ref self) -> String { return "too full".to_string() }
         }
 
         struct Stats { n: i64 }
 
         impl Stats {
             pub fn(n: i64) -> Stats { return Stats { n: n } }
-            fn add(&self, v: i64) -> i64 throws {
+            fn add(ref self, v: i64) -> i64 throws {
                 if self.n + v > 100 { throw ZuVoll::Voll }
                 return self.n + v
             }
@@ -378,7 +378,7 @@ fn a_caught_method_call_keeps_its_result() {
         struct Stats { n: i64 }
 
         impl Stats {
-            fn add(&self, v: i64) -> i64 throws {
+            fn add(ref self, v: i64) -> i64 throws {
                 if self.n + v > 100 { throw ZuVoll::Voll }
                 return self.n + v
             }
@@ -715,7 +715,7 @@ fn short_is_safe_and_full_is_asked_for() {
         enum ConfigError { NotFound(String) }
 
         impl Error for ConfigError {
-            fn message(&self) -> String {
+            fn message(ref self) -> String {
                 match self {
                     ConfigError::NotFound(p) => { return f"no config at {p}" }
                 }

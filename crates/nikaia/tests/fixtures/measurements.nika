@@ -17,7 +17,7 @@ grammar Measurements {
     // Up to the semicolon - or to the end of the frame, whichever comes first.
     // A plain `until(";")` would run through the newline, and under a frame the
     // compiler rejects that rather than quietly repairing it (ADR-009 D1).
-    rule NAME -> &str = s:until(";" | frame_end) -> { s }
+    rule NAME -> ref String = s:until(";" | frame_end) -> { s }
 
     // The width the format fixes, stated (ADR-009 D5): -99.9 ..= 99.9.
     rule TENTHS -> i32 =
@@ -45,6 +45,6 @@ grammar Measurements {
 
 @borrowed
 pub struct Reading {
-    name: &str,
+    name: ref String,
     temp: i32,
 }

@@ -67,16 +67,16 @@ fn output(purpose: &str, source: &str) -> String {
 const TWO_WAYS: &str = "use std::fs\n\
                         use std::io\n\
                         \n\
-                        enum ConfigError { Empty(&str) }\n\
+                        enum ConfigError { Empty(ref String) }\n\
                         \n\
                         impl Error for ConfigError {\n\
-                        \x20   fn message(&self) -> String {\n\
+                        \x20   fn message(ref self) -> String {\n\
                         \x20       match self { ConfigError::Empty(p) => f\"config at {p} is empty\" }\n\
                         \x20   }\n\
                         }\n\
                         \n\
-                        fn load(path: &str) -> String throws {\n\
-                        \x20   let text = fs::read_to_string(&path)\n\
+                        fn load(path: ref String) -> String throws {\n\
+                        \x20   let text = fs::read_to_string(ref path)\n\
                         \x20   if text == \"\" { throw ConfigError::Empty(path) }\n\
                         \x20   return text\n\
                         }\n\n";
@@ -121,7 +121,7 @@ fn a_member_keeps_its_own_channel() {
 #[test]
 fn two_functions_with_one_set_share_a_type() {
     let rust = lowered(&format!(
-        "{TWO_WAYS}fn again(path: &str) -> String throws {{\n\
+        "{TWO_WAYS}fn again(path: ref String) -> String throws {{\n\
          \x20   return load(path)\n\
          }}\n\
          fn main() {{ }}\n"
@@ -195,7 +195,7 @@ fn a_handler_passes_the_rest_on() {
     let printed = output(
         "sum-passed-on",
         &format!(
-            "{TWO_WAYS}fn again(path: &str) -> String throws {{\n\
+            "{TWO_WAYS}fn again(path: ref String) -> String throws {{\n\
              \x20   return load(path) catch {{\n\
              \x20       match error {{\n\
              \x20           ConfigError::Empty(p) => f\"defaulted for {{p}}\"\n\
@@ -271,7 +271,7 @@ fn a_match_over_two_error_types_needs_an_else() {
 fn one_error_type_is_left_alone() {
     let source = "enum ConfigError { Empty, Bad }\n\
                   impl Error for ConfigError {\n\
-                  \x20   fn message(&self) -> String { return \"no\" }\n\
+                  \x20   fn message(ref self) -> String { return \"no\" }\n\
                   }\n\
                   fn load() -> i64 throws { throw ConfigError::Empty }\n\
                   fn main() {\n\

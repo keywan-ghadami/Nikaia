@@ -63,7 +63,7 @@ fn run(purpose: &str, source: &str) -> String {
 
 /// Three keys: under [`nikaia::fixed::HASHED_FROM`], so the walked shape.
 const SMALL: &str =
-    "comptime ROUTES: Fixed[&str, i64] = [(\"get\", 1), (\"post\", 2), (\"put\", 3)]\n\
+    "comptime ROUTES: Fixed[ref String, i64] = [(\"get\", 1), (\"post\", 2), (\"put\", 3)]\n\
      \n\
      fn main() {\n\
      \x20   println(f\"{ROUTES.get(\\\"get\\\") ?? 0}\")\n\
@@ -74,7 +74,7 @@ const SMALL: &str =
      }";
 
 /// Fourteen keys: from [`nikaia::fixed::HASHED_FROM`] up, so the hashed shape.
-const LARGE: &str = "comptime WORDS: Fixed[&str, i64] = [\n\
+const LARGE: &str = "comptime WORDS: Fixed[ref String, i64] = [\n\
      \x20   (\"alpha\", 1), (\"bravo\", 2), (\"charlie\", 3), (\"delta\", 4),\n\
      \x20   (\"echo\", 5), (\"foxtrot\", 6), (\"golf\", 7), (\"hotel\", 8),\n\
      \x20   (\"india\", 9), (\"juliet\", 10), (\"kilo\", 11), (\"lima\", 12),\n\
@@ -113,13 +113,13 @@ fn a_hashed_table_finds_each_key_while_the_program_runs() {
 /// about all fourteen and the answer is the sum of one to fourteen.
 #[test]
 fn a_hashed_table_answers_all_of_its_keys() {
-    let source = "comptime WORDS: Fixed[&str, i64] = [\n\
+    let source = "comptime WORDS: Fixed[ref String, i64] = [\n\
          \x20   (\"alpha\", 1), (\"bravo\", 2), (\"charlie\", 3), (\"delta\", 4),\n\
          \x20   (\"echo\", 5), (\"foxtrot\", 6), (\"golf\", 7), (\"hotel\", 8),\n\
          \x20   (\"india\", 9), (\"juliet\", 10), (\"kilo\", 11), (\"lima\", 12),\n\
          \x20   (\"mike\", 13), (\"november\", 14),\n\
          ]\n\
-         comptime NAMES: Array[&str, 14] = [\n\
+         comptime NAMES: Array[ref String, 14] = [\n\
          \x20   \"alpha\", \"bravo\", \"charlie\", \"delta\", \"echo\", \"foxtrot\", \"golf\",\n\
          \x20   \"hotel\", \"india\", \"juliet\", \"kilo\", \"lima\", \"mike\", \"november\",\n\
          ]\n\
@@ -179,7 +179,7 @@ fn from_the_threshold_the_table_carries_displacements() {
 /// pair every other `comptime` goes through.
 #[test]
 fn a_tables_values_may_be_text() {
-    let source = r#"comptime MIME: Fixed[&str, &str] = [("html", "text/html"), ("json", "application/json")]
+    let source = r#"comptime MIME: Fixed[ref String, ref String] = [("html", "text/html"), ("json", "application/json")]
 
 fn main() {
     println(MIME.get("json") ?? "?")
@@ -201,7 +201,7 @@ fn main() {
 /// `comptime XS: Array[i64, 0] = []` lowered the whole time.
 #[test]
 fn a_table_of_nothing_is_a_table() {
-    let source = r#"comptime EMPTY: Fixed[&str, i64] = []
+    let source = r#"comptime EMPTY: Fixed[ref String, i64] = []
 
 fn main() {
     println(f"{EMPTY.len()} {EMPTY.is_empty()} {EMPTY.get(\"get\") ?? 0}")
@@ -216,7 +216,7 @@ fn main() {
 #[test]
 fn a_key_written_twice_is_refused_once() {
     let source =
-        "comptime ROUTES: Fixed[&str, i64] = [(\"get\", 1), (\"post\", 2), (\"get\", 3)]\n\
+        "comptime ROUTES: Fixed[ref String, i64] = [(\"get\", 1), (\"post\", 2), (\"get\", 3)]\n\
          \n\
          fn main() {\n\
          \x20   println(f\"{ROUTES.len()}\")\n\
@@ -289,14 +289,14 @@ fn the_threshold_is_twelve() {
 /// place the two records meet.
 #[test]
 fn a_table_holds_a_declared_type_and_the_program_reads_it() {
-    let source = "struct Row { a: i64, tags: &[&str] }\n\
+    let source = "struct Row { a: i64, tags: ref Array[ref String] }\n\
                   enum Shade { Odd, Even }\n\
                   \n\
-                  comptime TABLE: Fixed[&str, Row] = [\n\
+                  comptime TABLE: Fixed[ref String, Row] = [\n\
                   \x20   (\"x\", Row { a: 1, tags: [\"one\", \"uno\"] }),\n\
                   \x20   (\"y\", Row { a: 2, tags: [\"two\"] }),\n\
                   ]\n\
-                  comptime SHADES: Fixed[&str, Shade] = [(\"a\", Shade::Odd), (\"b\", Shade::Even)]\n\
+                  comptime SHADES: Fixed[ref String, Shade] = [(\"a\", Shade::Odd), (\"b\", Shade::Even)]\n\
                   \n\
                   fn main() {\n\
                   \x20   println(f\"{TABLE.get(\\\"y\\\")?.a ?? 0}\")\n\
@@ -339,7 +339,7 @@ fn a_row_that_owns_memory_is_refused_by_name() {
     let found = findings(
         "struct Bad { items: Vec[i64] }\n\
          \n\
-         comptime T: Fixed[&str, Bad] = [(\"x\", Bad { items: [1, 2] })]\n\
+         comptime T: Fixed[ref String, Bad] = [(\"x\", Bad { items: [1, 2] })]\n\
          \n\
          fn main() { println(f\"{T.len()}\") }\n",
     );

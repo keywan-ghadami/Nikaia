@@ -783,9 +783,9 @@ fn a_package_is_depended_on_by_path() {
         &[
             (
                 "http/src/main.nika",
-                "pub struct Request { pub path: &str }\n\
+                "pub struct Request { pub path: ref String }\n\
                  \n\
-                 pub fn ok(body: &str) -> String {\n    \
+                 pub fn ok(body: ref String) -> String {\n    \
                      return f\"200 {body}\"\n\
                  }\n",
             ),
@@ -933,7 +933,7 @@ fn a_package_trait_is_implemented_by_a_body_that_calls_that_package() {
             (
                 "lib/src/main.nika",
                 "pub trait Greeter {\n\
-                 \x20   fn greet(&self) -> String\n\
+                 \x20   fn greet(ref self) -> String\n\
                  }\n\
                  \n\
                  pub fn hello() -> String {\n\
@@ -947,7 +947,7 @@ fn a_package_trait_is_implemented_by_a_body_that_calls_that_package() {
                  struct Fixed { n: i64 }\n\
                  \n\
                  impl lib::Greeter for Fixed {\n\
-                 \x20   fn greet(&self) -> String {\n\
+                 \x20   fn greet(ref self) -> String {\n\
                  \x20       return lib::hello()\n\
                  \x20   }\n\
                  }\n\
@@ -1132,7 +1132,7 @@ fn a_field_a_package_does_not_publish_is_refused() {
                      return Request { id: id, method: 1 }\n\
                  }\n\
                  \n\
-                 pub fn method_of(r: &Request) -> i64 {\n    \
+                 pub fn method_of(r: ref Request) -> i64 {\n    \
                      return r.method\n\
                  }\n",
             ),
@@ -1235,7 +1235,7 @@ fn every_abort_names_the_nikaia_line() {
         ),
         (
             "a negative index",
-            "fn pick(xs: &Vec[i64], at: i64) -> i64 {\n    return xs[at]\n}\n\
+            "fn pick(xs: ref Vec[i64], at: i64) -> i64 {\n    return xs[at]\n}\n\
              \n\
              fn main() {\n    \
                  let mut xs = Vec()\n    \
@@ -1247,7 +1247,7 @@ fn every_abort_names_the_nikaia_line() {
         ),
         (
             "an index past the end",
-            "fn pick(xs: &Vec[i64], at: i64) -> i64 {\n    return xs[at]\n}\n\
+            "fn pick(xs: ref Vec[i64], at: i64) -> i64 {\n    return xs[at]\n}\n\
              \n\
              fn main() {\n    \
                  let mut xs = Vec()\n    \
@@ -1349,7 +1349,7 @@ fn a_package_may_be_given_another_name() {
                      return Request { id: id }\n\
                  }\n\
                  \n\
-                 pub fn id_of(r: &Request) -> i64 {\n    \
+                 pub fn id_of(r: ref Request) -> i64 {\n    \
                      return r.id\n\
                  }\n",
             ),
@@ -1535,10 +1535,10 @@ fn a_trait_a_package_publishes_can_be_implemented_and_called() {
                  }\n\
                  \n\
                  pub trait Handler {\n\
-                 \x20   fn handle(&self) -> Answer\n\
+                 \x20   fn handle(ref self) -> Answer\n\
                  }\n\
                  \n\
-                 pub fn render(answer: &Answer) -> String {\n\
+                 pub fn render(answer: ref Answer) -> String {\n\
                  \x20   return answer.text.clone()\n\
                  }\n",
             ),
@@ -1550,7 +1550,7 @@ fn a_trait_a_package_publishes_can_be_implemented_and_called() {
                  }\n\
                  \n\
                  impl handler::Handler for Fixed {\n\
-                 \x20   fn handle(&self) -> handler::Answer {\n\
+                 \x20   fn handle(ref self) -> handler::Answer {\n\
                  \x20       return handler::Answer { text: \"handled\".to_string() }\n\
                  \x20   }\n\
                  }\n\
@@ -1742,16 +1742,16 @@ fn a_grammar_at_build_time_reaches_a_project_build() {
         "[package]\nname = \"settings\"\nversion = \"0.1.0\"\n",
         "@borrowed\n\
          pub struct Setting {\n\
-         \x20   key: &str,\n\
-         \x20   value: &str,\n\
+         \x20   key: ref String,\n\
+         \x20   value: ref String,\n\
          }\n\
          \n\
          grammar Cfg {\n\
          \x20   rule WSE = multispace1 -> { }\n\
          \x20   rule WS = (WSE | COMMENT)* -> { }\n\
          \x20   rule COMMENT = \"#\" until(line_ending) -> { }\n\
-         \x20   rule NAME -> &str = s:raw_ident -> { s }\n\
-         \x20   rule VALUE -> &str = s:until(\"#\" | line_ending) -> { s.trim() }\n\
+         \x20   rule NAME -> ref String = s:raw_ident -> { s }\n\
+         \x20   rule VALUE -> ref String = s:until(\"#\" | line_ending) -> { s.trim() }\n\
          \x20   rule setting -> Setting = key:NAME \"=\" value:VALUE -> { Setting { key, value } }\n\
          \x20   pub rule file -> Vec[Setting] = settings:setting* -> { settings }\n\
          }\n\
@@ -1810,7 +1810,7 @@ fn a_shape_walk_reaches_across_the_files_of_a_package() {
     );
     std::fs::write(
         dir.join("src/shapes.nika"),
-        "struct User { name: &str, age: i64 }\n\
+        "struct User { name: ref String, age: i64 }\n\
          struct Point { x: i64, y: i64 }\n\
          \n\
          fn describe[T: Struct](value: T) {\n\

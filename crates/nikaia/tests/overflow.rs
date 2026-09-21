@@ -449,7 +449,7 @@ fn truncating_says_by_name_what_a_conversion_no_longer_does_quietly() {
              return x.truncating_i32()\n\
          }\n\
          \n\
-         fn counted(text: &str) -> i32 {\n    \
+         fn counted(text: ref String) -> i32 {\n    \
              return text.len().truncating_i32()\n\
          }\n\
          \n\

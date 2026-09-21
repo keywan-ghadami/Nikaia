@@ -178,7 +178,7 @@ fn a_return_in_a_block_used_as_a_value_leaves_the_function() {
 const CATCH_HANDLER: &str = "use std::fs\n\
      \n\
      fn label(path: String) -> String throws {\n\
-     \x20   let text = fs::read_to_string(&path) catch { return \"missing\".to_string() }\n\
+     \x20   let text = fs::read_to_string(ref path) catch { return \"missing\".to_string() }\n\
      \x20   f\"read {text.len()} bytes\"\n\
      }\n\
      \n\

@@ -710,7 +710,7 @@ fn a_comptime_calls_across_a_file_boundary() {
             (
                 "main.nika",
                 "comptime TOTAL: i64 = Point { x: 3, y: 4 }.doubled().sum()\n\
-                 comptime LABEL: &str = banner(\"nikaia\")\n\
+                 comptime LABEL: ref String = banner(\"nikaia\")\n\
                  comptime CHAINED: i64 = through(5)\n\
                  \n\
                  fn main() {\n\
@@ -722,13 +722,13 @@ fn a_comptime_calls_across_a_file_boundary() {
                 "pub struct Point { pub x: i64, pub y: i64 }\n\
                  \n\
                  impl Point {\n\
-                 \x20   pub fn doubled(&self) -> Point sync {\n\
+                 \x20   pub fn doubled(ref self) -> Point sync {\n\
                  \x20       return Point { x: self.x * 2, y: self.y * 2 }\n\
                  \x20   }\n\
-                 \x20   pub fn sum(&self) -> i64 sync { return self.x + self.y }\n\
+                 \x20   pub fn sum(ref self) -> i64 sync { return self.x + self.y }\n\
                  }\n\
                  \n\
-                 pub fn banner(name: &str) -> String sync { return f\"[{name}]\" }\n",
+                 pub fn banner(name: ref String) -> String sync { return f\"[{name}]\" }\n",
             ),
             (
                 "deep.nika",

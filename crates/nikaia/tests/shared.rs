@@ -35,7 +35,7 @@ fn connect(host: String) -> Connection {
     Connection { host: host }
 }
 
-fn serve(db: &Connection) {
+fn serve(db: ref Connection) {
     println(f\"serving {db.host}\")
 }
 
@@ -268,11 +268,11 @@ fn connect(host: String) -> Conn {
     Conn { host: host }
 }
 
-fn serve(db: &Conn) {
+fn serve(db: ref Conn) {
     println(f\"serving {db.host}\")
 }
 
-fn peek(db: &Shared[Conn]) {
+fn peek(db: ref Shared[Conn]) {
     println(f\"peeking {db.host}\")
 }
 
@@ -361,7 +361,7 @@ fn connect(host: String) -> Conn {
     Conn { host: host }
 }
 
-fn serve(db: &Conn) { }
+fn serve(db: ref Conn) { }
 
 fn keep(db: Shared[Conn]) -> Pool {
     return Pool { db: db }
@@ -399,9 +399,9 @@ fn connect(host: String) -> Conn {
     Conn { host: host }
 }
 
-fn serve(db: &Conn) { }
+fn serve(db: ref Conn) { }
 
-fn peek(db: &Shared[Conn]) { }
+fn peek(db: ref Shared[Conn]) { }
 
 fn main() {
     let db = Shared(connect(\"localhost\".to_string()))

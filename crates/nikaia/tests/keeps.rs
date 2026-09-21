@@ -58,7 +58,7 @@ fn a_parameter_returned_by_value_is_kept() {
 /// already records; `-> String` is the one that takes it away.
 #[test]
 fn a_parameter_returned_as_a_view_is_not_kept() {
-    let source = "fn same(text: &str) -> &str { return text }";
+    let source = "fn same(text: ref String) -> ref String { return text }";
     assert!(keeps(source, "same").is_empty());
 
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -102,7 +102,7 @@ fn a_parameter_assigned_into_a_place_is_kept() {
         keeps(
             "struct Stats { min: i64 }\n\
              impl Stats {\n\
-             \x20   fn add(&mut self, temp: i64) { self.min = temp }\n\
+             \x20   fn add(ref mut self, temp: i64) { self.min = temp }\n\
              }",
             "Stats::add"
         ),

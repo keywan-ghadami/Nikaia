@@ -607,7 +607,7 @@ fn an_unevaluable_body_does_not_also_blame_its_declaration() {
 /// `const X: String` is not.
 #[test]
 fn text_is_computed_while_the_program_is_built() {
-    let source = "comptime NAME: &str = \"nikaia\"\n\
+    let source = "comptime NAME: ref String = \"nikaia\"\n\
                   fn main() { println(NAME) }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert!(
@@ -625,7 +625,7 @@ fn text_is_computed_while_the_program_is_built() {
 fn an_interpolation_is_built_from_what_the_build_knows() {
     let source = "comptime MAJOR: i64 = 0\n\
                   comptime MINOR: i64 = 1\n\
-                  comptime BANNER: &str = f\"nikaia {MAJOR}.{MINOR}\"\n\
+                  comptime BANNER: ref String = f\"nikaia {MAJOR}.{MINOR}\"\n\
                   fn main() { println(BANNER) }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert!(
@@ -641,8 +641,8 @@ fn an_interpolation_is_built_from_what_the_build_knows() {
 /// string's escapes into the Rust literal untouched and so does this.
 #[test]
 fn the_escapes_are_the_ones_the_source_wrote() {
-    let source = "comptime GREETING: &str = \"a\\tb\\nc \\\"quoted\\\" {brace}\"\n\
-                  comptime JOINED: &str = \"left\" + \"/\" + \"right\"\n\
+    let source = "comptime GREETING: ref String = \"a\\tb\\nc \\\"quoted\\\" {brace}\"\n\
+                  comptime JOINED: ref String = \"left\" + \"/\" + \"right\"\n\
                   fn main() { println(GREETING) println(JOINED) }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     let rust = lowered(source);
@@ -664,7 +664,7 @@ fn a_string_a_body_built_crosses_as_a_view() {
     let source = "fn greeting() -> String {\n\
                   \x20   return f\"hello {1}\"\n\
                   }\n\
-                  comptime NAME: &str = greeting()\n\
+                  comptime NAME: ref String = greeting()\n\
                   fn main() { println(NAME) }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
     assert!(
@@ -730,7 +730,7 @@ fn a_question_about_the_value_is_answered() {
 fn the_build_and_the_run_read_a_literal_the_same_way() {
     let printed = ran(
         "the decoder against the backend",
-        "comptime BUILT: &str = \"a\\tb\\nc \\\"q\\\" \\u{0041} \\u{20AC}\"\n\
+        "comptime BUILT: ref String = \"a\\tb\\nc \\\"q\\\" \\u{0041} \\u{20AC}\"\n\
          comptime BUILT_LEN: i64 = \"a\\tb\\nc \\\"q\\\" \\u{0041} \\u{20AC}\".len()\n\
          fn main() {\n\
          \x20   let at_run_time = \"a\\tb\\nc \\\"q\\\" \\u{0041} \\u{20AC}\"\n\
@@ -745,7 +745,7 @@ fn the_build_and_the_run_read_a_literal_the_same_way() {
 /// evaluate* rather than inventing one.
 #[test]
 fn an_escape_the_backend_rejects_is_not_invented_here() {
-    let found = findings("comptime X: &str = \"a\\qb\"\nfn main() { println(X) }\n");
+    let found = findings("comptime X: ref String = \"a\\qb\"\nfn main() { println(X) }\n");
     assert!(found.iter().any(|f| f.code == "NK1127"), "{found:#?}");
 }
 
@@ -760,11 +760,11 @@ fn an_escape_the_backend_rejects_is_not_invented_here() {
 fn a_method_of_this_program_folds() {
     let source = "struct Point { x: i64, y: i64 }\n\
                   impl Point {\n\
-                  \x20   fn scaled(&self, by: i64) -> Point sync {\n\
+                  \x20   fn scaled(ref self, by: i64) -> Point sync {\n\
                   \x20       return Point { x: self.x * by, y: self.y * by }\n\
                   \x20   }\n\
-                  \x20   fn sum(&self) -> i64 sync { return self.x + self.y }\n\
-                  \x20   fn twice_the_sum(&self) -> i64 sync { return self.sum() * 2 }\n\
+                  \x20   fn sum(ref self) -> i64 sync { return self.x + self.y }\n\
+                  \x20   fn twice_the_sum(ref self) -> i64 sync { return self.sum() * 2 }\n\
                   }\n\
                   comptime ORIGIN: Point = Point { x: 1, y: 2 }\n\
                   comptime BIG: Point = ORIGIN.scaled(10)\n\
@@ -796,7 +796,7 @@ fn a_method_the_rule_forbids_is_named_by_its_key() {
     let source = "use std::fs\n\
                   struct Reader { n: i64 }\n\
                   impl Reader {\n\
-                  \x20   fn read(&self) -> i64 {\n\
+                  \x20   fn read(ref self) -> i64 {\n\
                   \x20       let t = fs::read_to_string(\"x\") catch { \"\" }\n\
                   \x20       return t.len() + self.n\n\
                   \x20   }\n\
@@ -836,9 +836,9 @@ fn a_field_a_const_cannot_hold_is_named_and_the_way_out_works() {
     );
 
     // And the way out is taken, which is the assertion that matters.
-    let taken = "struct Bag { items: Array[i64, 3], label: &str }\n\
+    let taken = "struct Bag { items: Array[i64, 3], label: ref String }\n\
                  impl Bag {\n\
-                 \x20   fn total(&self) -> i64 sync {\n\
+                 \x20   fn total(ref self) -> i64 sync {\n\
                  \x20       let mut sum = 0\n\
                  \x20       for i in 0..<3 { sum = sum + self.items[i] }\n\
                  \x20       return sum\n\
@@ -976,7 +976,7 @@ fn a_struct_field_may_be_a_fixed_array() {
 /// compiler that wrote the first one every time.
 #[test]
 fn an_enum_variant_crosses_with_what_it_carries() {
-    let source = "enum Shape { Empty, Num(f64), Pair(i64, &str) }\n\
+    let source = "enum Shape { Empty, Num(f64), Pair(i64, ref String) }\n\
                   comptime A: Shape = Shape::Num(1.5)\n\
                   comptime B: Shape = Shape::Pair(7, \"x\")\n\
                   comptime C: Array[Shape, 2] = [Shape::Empty, Shape::Num(2.0)]\n\

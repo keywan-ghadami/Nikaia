@@ -181,7 +181,7 @@ fn nothing_may_not_cross_into_our_own_code_today() {
     for text in [
         "i64",
         "String",
-        "&str",
+        "ref String",
         "Vec[i64]",
         "Shared[i64]",
         "SharedMut[i64]",

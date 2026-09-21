@@ -99,8 +99,8 @@ fn it_is_not_in_the_prelude() {
 #[test]
 fn a_program_that_reads_a_file_names_what_it_throws() {
     let source = "use std::fs\n\
-                  fn load(path: &str) -> String throws {\n\
-                  \x20   return fs::read_to_string(&path)\n\
+                  fn load(path: ref String) -> String throws {\n\
+                  \x20   return fs::read_to_string(ref path)\n\
                   }\n\
                   fn main() { }\n";
     assert_eq!(throws_of(source, "load"), vec!["io::IoError".to_string()]);
@@ -114,10 +114,10 @@ fn a_program_with_its_own_error_too_has_both() {
     let source = "use std::fs\n\
                   enum ConfigError { Empty }\n\
                   impl Error for ConfigError {\n\
-                  \x20   fn message(&self) -> String { return \"empty\" }\n\
+                  \x20   fn message(ref self) -> String { return \"empty\" }\n\
                   }\n\
-                  fn load(path: &str) -> String throws {\n\
-                  \x20   let text = fs::read_to_string(&path)\n\
+                  fn load(path: ref String) -> String throws {\n\
+                  \x20   let text = fs::read_to_string(ref path)\n\
                   \x20   if text == \"\" { throw ConfigError::Empty }\n\
                   \x20   return text\n\
                   }\n\

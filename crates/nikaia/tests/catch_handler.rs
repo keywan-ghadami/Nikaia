@@ -69,7 +69,7 @@ const SHAPES: &[(&str, &str, &str)] = &[
 fn program(handler: &str) -> String {
     format!(
         r#"
-fn parsed(text: &str) -> i32 {{
+fn parsed(text: ref String) -> i32 {{
     let errors = 5
     return text.parse() {handler}
 }}
@@ -100,7 +100,7 @@ fn each_handler_binds_what_it_reads() {
 fn a_nested_block_is_a_mention() {
     let rust = lowered(
         r#"
-fn parsed(text: &str) -> i32 {
+fn parsed(text: ref String) -> i32 {
     return text.parse() catch {
         if text.len() > 0 {
             println(f"{error}")
@@ -167,7 +167,7 @@ fn main() {
 fn a_handler_that_reads_the_error_still_can() {
     let rust = lowered(
         r#"
-fn parsed(text: &str) -> i32 {
+fn parsed(text: ref String) -> i32 {
     return text.parse() catch {
         println(f"caught {error}")
         0

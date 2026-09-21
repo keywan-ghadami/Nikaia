@@ -54,9 +54,9 @@ fn the_head_chain_reads_the_same_two() {
 /// a `for`, in a slice and in a pattern alike.
 #[test]
 fn a_slice_reads_the_same_two() {
-    let rust = emit("fn f(dna: &str, k: i64) { let part = &dna[0..<k] }");
+    let rust = emit("fn f(dna: ref String, k: i64) { let part = ref dna[0..<k] }");
     assert!(rust.contains("(0..k)"), "{rust}");
-    let inclusive = emit("fn f(dna: &str, k: i64) { let part = &dna[0..k] }");
+    let inclusive = emit("fn f(dna: ref String, k: i64) { let part = ref dna[0..k] }");
     assert!(inclusive.contains("(0..=k)"), "{inclusive}");
 }
 

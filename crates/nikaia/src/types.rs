@@ -514,6 +514,31 @@ fn written_at(
         out.push(only_at_the_c_boundary(false, span));
         return;
     }
+    // **An `Array[T]` with no count is an array of any length, and where the
+    // length comes from is the position**
+    // ([ADR-184](../../../docs/specification/adr/adr-184.md) D3).
+    //
+    // In a **parameter** it comes from the call: *beliebig, aber fest* — every
+    // call knows its own length, so the type has a size there and the function
+    // is generic over it. In a **field** or a **result** there is no call to
+    // ask, and the two readings it could have are both something else: a struct
+    // generic over the length makes two `Section`s of different lengths two
+    // **types**, which is not what a parser produces
+    // ([ADR-179](../../../docs/specification/adr/adr-179.md)'s own case), and a
+    // result's length would be bound by nothing.
+    //
+    // **Before the arguments are walked**, because the element is a type and
+    // is not what is wrong here.
+    if at == Position::Elsewhere
+        && !ty.is_view
+        && !ty.is_slice
+        && ty.count.is_none()
+        && ty.generics.len() == 1
+        && parsed.text(ty.name) == crate::contracts::ty::ARRAY
+    {
+        out.push(a_length_nothing_here_can_give(parsed, ty, span));
+        return;
+    }
     // **A function type is not a name**
     // ([ADR-102](../../../docs/specification/adr/adr-102.md) D1), the same way
     // a tuple is not: what `fn` holds is a shape, and its parameters are in
@@ -612,6 +637,55 @@ fn only_a_parameter_yet(span: &Span) -> Finding {
 /// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)): what
 /// `rustc` would say about `&mut i64` in a generated signature is about a file
 /// nobody wrote.
+/// **`NK1182`: an `Array[T]` here has no length, and nothing in this position
+/// can give it one** ([ADR-184](../../../docs/specification/adr/adr-184.md)
+/// D3).
+///
+/// `Array[T]` is an array of **any** length and every use of it has **one**:
+/// in a parameter the call is what says which, and the function is generic over
+/// it. A field and a result have no call to ask.
+///
+/// **Both ways out are named**, because which one the writer meant is not
+/// something this compiler can know and each is a different program: a `ref`
+/// looks at elements somebody else keeps, a `Vec` owns them and may grow. A
+/// message with one of the two would send half its readers the wrong way
+/// ([Part III C.2](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// **And the third is named too**, because for a *field* it is often what was
+/// meant: writing the length down makes it an
+/// [ADR-152](../../../docs/specification/adr/adr-152.md) D4 array laid out
+/// inline.
+///
+/// **Without it the language below answers**, with *the size for values of
+/// type `[i64]` cannot be known at compilation time* about a file nobody
+/// wrote — the sentence [ADR-182](../../../docs/specification/adr/adr-182.md)
+/// D2 had just finished removing one construct over.
+fn a_length_nothing_here_can_give(parsed: &Parsed, ty: &Type, span: &Span) -> Finding {
+    let element = ty
+        .generics
+        .first()
+        .map(|g| parsed.text(g.name).to_string())
+        .unwrap_or_else(|| "T".to_string());
+    Finding {
+        severity: Severity::Error,
+        span: span.clone(),
+        code: "NK1182",
+        message: format!("`Array[{element}]` here has no length to take"),
+        notes: vec![format!(
+            "`Array[{element}]` is an array of any length, and every use of it has one: in a \
+             **parameter** the call says which, and the function is generic over it (Part I, \
+             2.2). A field and a result have no call to ask, and the two readings left are \
+             something else - a struct generic over its length makes two of different lengths \
+             two types, and a result's length would be bound by nothing"
+        )],
+        help: Some(format!(
+            "write `Vec[{element}]` to own elements and be able to grow, `ref Array[{element}]` \
+             to look at elements somebody else keeps, or `Array[{element}, N]` to write the \
+             length down and have them laid out inline"
+        )),
+    }
+}
+
 fn only_at_the_c_boundary(slice: bool, span: &Span) -> Finding {
     let (what, message, help) = match slice {
         true => (

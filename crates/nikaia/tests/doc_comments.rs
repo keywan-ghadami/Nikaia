@@ -37,7 +37,7 @@ fn a_run_of_slashes_is_the_items_documentation() {
         "/// The status line for a response code.\n\
          ///\n\
          /// An unknown code is `500`.\n\
-         pub fn status_line(code: i32) -> &str { return \"200 OK\" }\n",
+         pub fn status_line(code: i32) -> ref String { return \"200 OK\" }\n",
     );
     assert_eq!(
         found[0].1.as_deref(),
@@ -102,7 +102,7 @@ fn the_ledger_carries_it() {
         "/// What the function is for.\n\
          pub fn f() -> i64 { return 0 }\n\
          /// What the type is for.\n\
-         pub struct Row { name: &str }\n",
+         pub struct Row { name: ref String }\n",
     );
     assert_eq!(
         ledger.functions["f"].doc.as_deref(),
@@ -133,10 +133,10 @@ fn a_private_items_prose_stays_in_the_source() {
 #[test]
 fn a_method_carries_its_own() {
     let ledger = ledger(
-        "pub struct Row { name: &str }\n\
+        "pub struct Row { name: ref String }\n\
          impl Row {\n\
          \x20   /// What this one is for.\n\
-         \x20   pub fn name(&self) -> &str { return &self.name }\n\
+         \x20   pub fn name(ref self) -> ref String { return ref self.name }\n\
          }\n",
     );
     assert_eq!(

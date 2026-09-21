@@ -266,7 +266,7 @@ fn a_slice_of_text_is_converted_where_the_range_is_computed() {
         "a slice of text",
         "fn main() {\n\
          \x20   let text = \"hello\"\n\
-         \x20   let part = &text[1..3]\n\
+         \x20   let part = ref text[1..3]\n\
          \x20   println(f\"{part}\")\n\
          \x20   let at: i64 = 1\n\
          \x20   println(f\"{text[at..<at + 3]}\")\n\
@@ -310,7 +310,7 @@ fn a_slice_of_text_read_as_a_value_runs() {
         "fn main() {\n\
          \x20   let text = \"hello world\"\n\
          \x20   println(f\"{text[1..3]}\")\n\
-         \x20   let part = &text[1..3]\n\
+         \x20   let part = ref text[1..3]\n\
          \x20   println(f\"{part}\")\n\
          \x20   println(f\"{text[0..<5]}\")\n\
          }\n",
@@ -328,7 +328,7 @@ fn a_slice_of_a_sequence_read_as_a_value_runs() {
         "fn main() {\n\
          \x20   let xs: Vec[i64] = [1, 2, 3, 4]\n\
          \x20   println(f\"{xs[1..2].len()}\")\n\
-         \x20   let run = &xs[1..2]\n\
+         \x20   let run = ref xs[1..2]\n\
          \x20   println(f\"{run.len()}\")\n\
          }\n",
     );

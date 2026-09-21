@@ -352,7 +352,7 @@ fn a_written_reference_on_the_witness_is_refused() {
         "fn main() throws {\n\
          \x20   let kasse = SharedMut(0)\n\
          \x20   let stand = kasse.get()\n\
-         \x20   kasse.set(stand + 1; after: &stand)\n\
+         \x20   kasse.set(stand + 1; after: ref stand)\n\
          }\n",
     );
     assert!(refused.iter().any(|f| f.code == "NK1137"), "{refused:#?}");
@@ -366,7 +366,7 @@ fn a_written_reference_on_the_witness_is_refused() {
 fn an_after_on_a_type_of_the_programs_own_is_an_ordinary_option() {
     let source = "struct Slot { n: i64 }\n\
                   impl Slot {\n\
-                  \x20   fn set(&self, v: i64; after: i64 = 0) -> i64 { return v + after }\n\
+                  \x20   fn set(ref self, v: i64; after: i64 = 0) -> i64 { return v + after }\n\
                   }\n\
                   fn main() {\n\
                   \x20   let s = Slot { n: 1 }\n\

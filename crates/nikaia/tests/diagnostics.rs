@@ -336,7 +336,8 @@ fn the_hasher_this_compiler_chose_is_not_in_the_message() {
             "type annotations needed for `HashMap<_, _, BuildHasherDefault<FxHasher>>`"
         )
         .expect("a JSON string"),
-        serde_json::to_string("`TrustedMap<&str, i64>` is the type of `m`").expect("a JSON string"),
+        serde_json::to_string("`TrustedMap<ref String, i64>` is the type of `m`")
+            .expect("a JSON string"),
     );
 
     let translated = diagnostics::translate(&json, &lowered.map, GOOD);
@@ -347,7 +348,7 @@ fn the_hasher_this_compiler_chose_is_not_in_the_message() {
     );
     assert_eq!(
         translated[0].notes[0],
-        "`HashMap<&str, i64>` is the type of `m`"
+        "`HashMap<ref String, i64>` is the type of `m`"
     );
     for said in [&translated[0].message, &translated[0].notes[0]] {
         assert!(!said.contains("FxHasher"), "{said}");

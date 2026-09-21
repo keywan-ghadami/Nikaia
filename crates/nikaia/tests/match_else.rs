@@ -28,7 +28,7 @@ fn lowered(source: &str) -> Result<String, String> {
 #[test]
 fn the_catch_all_arm_is_else_and_lowers_to_underscore() {
     let rust = lowered(
-        "fn describe(n: i64) -> &str {\n\
+        "fn describe(n: i64) -> ref String {\n\
          \x20   return match n { 1 => \"one\", else => \"other\" }\n\
          }\n",
     )

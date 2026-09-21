@@ -201,7 +201,7 @@ fn an_element_of_the_wrong_type_is_the_lets_own_refusal() {
     let found: Vec<_> = findings(
         "fn main() {\n\
          \x20   let a: i64 = 1\n\
-         \x20   let b: Array[&str, 1] = [a]\n\
+         \x20   let b: Array[ref String, 1] = [a]\n\
          \x20   println(f\"{b[0]}\")\n\
          }\n",
     )

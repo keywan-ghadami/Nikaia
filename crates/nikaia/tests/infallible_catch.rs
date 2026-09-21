@@ -37,7 +37,7 @@ fn refusals(source: &str) -> Vec<check::Finding> {
 /// A function that can fail and one that cannot, so every fixture below says
 /// which it means without an undescribed name doing the work.
 const DECLARED: &str = r#"
-fn risky(text: &str) -> i32 throws {
+fn risky(text: ref String) -> i32 throws {
     return text.parse()
 }
 
@@ -48,7 +48,7 @@ fn safe(n: i32) -> i32 {
 
 fn program(body: &str) -> String {
     format!(
-        "{DECLARED}\nfn guarded(text: &str) -> i32 {{\n    return {body}\n}}\n\n\
+        "{DECLARED}\nfn guarded(text: ref String) -> i32 {{\n    return {body}\n}}\n\n\
          fn main() {{\n    let it = guarded(\"7\")\n    println(f\"{{it}}\")\n}}\n"
     )
 }

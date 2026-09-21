@@ -155,7 +155,7 @@ fn a_write_to_the_same_file_keeps_the_order() {
 fn a_file_that_cannot_be_named_keeps_the_order() {
     assert!(!overlaps(
         "use std::fs\n\
-         fn main(pfad: &str) throws {\n\
+         fn main(pfad: ref String) throws {\n\
              let a = fs::write(\"log.txt\", \"x\") catch { }\n\
              let b = fs::read_to_string(pfad) catch { \"\".to_string() }\n\
              println(f\"{b.len()}\")\n\
@@ -237,7 +237,7 @@ fn a_dependency_in_a_handler_keeps_the_order() {
 fn a_non_literal_argument_keeps_the_order() {
     assert!(!overlaps(
         "use std::fs\n\
-         fn main(eins: &str, zwei: &str) throws {\n\
+         fn main(eins: ref String, zwei: ref String) throws {\n\
              let a = fs::read_to_string(eins) catch { \"\".to_string() }\n\
              let b = fs::read_to_string(zwei) catch { \"\".to_string() }\n\
              println(f\"{a.len()} {b.len()}\")\n\

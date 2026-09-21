@@ -119,7 +119,7 @@ fn a_trait_method_calling_the_file_next_door_is_not_refused() {
             (
                 "main.nika",
                 "trait Simple {\n\
-                 \x20   fn go(&self) -> i64\n\
+                 \x20   fn go(ref self) -> i64\n\
                  }\n\
                  \n\
                  struct Thing {\n\
@@ -127,7 +127,7 @@ fn a_trait_method_calling_the_file_next_door_is_not_refused() {
                  }\n\
                  \n\
                  impl Simple for Thing {\n\
-                 \x20   fn go(&self) -> i64 {\n\
+                 \x20   fn go(ref self) -> i64 {\n\
                  \x20       return plain(self.n)\n\
                  \x20   }\n\
                  }\n\
@@ -170,7 +170,7 @@ fn a_trait_method_that_really_pauses_in_the_file_next_door_is_still_refused() {
             (
                 "main.nika",
                 "trait Simple {\n\
-                 \x20   fn go(&self) -> i64 sync\n\
+                 \x20   fn go(ref self) -> i64 sync\n\
                  }\n\
                  \n\
                  struct Thing {\n\
@@ -178,7 +178,7 @@ fn a_trait_method_that_really_pauses_in_the_file_next_door_is_still_refused() {
                  }\n\
                  \n\
                  impl Simple for Thing {\n\
-                 \x20   fn go(&self) -> i64 {\n\
+                 \x20   fn go(ref self) -> i64 {\n\
                  \x20       return reads().len() as i64\n\
                  \x20   }\n\
                  }\n\
@@ -252,7 +252,7 @@ fn a_throwing_neighbour_is_named_rather_than_unknown() {
                 "helper.nika",
                 "pub enum LeereZeile { Leer }\n\
                  \n\
-                 pub fn pruefe(n: &i64) -> i64 throws {\n\
+                 pub fn pruefe(n: ref i64) -> i64 throws {\n\
                  \x20   if n == 0 { throw LeereZeile::Leer }\n\
                  \x20   return 1\n\
                  }\n",

@@ -473,17 +473,37 @@ fn rank(into: &Destination) -> u8 {
 }
 
 /// A type as the source writes it, for a message to quote back.
+///
+/// **The third writer of a written type**, beside `Ty`'s own `Display` and the
+/// emitter's — and the one that reads the **AST** rather than the checker's
+/// answer, which is why it exists: what a message quotes back has to be what
+/// the program wrote, arguments and all
+/// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
 pub(crate) fn write_type(parsed: &Parsed, ty: &Type) -> String {
     let mut out = String::new();
+    // **`ref X` is a view of an `X`**
+    // ([ADR-184](../../docs/specification/adr/adr-184.md) D1). A message that
+    // wrote the character this replaced would name a spelling its reader
+    // cannot type.
     if ty.is_view {
-        out.push('&');
+        out.push_str("ref ");
+        if ty.is_mut {
+            out.push_str("mut ");
+        }
     }
     let parts = || -> Vec<String> { ty.generics.iter().map(|g| write_type(parsed, g)).collect() };
     if ty.is_tuple {
         out.push_str(&format!("({})", parts().join(", ")));
         return out;
     }
-    out.push_str(parsed.text(ty.name));
+    // **And a view of `String` is a view of text** (D2): one noun, whichever
+    // door the type came through.
+    let name = parsed.text(ty.name);
+    let name = match (ty.is_view, name) {
+        (true, "str") => crate::contracts::ty::TEXT,
+        _ => name,
+    };
+    out.push_str(name);
     if !ty.generics.is_empty() {
         out.push_str(&format!("[{}]", parts().join(", ")));
     }

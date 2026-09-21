@@ -96,8 +96,8 @@ fn fs_read_hands_back_bytes() {
 #[test]
 fn a_program_may_declare_what_fs_read_hands_back() {
     let source = "use std::fs\n\
-                  fn load(path: &str) -> Bytes throws {\n\
-                  \x20   return fs::read(&path)\n\
+                  fn load(path: ref String) -> Bytes throws {\n\
+                  \x20   return fs::read(ref path)\n\
                   }\n\
                   fn main() { }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
@@ -112,8 +112,8 @@ fn a_program_may_declare_what_fs_read_hands_back() {
 #[test]
 fn a_view_of_a_local_buffer_is_refused() {
     let source = "use std::fs\n\
-                  fn header(path: &str) -> &str throws {\n\
-                  \x20   let data = fs::read_to_string(&path)\n\
+                  fn header(path: ref String) -> ref String throws {\n\
+                  \x20   let data = fs::read_to_string(ref path)\n\
                   \x20   return data.trim()\n\
                   }\n\
                   fn main() { }\n";
@@ -134,8 +134,8 @@ fn a_view_of_a_local_buffer_is_refused() {
 #[test]
 fn a_view_of_a_local_bytes_is_refused() {
     let source = "use std::fs\n\
-                  fn first(path: &str) -> &str throws {\n\
-                  \x20   let data = fs::read(&path)\n\
+                  fn first(path: ref String) -> ref String throws {\n\
+                  \x20   let data = fs::read(ref path)\n\
                   \x20   return data.text()\n\
                   }\n\
                   fn main() { }\n";
@@ -149,8 +149,8 @@ fn a_view_of_a_local_bytes_is_refused() {
 #[test]
 fn a_tail_expression_is_handed_back_too() {
     let source = "use std::fs\n\
-                  fn header(path: &str) -> &str throws {\n\
-                  \x20   let data = fs::read_to_string(&path)\n\
+                  fn header(path: ref String) -> ref String throws {\n\
+                  \x20   let data = fs::read_to_string(ref path)\n\
                   \x20   data.trim()\n\
                   }\n\
                   fn main() { }\n";
@@ -164,8 +164,8 @@ fn a_method_is_refused_the_same_way() {
     let source = "use std::fs\n\
                   struct Loader { }\n\
                   impl Loader {\n\
-                  \x20   fn header(&self, path: &str) -> &str throws {\n\
-                  \x20       let data = fs::read_to_string(&path)\n\
+                  \x20   fn header(ref self, path: ref String) -> ref String throws {\n\
+                  \x20       let data = fs::read_to_string(ref path)\n\
                   \x20       return data.trim()\n\
                   \x20   }\n\
                   }\n\
@@ -187,7 +187,7 @@ fn a_method_is_refused_the_same_way() {
 /// caller's and outlives the call, which is `Borrowed` and costs nothing.
 #[test]
 fn a_view_of_a_parameter_is_left_alone() {
-    let source = "fn trimmed(input: &str) -> &str {\n\
+    let source = "fn trimmed(input: ref String) -> ref String {\n\
                   \x20   return input.trim()\n\
                   }\n\
                   fn main() { }\n";
@@ -199,7 +199,7 @@ fn a_view_of_a_parameter_is_left_alone() {
 /// that fired on *owning* one would refuse a correct program.
 #[test]
 fn a_buffer_that_is_not_handed_back_is_left_alone() {
-    let source = "fn name(input: &str) -> &str {\n\
+    let source = "fn name(input: ref String) -> ref String {\n\
                   \x20   let copy = input.to_owned()\n\
                   \x20   return input\n\
                   }\n\
@@ -211,7 +211,7 @@ fn a_buffer_that_is_not_handed_back_is_left_alone() {
 /// [ADR-008](../../../docs/specification/adr/adr-008.md) D9's own example.
 #[test]
 fn a_literal_is_left_alone() {
-    let source = "fn name() -> &str {\n\
+    let source = "fn name() -> ref String {\n\
                   \x20   let unused = \"Grace\".to_owned()\n\
                   \x20   return \"Ada\"\n\
                   }\n\
@@ -226,7 +226,7 @@ fn a_literal_is_left_alone() {
 /// ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)).
 #[test]
 fn a_call_nothing_describes_never_raises_it() {
-    let source = "fn hold(input: &str) -> &str {\n\
+    let source = "fn hold(input: ref String) -> ref String {\n\
                   \x20   let made = whatever(input)\n\
                   \x20   return made\n\
                   }\n\
@@ -238,8 +238,8 @@ fn a_call_nothing_describes_never_raises_it() {
 #[test]
 fn an_owned_result_is_left_alone() {
     let source = "use std::fs\n\
-                  fn header(path: &str) -> String throws {\n\
-                  \x20   let data = fs::read_to_string(&path)\n\
+                  fn header(path: ref String) -> String throws {\n\
+                  \x20   let data = fs::read_to_string(ref path)\n\
                   \x20   return data\n\
                   }\n\
                   fn main() { }\n";

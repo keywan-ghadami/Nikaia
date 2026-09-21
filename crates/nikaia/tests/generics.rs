@@ -285,7 +285,7 @@ struct Holder[T] {
 }
 
 impl Holder[i64] {
-    fn doubled(&self) -> i64 {
+    fn doubled(ref self) -> i64 {
         return self.it * 2
     }
 }
@@ -319,7 +319,7 @@ struct Holder[T] {
 }
 
 impl Holder[T] {
-    fn shout(&self) -> String {
+    fn shout(ref self) -> String {
         return self.value.to_uppercase()
     }
 }
@@ -389,7 +389,7 @@ struct Holder[T] {
 }
 
 impl Holder[T] {
-    fn get(&self) -> T {
+    fn get(ref self) -> T {
         return self.value
     }
 }
@@ -434,8 +434,8 @@ impl Holder[T] {
         return self.value
     }
 
-    fn seen(&self) -> &T {
-        return &self.value
+    fn seen(ref self) -> ref T {
+        return ref self.value
     }
 }
 
@@ -460,7 +460,7 @@ struct Holder[T] {
 }
 
 impl Holder[i64] {
-    fn wrong(&self) -> String {
+    fn wrong(ref self) -> String {
         return self.it
     }
 }

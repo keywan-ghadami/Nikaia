@@ -76,11 +76,11 @@ fn run(purpose: &str, source: &str) -> String {
 const SHAPES: &str = "struct Point { x: i64, y: i64 }\n\
      enum Op { Add, Sub }\n\
      \n\
-     fn describe[T: Struct](value: T) -> &str {\n\
+     fn describe[T: Struct](value: T) -> ref String {\n\
      \x20   return \"a struct\"\n\
      }\n\
      \n\
-     fn name_it[T: Enum](value: T) -> &str {\n\
+     fn name_it[T: Enum](value: T) -> ref String {\n\
      \x20   return \"an enum\"\n\
      }\n";
 
@@ -211,16 +211,16 @@ fn a_type_this_compiler_has_not_classified_is_not_refused() {
 #[test]
 fn a_program_that_declares_the_trait_keeps_it() {
     let source = "trait Struct {\n\
-         \x20   fn label(self) -> &str\n\
+         \x20   fn label(self) -> ref String\n\
          }\n\
          \n\
          struct Point { x: i64, y: i64 }\n\
          \n\
          impl Struct for Point {\n\
-         \x20   fn label(self) -> &str { return \"point\" }\n\
+         \x20   fn label(self) -> ref String { return \"point\" }\n\
          }\n\
          \n\
-         fn describe[T: Struct](value: T) -> &str {\n\
+         fn describe[T: Struct](value: T) -> ref String {\n\
          \x20   return value.label()\n\
          }\n\
          \n\
@@ -252,7 +252,7 @@ fn a_program_that_declares_the_trait_keeps_it() {
 fn the_shape_the_bound_reaches_is_built() {
     let source = "struct Point { x: i64, y: i64 }\n\
          \n\
-         fn describe[T: Struct](value: T) -> &str {\n\
+         fn describe[T: Struct](value: T) -> ref String {\n\
          \x20   for field in T::fields {\n\
          \x20       println(field.name)\n\
          \x20   }\n\
@@ -277,7 +277,7 @@ fn the_shape_the_bound_reaches_is_built() {
 fn the_other_shape_is_refused_by_name() {
     let found = one("enum Shade { Odd, Even }\n\
          \n\
-         fn tell[T: Enum](value: T) -> &str {\n\
+         fn tell[T: Enum](value: T) -> ref String {\n\
          \x20   for v in T::variants {\n\
          \x20       println(\"x\")\n\
          \x20   }\n\
@@ -304,7 +304,7 @@ fn the_other_shape_is_refused_by_name() {
 /// note names it rather than warning them off.
 #[test]
 fn the_shape_without_a_bound_names_the_bound() {
-    let found = one("fn plain[T](value: T) -> &str {\n\
+    let found = one("fn plain[T](value: T) -> ref String {\n\
          \x20   for field in T::fields {\n\
          \x20       println(field.name)\n\
          \x20   }\n\

@@ -70,7 +70,7 @@ fn ran(purpose: &str, source: &str) -> String {
 /// session that running one of the specification's own programs turned one up.
 const SUMMARIZE: &str = r#"
 trait Summarize {
-    fn summary(&self) -> String
+    fn summary(ref self) -> String
 }
 
 struct User {
@@ -78,7 +78,7 @@ struct User {
 }
 
 impl Summarize for User {
-    fn summary(&self) -> String {
+    fn summary(ref self) -> String {
         return f"User: {self.name}"
     }
 }
@@ -134,13 +134,13 @@ fn a_sync_declaration_is_a_plain_signature() {
         "a sync trait",
         r#"
 trait Named {
-    fn name(&self) -> String sync
+    fn name(ref self) -> String sync
 }
 
 struct User { username: String }
 
 impl Named for User {
-    fn name(&self) -> String sync { return self.username.clone() }
+    fn name(ref self) -> String sync { return self.username.clone() }
 }
 
 fn main() { println(User { username: "Ada".to_string() }.name()) }
@@ -169,11 +169,11 @@ fn several_bounds_are_written_with_a_plus() {
         "two bounds",
         r#"
 trait Named {
-    fn name_of(&self) -> String
+    fn name_of(ref self) -> String
 }
 
 trait Aged {
-    fn age_of(&self) -> i64
+    fn age_of(ref self) -> i64
 }
 
 struct User {
@@ -182,7 +182,7 @@ struct User {
 }
 
 impl Named for User {
-    fn name_of(&self) -> String {
+    fn name_of(ref self) -> String {
         // `.clone()` and not `return self.name`, which `NK1131` refuses
         // ([ADR-083](../../../docs/specification/adr/adr-083.md)) - and it
         // caught this fixture, which had been writing a program that never
@@ -193,7 +193,7 @@ impl Named for User {
 }
 
 impl Aged for User {
-    fn age_of(&self) -> i64 {
+    fn age_of(ref self) -> i64 {
         return self.age
     }
 }
@@ -222,7 +222,7 @@ fn a_bound_answers_the_arity_too() {
     let found = findings(
         r#"
 trait Summarize {
-    fn summary(&self) -> String
+    fn summary(ref self) -> String
 }
 
 fn shout[T: Summarize](x: T) -> String {
@@ -247,7 +247,7 @@ fn a_bound_answers_the_result_type() {
     let found = findings(
         r#"
 trait Summarize {
-    fn summary(&self) -> String
+    fn summary(ref self) -> String
 }
 
 fn shout[T: Summarize](x: T) -> i64 {
@@ -272,7 +272,7 @@ fn a_member_no_bound_declares_is_still_refused() {
     let found = findings(
         r#"
 trait Summarize {
-    fn summary(&self) -> String
+    fn summary(ref self) -> String
 }
 
 fn shout[T: Summarize](x: T) -> String {
@@ -324,7 +324,7 @@ fn a_trait_method_carries_the_word_it_was_written_with() {
     // The word, where it is written.
     let with = parse_to_ast(
         "trait Named {\n\
-         \x20   fn name(&self) -> String sync\n\
+         \x20   fn name(ref self) -> String sync\n\
          }\n",
     )
     .expect("the source parses");
@@ -365,7 +365,7 @@ fn an_implementation_that_pauses_is_refused_where_the_trait_says_sync() {
 use std::fs
 
 trait Loader {
-    fn load(&self) -> String sync throws
+    fn load(ref self) -> String sync throws
 }
 
 struct File {
@@ -373,7 +373,7 @@ struct File {
 }
 
 impl Loader for File {
-    fn load(&self) -> String throws {
+    fn load(ref self) -> String throws {
         return fs::read_to_string(self.path.clone())
     }
 }
@@ -411,8 +411,8 @@ fn an_impl_that_leaves_a_method_out_is_refused() {
     let found = findings(
         r#"
 trait Summarize {
-    fn summary(&self) -> String
-    fn title(&self) -> String
+    fn summary(ref self) -> String
+    fn title(ref self) -> String
 }
 
 struct User {
@@ -420,7 +420,7 @@ struct User {
 }
 
 impl Summarize for User {
-    fn summary(&self) -> String {
+    fn summary(ref self) -> String {
         return f"User: {self.name}"
     }
 }
@@ -447,7 +447,7 @@ fn a_method_the_trait_does_not_declare_is_refused() {
     let found = findings(
         r#"
 trait Summarize {
-    fn summary(&self) -> String
+    fn summary(ref self) -> String
 }
 
 struct User {
@@ -455,11 +455,11 @@ struct User {
 }
 
 impl Summarize for User {
-    fn summary(&self) -> String {
+    fn summary(ref self) -> String {
         return f"User: {self.name}"
     }
 
-    fn shout(&self) -> String {
+    fn shout(ref self) -> String {
         return f"USER"
     }
 }
@@ -503,7 +503,7 @@ struct ConfigError {
 }
 
 impl Error for ConfigError {
-    fn message(&self) -> String {
+    fn message(ref self) -> String {
         return f"no config at {self.path}"
     }
 }
@@ -530,7 +530,7 @@ fn an_implementation_that_fails_is_refused_where_the_trait_says_it_cannot() {
 use std::fs
 
 trait Loader {
-    fn load(&self) -> String
+    fn load(ref self) -> String
 }
 
 struct File {
@@ -538,7 +538,7 @@ struct File {
 }
 
 impl Loader for File {
-    fn load(&self) -> String throws {
+    fn load(ref self) -> String throws {
         return fs::read_to_string(self.path.clone())
     }
 }
@@ -566,7 +566,7 @@ fn a_body_that_does_less_than_the_declaration_allows_is_a_program() {
     let found = findings(
         r#"
 trait Loader {
-    fn load(&self) -> String throws
+    fn load(ref self) -> String throws
 }
 
 struct Fixed {
@@ -574,7 +574,7 @@ struct Fixed {
 }
 
 impl Loader for Fixed {
-    fn load(&self) -> String sync {
+    fn load(ref self) -> String sync {
         return self.text.clone()
     }
 }
@@ -601,8 +601,8 @@ fn a_trait_over_a_file_read_is_a_program() {
         "a pausing trait",
         r#"
 trait Source {
-    fn load(&self) -> String throws
-    fn name(&self) -> String sync
+    fn load(ref self) -> String throws
+    fn name(ref self) -> String sync
 }
 
 struct Fixed {
@@ -610,10 +610,10 @@ struct Fixed {
 }
 
 impl Source for Fixed {
-    fn load(&self) -> String throws {
+    fn load(ref self) -> String throws {
         return self.text.clone()
     }
-    fn name(&self) -> String sync { return "fixed".to_string() }
+    fn name(ref self) -> String sync { return "fixed".to_string() }
 }
 
 fn main() throws {
@@ -697,13 +697,13 @@ fn a_type_that_implements_nothing_does_not_meet_a_bound() {
     let found = findings(
         r#"
 trait Speaks {
-    fn say(&self) -> String sync
+    fn say(ref self) -> String sync
 }
 
 struct Dog { name: String }
 
 impl Speaks for Dog {
-    fn say(&self) -> String sync {
+    fn say(ref self) -> String sync {
         return "woof".to_owned()
     }
 }
@@ -749,13 +749,13 @@ fn the_type_that_implements_it_passes_and_runs() {
         "a call through a bound",
         r#"
 trait Speaks {
-    fn say(&self) -> String sync
+    fn say(ref self) -> String sync
 }
 
 struct Dog { name: String }
 
 impl Speaks for Dog {
-    fn say(&self) -> String sync {
+    fn say(ref self) -> String sync {
         return "woof".to_owned()
     }
 }
@@ -780,17 +780,17 @@ fn every_bound_in_a_list_is_asked() {
     let found = findings(
         r#"
 trait Speaks {
-    fn say(&self) -> String sync
+    fn say(ref self) -> String sync
 }
 
 trait Weighs {
-    fn weight(&self) -> i64 sync
+    fn weight(ref self) -> i64 sync
 }
 
 struct Dog { name: String }
 
 impl Speaks for Dog {
-    fn say(&self) -> String sync {
+    fn say(ref self) -> String sync {
         return "woof".to_owned()
     }
 }
@@ -826,23 +826,23 @@ fn a_parameter_is_told_to_widen_its_own_bound() {
     let found = findings(
         r#"
 trait Speaks {
-    fn say(&self) -> String sync
+    fn say(ref self) -> String sync
 }
 
 trait Weighs {
-    fn weight(&self) -> i64 sync
+    fn weight(ref self) -> i64 sync
 }
 
 struct Dog { name: String }
 
 impl Speaks for Dog {
-    fn say(&self) -> String sync {
+    fn say(ref self) -> String sync {
         return "woof".to_owned()
     }
 }
 
 impl Weighs for Dog {
-    fn weight(&self) -> i64 sync {
+    fn weight(ref self) -> i64 sync {
         return 12
     }
 }
@@ -883,13 +883,13 @@ fn a_parameter_that_carries_the_bound_passes_it_on() {
     let found = findings(
         r#"
 trait Speaks {
-    fn say(&self) -> String sync
+    fn say(ref self) -> String sync
 }
 
 struct Dog { name: String }
 
 impl Speaks for Dog {
-    fn say(&self) -> String sync {
+    fn say(ref self) -> String sync {
         return "woof".to_owned()
     }
 }

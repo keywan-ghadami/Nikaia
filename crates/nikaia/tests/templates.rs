@@ -24,7 +24,9 @@ fn refuse(source: &str) -> String {
 }
 
 fn template(body: &str) -> String {
-    format!("use std::html\nfn page(name: &str) -> String {{ return dsl html {{ {body} }} eod }}")
+    format!(
+        "use std::html\nfn page(name: ref String) -> String {{ return dsl html {{ {body} }} eod }}"
+    )
 }
 
 /// D1: every hole goes through `html::Render`, and there is no other path.

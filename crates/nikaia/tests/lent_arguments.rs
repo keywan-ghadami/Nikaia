@@ -120,7 +120,7 @@ fn the_declaration_and_the_call_gain_the_reference_together() {
 fn a_written_ampersand_at_a_lending_call_is_refused() {
     assert!(refused(
         "fn width(text: String) -> i64 { return text.len() as i64 }\n\
-         fn main() { let t = \"hi\".to_string() println(f\"{width(&t)}\") }\n"
+         fn main() { let t = \"hi\".to_string() println(f\"{width(ref t)}\") }\n"
     ));
 
     // And the same call without it is not refused, which is the half that says
@@ -176,7 +176,7 @@ fn a_copy_type_is_not_lent() {
 fn an_owned_string_reaches_a_view_parameter_without_a_written_ampersand() {
     let printed = ran(
         "string-to-str",
-        "fn count(dna: &str) -> i64 { return dna.len() as i64 }\n\
+        "fn count(dna: ref String) -> i64 { return dna.len() as i64 }\n\
          \n\
          fn main() {\n\
          \x20   let dna = \"acgt\".to_string()\n\
@@ -192,13 +192,13 @@ fn an_owned_string_reaches_a_view_parameter_without_a_written_ampersand() {
 fn an_argument_that_is_already_a_view_is_passed_through() {
     let printed = ran(
         "already-a-view",
-        "fn total(xs: &Vec[i64]) -> i64 {\n\
+        "fn total(xs: ref Vec[i64]) -> i64 {\n\
          \x20   let mut sum = 0\n\
          \x20   for x in xs { sum += x }\n\
          \x20   return sum\n\
          }\n\
          \n\
-         fn hand(xs: &Vec[i64]) -> i64 { return total(xs) }\n\
+         fn hand(xs: ref Vec[i64]) -> i64 { return total(xs) }\n\
          \n\
          fn main() {\n\
          \x20   let mut xs = Vec()\n\
@@ -221,7 +221,7 @@ fn a_method_argument_is_not_lent() {
     let rust = lowered(
         "struct Sink { n: i64 }\n\
          impl Sink {\n\
-         \x20   fn measure(&mut self, text: String) sync { self.n = text.len() as i64 }\n\
+         \x20   fn measure(ref mut self, text: String) sync { self.n = text.len() as i64 }\n\
          }\n\
          fn main() {\n\
          \x20   let mut s = Sink { n: 0 }\n\
@@ -242,12 +242,12 @@ fn a_written_ampersand_at_a_method_call_is_left_alone() {
     assert!(!refused(
         "struct Sink { n: i64 }\n\
          impl Sink {\n\
-         \x20   fn measure(&mut self, text: &String) sync { self.n = text.len() as i64 }\n\
+         \x20   fn measure(ref mut self, text: ref String) sync { self.n = text.len() as i64 }\n\
          }\n\
          fn main() {\n\
          \x20   let mut s = Sink { n: 0 }\n\
          \x20   let t = \"abc\".to_string()\n\
-         \x20   s.measure(&t)\n\
+         \x20   s.measure(ref t)\n\
          }\n"
     ));
 }
@@ -265,7 +265,7 @@ fn an_argument_no_signature_describes_keeps_its_written_ampersand() {
         "use std::fs\n\nfn main() {\n\
          \x20   let out = \"/tmp/x\".to_string()\n\
          \x20   let text = \"hi\".to_string()\n\
-         \x20   fs::write(&out, &text) catch { return }\n\
+         \x20   fs::write(ref out, ref text) catch { return }\n\
          }\n"
     ));
 }
@@ -283,7 +283,7 @@ fn a_wrong_argument_is_a_type_error_and_not_this_one() {
          fn route(r: Request) -> i64 { return r.path.len() as i64 }\n\
          fn main() {\n\
          \x20   let t = \"hi\".to_string()\n\
-         \x20   let n = route(&t)\n\
+         \x20   let n = route(ref t)\n\
          \x20   println(f\"{n}\")\n\
          }\n",
     );
@@ -330,7 +330,7 @@ fn a_parameter_passed_on_to_a_lending_callee_is_lent_too() {
 fn an_argument_whose_type_is_not_known_is_still_lent() {
     let source = "struct Entry { count: i64 }\n\
                   \n\
-                  fn read(data: &str) -> Vec[Entry] throws {\n\
+                  fn read(data: ref String) -> Vec[Entry] throws {\n\
                   \x20   let mut out = Vec()\n\
                   \x20   out.push(Entry { count: data.len() as i64 })\n\
                   \x20   return out\n\
@@ -357,7 +357,7 @@ fn an_argument_whose_type_is_not_known_is_still_lent() {
     // And the same program that writes its own `&` is not refused, because
     // nothing here was checked to refuse it on.
     assert!(!refused(
-        &source.replace("total(entries)", "total(&entries)")
+        &source.replace("total(entries)", "total(ref entries)")
     ));
 
     assert_eq!(ran("unknown-argument", source).trim(), "4");
@@ -416,8 +416,8 @@ fn the_mutates_column_renders_and_parses_back() {
         &parse_to_ast(
             "struct Stats { min: i64 }\n\
              impl Stats {\n\
-             \x20   fn add(&mut self, temp: i64) sync { self.min = temp }\n\
-             \x20   fn read(&self) -> i64 sync { return self.min }\n\
+             \x20   fn add(ref mut self, temp: i64) sync { self.min = temp }\n\
+             \x20   fn read(ref self) -> i64 sync { return self.min }\n\
              }",
         )
         .expect("the source parses"),
@@ -425,7 +425,7 @@ fn the_mutates_column_renders_and_parses_back() {
     assert!(ledger.functions["Stats::add"].mutates);
     assert!(
         !ledger.functions["Stats::read"].mutates,
-        "`&self` is not a claim to change anything"
+        "`ref self` is not a claim to change anything"
     );
 
     let rendered = ledger.render();

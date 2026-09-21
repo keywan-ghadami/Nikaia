@@ -48,7 +48,7 @@ const IDIOM: &str = "fn tally(counter: SharedMut[i32]) {\n\
 /// a probe of both answers rather than a test of the decided one.
 fn with_access(sync_line: &str) -> Ledger {
     let text = format!(
-        "{}\n[fn.\"SharedMut::access\"]\npub = true\n{sync_line}signature = \"(&SharedMut[$T], f: fn(&$T))\"\n",
+        "{}\n[fn.\"SharedMut::access\"]\npub = true\n{sync_line}signature = \"(ref SharedMut[$T], f: fn(ref $T))\"\n",
         without_access(STD)
     );
     Ledger::parse(&text).expect("std's ledger plus one entry still parses")

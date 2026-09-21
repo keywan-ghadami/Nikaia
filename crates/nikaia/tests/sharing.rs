@@ -822,7 +822,7 @@ fn a_std_entry_that_takes_a_shared_needs_a_second_look() {
         "a `std` entry now takes or hands back a handle on a `Shared`: {carries:?}. \
          `contracts::sharing` treats a described callee as accounted for, so somebody has to \
          decide whether that entry may keep the handle and cross a thread with it - see the \
-         module header of `contracts::sharing`. A `&Shared[$T]` receiver is not this case: a \
+         module header of `contracts::sharing`. A `ref Shared[$T]` receiver is not this case: a \
          borrow duplicates nothing (ADR-040 D1)."
     );
 }
@@ -892,8 +892,8 @@ fn a_handle_handed_on_by_value_is_a_duplication_site() {
 #[test]
 fn a_borrowed_handle_is_not_a_duplication_site() {
     let decision = one_in(
-        "fn schau(db: &Shared[i64]) { }\n\
-         fn main() { let db = Shared(1)\n schau(&db) }",
+        "fn schau(db: ref Shared[i64]) { }\n\
+         fn main() { let db = Shared(1)\n schau(ref db) }",
         "main",
         "db",
     );

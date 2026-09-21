@@ -44,7 +44,7 @@ fn rust(source: &str) -> String {
 #[test]
 fn a_grammar_entry_throws_a_named_error() {
     let ledger = ledger_of(&format!(
-        "{GRAMMAR}\nfn read(data: &str) -> i64 throws {{\n\
+        "{GRAMMAR}\nfn read(data: ref String) -> i64 throws {{\n\
          \x20   return Tiny::number(data)\n\
          }}\n"
     ));
@@ -62,7 +62,7 @@ fn a_grammar_entry_throws_a_named_error() {
 #[test]
 fn what_a_parse_throws_reaches_its_caller() {
     let ledger = ledger_of(&format!(
-        "{GRAMMAR}\nfn read(data: &str) -> i64 throws {{\n\
+        "{GRAMMAR}\nfn read(data: ref String) -> i64 throws {{\n\
          \x20   return Tiny::number(data)\n\
          }}\n"
     ));
@@ -76,7 +76,7 @@ fn what_a_parse_throws_reaches_its_caller() {
 #[test]
 fn a_parse_beside_a_read_is_a_named_sum() {
     let source = format!(
-        "{GRAMMAR}\nfn both(path: &str) -> i64 throws {{\n\
+        "{GRAMMAR}\nfn both(path: ref String) -> i64 throws {{\n\
          \x20   let data = fs::read_to_string(path)\n\
          \x20   let n = Tiny::number(data)\n\
          \x20   return n\n\
@@ -113,7 +113,7 @@ fn a_parse_beside_a_read_is_a_named_sum() {
 #[test]
 fn the_two_member_channel_compiles() {
     let rust = rust(&format!(
-        "{GRAMMAR}\nfn both(path: &str) -> i64 throws {{\n\
+        "{GRAMMAR}\nfn both(path: ref String) -> i64 throws {{\n\
          \x20   let data = fs::read_to_string(path)\n\
          \x20   let n = Tiny::number(data)\n\
          \x20   return n\n\

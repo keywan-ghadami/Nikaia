@@ -89,16 +89,16 @@ fn run(dir: &Path, reads: &Reads, source: &str) -> String {
 /// A grammar whose result **crosses**: a list of structs whose fields are text.
 const SETTINGS: &str = "@borrowed\n\
      pub struct Setting {\n\
-     \x20   key: &str,\n\
-     \x20   value: &str,\n\
+     \x20   key: ref String,\n\
+     \x20   value: ref String,\n\
      }\n\
      \n\
      grammar Cfg {\n\
      \x20   rule WSE = multispace1 -> { }\n\
      \x20   rule WS = (WSE | COMMENT)* -> { }\n\
      \x20   rule COMMENT = \"#\" until(line_ending) -> { }\n\
-     \x20   rule NAME -> &str = s:raw_ident -> { s }\n\
-     \x20   rule VALUE -> &str = s:until(\"#\" | line_ending) -> { s.trim() }\n\
+     \x20   rule NAME -> ref String = s:raw_ident -> { s }\n\
+     \x20   rule VALUE -> ref String = s:until(\"#\" | line_ending) -> { s.trim() }\n\
      \x20   rule setting -> Setting = key:NAME \"=\" value:VALUE -> { Setting { key, value } }\n\
      \x20   pub rule file -> Vec[Setting] = settings:setting* -> { settings }\n\
      }\n";
@@ -183,7 +183,7 @@ fn invalid_input_fails_the_build_in_the_parsers_own_words() {
 
 /// A grammar whose rule hands back an **`enum`**, with the four shapes a
 /// variant can be: no payload, text, a float, and two things at once.
-const SHADES: &str = "enum Shade { Odd, Even, Named(&str), Weight(f64) }\n\
+const SHADES: &str = "enum Shade { Odd, Even, Named(ref String), Weight(f64) }\n\
      \n\
      grammar Pick {\n\
      \x20   rule WSE = multispace1 -> { }\n\
@@ -405,7 +405,7 @@ fn a_rule_that_hands_back_a_run_crosses_as_a_view() {
     let (dir, reads) = workshop("grammar-run-view");
     let source = format!(
         "{SETTINGS}\n\
-         comptime SETTINGS: &[Setting] = \
+         comptime SETTINGS: ref Array[Setting] = \
          Cfg::file(\"host = example.com\\nport = 8080\\nuser = ada\\n\")\n\
          \n\
          fn main() {{\n\

@@ -112,8 +112,8 @@ fn a_method_call_is_resolved_through_the_receiver() {
 fn a_higher_order_method_hands_on_what_its_lambda_does() {
     let l = ledger(
         "use std::collections\n\n         use std::io\n\
-         fn pure(m: collections::HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { a + 1 } }\n\
-         fn pausing(m: collections::HashMap[&str, i64]) { m.entry(\"x\").and_modify fn { io::read() catch { } } }",
+         fn pure(m: collections::HashMap[ref String, i64]) { m.entry(\"x\").and_modify fn { a + 1 } }\n\
+         fn pausing(m: collections::HashMap[ref String, i64]) { m.entry(\"x\").and_modify fn { io::read() catch { } } }",
     );
 
     assert_eq!(l.functions["pure"].sync, Sync::Inferred);
@@ -168,7 +168,7 @@ fn from_does_not_let_io_into_a_sync_function() {
 fn a_throwing_lambda_is_already_in_the_enclosing_functions_error_set() {
     let l = ledger(
         "enum LeereZeile { Leer }\n\
-         fn pruefe(n: &i64) -> i64 throws {\n\
+         fn pruefe(n: ref i64) -> i64 throws {\n\
              if n == 0 { throw LeereZeile::Leer }\n\
              return 1\n\
          }\n\
@@ -297,11 +297,11 @@ fn a_map_of_structs_types_its_lambda_all_the_way_down() {
         "use std::collections\n\n         pub struct Stats { n: i64 }\n\
          impl Stats {\n\
              pub fn(first: i64) -> Stats { return Stats { n: first } }\n\
-             fn add(&mut self, x: i64) { self.n += x }\n\
+             fn add(ref mut self, x: i64) { self.n += x }\n\
          }\n\
-         pub struct Summary { stations: collections::HashMap[&str, Stats] }\n\
+         pub struct Summary { stations: collections::HashMap[ref String, Stats] }\n\
          impl Summary {\n\
-             fn record(&mut self, name: &str, v: i64) {\n\
+             fn record(ref mut self, name: ref String, v: i64) {\n\
                  self.stations.entry(name).and_modify fn (stats) { stats.add(v) }.or_insert_with fn { Stats(v) }\n\
              }\n\
          }",
@@ -431,7 +431,7 @@ fn the_checker_does_not_depend_on_the_sync_it_helps_infer() {
                   pub struct S { n: i64 }\n\
                   impl S {\n\
                       pub fn(n: i64) -> S { return S { n: n } }\n\
-                      fn use_it(&self) -> i64 sync { return self.n }\n\
+                      fn use_it(ref self) -> i64 sync { return self.n }\n\
                   }";
     let parsed = parse_to_ast(source).expect("the source parses");
     let library = Ledger::parse(STD).expect("std's ledger parses");
@@ -556,9 +556,9 @@ fn starting_a_task_is_not_pure_computation() {
 #[test]
 fn a_result_that_is_a_view_records_what_it_may_point_into() {
     let l = ledger(
-        "fn longest(a: &str, b: &str) -> &str { return a }\n\
-         fn owned(a: &str) -> String { return \"x\" }\n\
-         fn counted(a: &str, n: i32) -> &str { return a }",
+        "fn longest(a: ref String, b: ref String) -> ref String { return a }\n\
+         fn owned(a: ref String) -> String { return \"x\" }\n\
+         fn counted(a: ref String, n: i32) -> ref String { return a }",
     );
 
     assert_eq!(l.functions["longest"].borrows, ["a", "b"]);
@@ -573,7 +573,7 @@ fn a_result_that_is_a_view_records_what_it_may_point_into() {
 fn a_type_records_what_ties_it_to_the_input() {
     let l = ledger(
         "@borrowed\n\
-         pub struct Hit { path: &str, bytes: i64 }\n\
+         pub struct Hit { path: ref String, bytes: i64 }\n\
          pub struct Report { hits: Vec[Hit], total: i64 }\n\
          pub struct Counts { n: i64 }",
     );
@@ -595,7 +595,7 @@ fn a_method_is_named_the_way_it_is_called() {
         "pub struct Stats { n: i64 }\n\
          impl Stats {\n\
              pub fn(first: i64) -> Stats { return Stats { n: first } }\n\
-             fn add(&mut self, x: i64) sync { self.n += x }\n\
+             fn add(ref mut self, x: i64) sync { self.n += x }\n\
          }",
     );
 
@@ -607,8 +607,8 @@ fn a_method_is_named_the_way_it_is_called() {
 /// `--locked` compare bytes.
 #[test]
 fn the_ledger_is_deterministic_and_reads_back() {
-    let source = "pub fn f(a: &str) -> &str sync { return a }\n\
-                  pub struct S { t: &str }";
+    let source = "pub fn f(a: ref String) -> ref String sync { return a }\n\
+                  pub struct S { t: ref String }";
     let first = ledger(source).render();
     let second = ledger(source).render();
     assert_eq!(first, second);
@@ -824,7 +824,7 @@ fn a_constructor_makes_the_same_promise_or_does_not() {
     let pure = "pub struct S { n: i64 }\n\
                 impl S {\n\
                     pub fn(n: i64) -> S { return S { n: n } }\n\
-                    fn use_it(&self) sync { let x = S(1) }\n\
+                    fn use_it(ref self) sync { let x = S(1) }\n\
                 }";
     assert!(violations(pure).is_empty(), "{:?}", violations(pure));
 
@@ -834,7 +834,7 @@ fn a_constructor_makes_the_same_promise_or_does_not() {
                    pub struct S { n: i64 }\n\
                    impl S {\n\
                        pub fn(n: i64) -> S throws { let t = io::read_to_string() return S { n: n } }\n\
-                       fn use_it(&self) sync { let x = S(1) }\n\
+                       fn use_it(ref self) sync { let x = S(1) }\n\
                    }";
     let found = violations(pausing);
     assert_eq!(found.len(), 1, "{found:?}");
@@ -974,7 +974,7 @@ fn a_source_is_found_inside_a_nested_block() {
 fn the_provenance_chooses_the_map() {
     use nikaia::emit::{emit_program_with_trust, Build};
 
-    let source = "use std::collections\n\nfn main() { let m: collections::HashMap[&str, i64] = collections::HashMap() }";
+    let source = "use std::collections\n\nfn main() { let m: collections::HashMap[ref String, i64] = collections::HashMap() }";
     let parsed = parse_to_ast(source).expect("parses");
 
     let trusted = emit_program_with_trust(&parsed, Build::default(), Provenance::Trusted)
@@ -1197,11 +1197,11 @@ fn a_fields_visibility_survives_the_ledger() {
 fn a_grammar_rules_entry_carries_what_its_actions_reach() {
     let own = ledger(
         "grammar Stock {\n\
-         \x20   rule FIELD -> &str = s:until(\";\") -> { s }\n\
+         \x20   rule FIELD -> ref String = s:until(\";\") -> { s }\n\
          \x20   pub rule file -> Vec[i64] = n:FIELD* -> { [1] }\n\
          }\n\
          \n\
-         pub fn read(data: &str) -> Vec[i64] throws { return Stock::file(data) }\n",
+         pub fn read(data: ref String) -> Vec[i64] throws { return Stock::file(data) }\n",
     );
     let entry = &own.functions["Stock::file"];
     assert!(
@@ -1230,7 +1230,7 @@ fn a_grammar_rule_that_prints_carries_the_touch() {
          \x20   pub rule one -> i64 = n:dec[i64](digit+) -> { println(\"seen\") n }\n\
          }\n\
          \n\
-         pub fn read(data: &str) -> i64 throws { return Noisy::one(data) }\n",
+         pub fn read(data: ref String) -> i64 throws { return Noisy::one(data) }\n",
     );
     let entry = &own.functions["Noisy::one"];
     assert!(entry.touches_known, "the column is answered");

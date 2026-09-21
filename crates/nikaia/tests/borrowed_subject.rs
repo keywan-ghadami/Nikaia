@@ -9,7 +9,7 @@
 //! > knowledge to read a Nikaia error; **if a raw internal (Rust) error ever
 //! > reaches you, that is a Nikaia bug.**
 //!
-//! `return self.username` out of a `&self` method was exactly that: an
+//! `return self.username` out of a `ref self` method was exactly that: an
 //! ownership rule rejecting code, with `E0507` reaching the user about a file
 //! nobody wrote.
 //!
@@ -96,15 +96,15 @@ fn every_by_value_position_is_refused() {
     let positions = [
         (
             "handed back",
-            "    fn m(&self) -> String {\n        return self.name\n    }",
+            "    fn m(ref self) -> String {\n        return self.name\n    }",
         ),
         (
             "bound",
-            "    fn m(&self) -> i64 {\n        let x = self.name\n        return 1\n    }",
+            "    fn m(ref self) -> i64 {\n        let x = self.name\n        return 1\n    }",
         ),
         (
             "passed",
-            "    fn m(&self) -> i64 {\n        return takes(self.name)\n    }",
+            "    fn m(ref self) -> i64 {\n        return takes(self.name)\n    }",
         ),
     ];
     for (what, body) in positions {
@@ -139,7 +139,7 @@ fn a_field_that_copies_is_handed_out_freely() {
     let printed = ran(
         "a copying field",
         &around(
-            "    fn m(&self) -> i64 {\n        return self.count\n    }",
+            "    fn m(ref self) -> i64 {\n        return self.count\n    }",
             "r.m()",
         ),
     );
@@ -152,7 +152,7 @@ fn a_written_clone_is_the_way_out() {
     let printed = ran(
         "a written clone",
         &around(
-            "    fn m(&self) -> String {\n        return self.name.clone()\n    }",
+            "    fn m(ref self) -> String {\n        return self.name.clone()\n    }",
             "r.m()",
         ),
     );
@@ -198,15 +198,15 @@ struct Row {
 }
 
 impl Row {
-    fn shout(&self) -> String {
+    fn shout(ref self) -> String {
         return self.name.to_uppercase()
     }
 
-    fn size(&self) -> i64 {
+    fn size(ref self) -> i64 {
         return self.name.len()
     }
 
-    fn label(&self) -> String {
+    fn label(ref self) -> String {
         return f"{self.name}: {self.count}"
     }
 }
@@ -267,12 +267,12 @@ struct Row {
 }
 
 impl Row {
-    fn name(&self) -> &str {
-        return &self.name
+    fn name(ref self) -> ref String {
+        return ref self.name
     }
 
-    fn tags(&self) -> &Vec[i64] {
-        return &self.tags
+    fn tags(ref self) -> ref Vec[i64] {
+        return ref self.tags
     }
 }
 
@@ -297,7 +297,7 @@ struct Row {
 }
 
 impl Row {
-    fn t(&self) -> Vec[i64] {
+    fn t(ref self) -> Vec[i64] {
         return self.tags
     }
 }
@@ -316,7 +316,7 @@ fn main() {
             .help
             .as_deref()
             .is_some_and(|h| h.contains("`&Vec[i64]`")),
-        "a `Vec` field's view is not `&str`: {:?}",
+        "a `Vec` field's view is not `ref String`: {:?}",
         refusal.help
     );
 }

@@ -248,7 +248,7 @@ fn an_enum_operand_is_refused_and_the_way_out_names_match() {
 fn a_view_is_not_something_to_copy_from() {
     let found = one(&format!(
         "{POINT}\n\
-         fn shifted(p: &Point) -> Point {{\n\
+         fn shifted(p: ref Point) -> Point {{\n\
          \x20   return p with {{ x: 1 }}\n\
          }}\n\
          \n\

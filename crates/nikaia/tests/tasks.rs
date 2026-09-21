@@ -139,7 +139,7 @@ fn two_tasks_are_in_flight_before_either_finishes() {
 
     let source = "use std::fs\n\
          \n\
-         fn size(path: &str) -> i64 {\n\
+         fn size(path: ref String) -> i64 {\n\
          \x20   let text = fs::read_to_string(path) catch { return 0 }\n\
          \x20   println(f\"read {path}\")\n\
          \x20   return text.len()\n\

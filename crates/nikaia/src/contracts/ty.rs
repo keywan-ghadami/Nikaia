@@ -420,6 +420,31 @@ impl Ty {
                     mutable: bm,
                 },
             ) => a.fits(b) && asl == bsl && am == bm,
+            // **An `Array[T, N]` fits an `Array[T]`, whatever `N` is**
+            // ([ADR-184](../../../docs/specification/adr/adr-184.md) D3): the
+            // declaration says *an array of any length* and the call is what
+            // says which, so the function is generic over it and every call
+            // knows its own. `Array[T, N]` against `Array[T, M]` is the
+            // argument-by-argument comparison below and stays two types
+            // ([ADR-152](../../../docs/specification/adr/adr-152.md) D4).
+            //
+            // **One direction only.** An `Array[T]` does not fit an
+            // `Array[T, 3]`: *any length* is not *three*, and accepting it
+            // would be a claim the declaration does not make.
+            (
+                Ty::Named {
+                    name: found,
+                    args: given,
+                    view: false,
+                },
+                Ty::Named {
+                    name: want,
+                    args: declared,
+                    view: false,
+                },
+            ) if found == ARRAY && want == ARRAY && declared.len() == 1 && given.len() == 2 => {
+                given[0].fits(&declared[0])
+            }
             // **And what a caller may hand to one**
             // ([ADR-147](../../../docs/specification/adr/adr-147.md) D1): the
             // declaration says what C wants and the caller writes what this
@@ -884,6 +909,30 @@ impl Ty {
         if let Some(n) = ty.count {
             return Ty::Count(n);
         }
+        // **`Array[T]` with no count is the run itself**
+        // ([ADR-184](../../../docs/specification/adr/adr-184.md) D3), and under
+        // a `ref` it is a view of one — the same type the bracket form spells.
+        // An `Array[T, N]` carries its length and is laid out inline
+        // ([ADR-152](../../../docs/specification/adr/adr-152.md) D4); with the
+        // `N` gone there is no length in the type and nothing to lay out, so
+        // what is left is a run somebody else keeps.
+        //
+        // Read here rather than in the grammar because the second alternative
+        // of `type_ref` already parses it: one name, one argument, and a `ref`
+        // in front. Adding a third alternative would make the **spelling**
+        // decide what is one question about the type.
+        if ty.is_view && !ty.is_slice && parsed.text(ty.name) == ARRAY && ty.generics.len() == 1 {
+            let item = Ty::from_ast(parsed, &ty.generics[0]);
+            let item = match ty.is_nullable {
+                true => Ty::Nullable(Box::new(item)),
+                false => item,
+            };
+            return Ty::Pointed {
+                item: Box::new(item),
+                slice: true,
+                mutable: ty.is_mut,
+            };
+        }
         // **What the C boundary lends** (ADR-147 D1), read before the tuple for
         // its reason: the element sits where a tuple's parts sit, and the
         // branches below would read it as an argument of a type called `slice`.
@@ -1009,8 +1058,8 @@ impl fmt::Display for Ty {
                 // is the spelling `parse` above reads back (ADR-155 D5).
                 match slice {
                     true => match item.as_ref() {
-                        Ty::Nullable(inner) => write!(f, "[{inner}]?"),
-                        item => write!(f, "[{item}]"),
+                        Ty::Nullable(inner) => write!(f, "{ARRAY}[{inner}]?"),
+                        item => write!(f, "{ARRAY}[{item}]"),
                     },
                     false => write!(f, "{item}"),
                 }
@@ -1134,13 +1183,24 @@ fn pointed_at(text: &str) -> Option<Ty> {
         Some(shorter) => (shorter.trim_end(), true),
         None => (rest, false),
     };
-    let slice = rest.starts_with('[') && rest.ends_with(']');
+    // **`Array[T]` is the run and `[T]` is the spelling it replaces**
+    // ([ADR-184](../../../docs/specification/adr/adr-184.md) D3, D4). An
+    // `Array[T, N]` is **not** one: the count is what makes it a type laid out
+    // inline, so the comma is what tells the two apart and nothing else has to.
+    let named = rest
+        .strip_prefix(ARRAY)
+        .and_then(|args| args.strip_prefix('['))
+        .and_then(|args| args.strip_suffix(']'))
+        .filter(|args| split_args(args).len() == 1);
+    let bracketed = rest.starts_with('[') && rest.ends_with(']');
+    let slice = named.is_some() || bracketed;
     if !mutable && !slice {
         return None;
     }
-    let inner = match slice {
-        true => &rest[1..rest.len() - 1],
-        false => rest,
+    let inner = match (named, bracketed) {
+        (Some(args), _) => args,
+        (None, true) => &rest[1..rest.len() - 1],
+        (None, false) => rest,
     };
     let item = Ty::parse(inner);
     let item = match absent {
@@ -1239,7 +1299,8 @@ mod tests {
             ("&String", "ref String"),
             ("&Stats", "ref Stats"),
             ("&mut sqlite3", "ref mut sqlite3"),
-            ("&[u8]", "ref [u8]"),
+            ("&[u8]", "ref Array[u8]"),
+            ("ref [u8]", "ref Array[u8]"),
             ("&$V", "ref $V"),
             ("HashMap[&str, Stats]", "HashMap[ref String, Stats]"),
         ] {

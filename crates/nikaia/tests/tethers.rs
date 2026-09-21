@@ -37,9 +37,9 @@ fn state(own: &Ledger, key: &str, position: &str) -> Option<State> {
 #[test]
 fn a_view_parameter_borrows() {
     let own = ledger(
-        "struct Entry { pub name: &str }\n\
+        "struct Entry { pub name: ref String }\n\
          \n\
-         pub fn read(data: &str) -> Vec[Entry] { return [Entry { name: data }] }\n\
+         pub fn read(data: ref String) -> Vec[Entry] { return [Entry { name: data }] }\n\
          \n\
          fn main() { println(\"x\") }\n",
     );
@@ -60,7 +60,7 @@ fn a_result_built_from_a_local_buffer_tethers() {
     let own = ledger(
         "use std::fs\n\
          \n\
-         struct Entry { pub name: &str }\n\
+         struct Entry { pub name: ref String }\n\
          \n\
          pub fn load() -> Vec[Entry] throws {\n\
          \x20   let text = fs::read_to_string(\"/etc/hostname\")\n\
@@ -78,7 +78,7 @@ fn a_result_built_from_a_local_buffer_tethers() {
 #[test]
 fn a_result_that_is_static_text_borrows() {
     let own = ledger(
-        "pub fn label() -> &str { return \"Ada\" }\n\
+        "pub fn label() -> ref String { return \"Ada\" }\n\
          \n\
          fn main() { println(label()) }\n",
     );
@@ -91,7 +91,7 @@ fn a_result_that_is_static_text_borrows() {
 #[test]
 fn a_body_that_owns_no_buffer_borrows() {
     let own = ledger(
-        "struct Entry { pub name: &str }\n\
+        "struct Entry { pub name: ref String }\n\
          \n\
          pub fn made() -> Vec[Entry] {\n\
          \x20   let mut out = Vec()\n\
@@ -110,7 +110,7 @@ fn a_body_that_owns_no_buffer_borrows() {
 #[test]
 fn text_a_body_owns_is_a_buffer() {
     let own = ledger(
-        "struct Entry { pub name: &str }\n\
+        "struct Entry { pub name: ref String }\n\
          \n\
          pub fn owned(seed: i64) -> Vec[Entry] {\n\
          \x20   let text = seed.to_string()\n\
@@ -136,10 +136,10 @@ fn a_signature_without_a_view_says_nothing() {
 #[test]
 fn a_receiver_that_carries_a_view_is_a_position() {
     let own = ledger(
-        "struct Row { pub name: &str }\n\
+        "struct Row { pub name: ref String }\n\
          \n\
          impl Row {\n\
-         \x20   pub fn width(&self) -> i64 { return self.name.len() }\n\
+         \x20   pub fn width(ref self) -> i64 { return self.name.len() }\n\
          }\n\
          \n\
          fn main() { println(\"x\") }\n",
@@ -155,14 +155,14 @@ fn the_column_renders_and_parses_back() {
     let own = ledger(
         "use std::fs\n\
          \n\
-         struct Entry { pub name: &str }\n\
+         struct Entry { pub name: ref String }\n\
          \n\
          pub fn load() -> Vec[Entry] throws {\n\
          \x20   let text = fs::read_to_string(\"/etc/hostname\")\n\
          \x20   return [Entry { name: text.trim() }]\n\
          }\n\
          \n\
-         pub fn read(data: &str) -> Vec[Entry] { return [Entry { name: data }] }\n\
+         pub fn read(data: ref String) -> Vec[Entry] { return [Entry { name: data }] }\n\
          \n\
          fn main() { println(\"x\") }\n",
     );

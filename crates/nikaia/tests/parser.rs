@@ -144,7 +144,7 @@ fn the_keywords_themselves_are_untouched() {
         "fn f() throws {\n    throw oops()\n}",
         "fn main() {\n    if true { } else { }\n}",
         "fn main() {\n    let b = false\n    let c = true\n}",
-        "struct S { id: i64 }\nenum E { A }\nimpl S {\n    fn id(&self) -> i64 { return self.id }\n}",
+        "struct S { id: i64 }\nenum E { A }\nimpl S {\n    fn id(ref self) -> i64 { return self.id }\n}",
         "use utils\n\nfn main() {\n    utils::f()\n}",
         "fn main() {\n    let s = seq { println(\"a\") }\n}",
         "fn main() {\n    spawn fn { println(\"a\") }\n}",
@@ -222,7 +222,7 @@ fn a_path_segment_may_be_a_reserved_word() {
     let source = "\
 struct S { n: i32 }
 impl S {
-    pub fn execute(&self; ...args: Self::dsl) -> Self::dsl { return args }
+    pub fn execute(ref self; ...args: Self::dsl) -> Self::dsl { return args }
 }
 ";
     assert!(

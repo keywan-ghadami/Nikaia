@@ -124,7 +124,7 @@ fn a_for_over_something_that_is_not_a_place_owns_it() {
 fn a_for_over_a_parameter_that_is_already_a_view_still_iterates() {
     let printed = ran(
         "for-over-a-view",
-        "fn total(xs: &Vec[i64]) -> i64 {\n\
+        "fn total(xs: ref Vec[i64]) -> i64 {\n\
          \x20   let mut sum = 0\n\
          \x20   for x in xs { sum += x }\n\
          \x20   return sum\n\
@@ -134,7 +134,7 @@ fn a_for_over_a_parameter_that_is_already_a_view_still_iterates() {
          \x20   let mut xs = Vec()\n\
          \x20   xs.push(4)\n\
          \x20   xs.push(5)\n\
-         \x20   println(f\"{total(&xs)}\")\n\
+         \x20   println(f\"{total(ref xs)}\")\n\
          }\n",
     );
     assert_eq!(printed.trim(), "9");
@@ -182,7 +182,7 @@ fn a_written_ampersand_in_a_for_head_is_refused() {
         "fn main() {\n\
          \x20   let mut xs = Vec()\n\
          \x20   xs.push(1)\n\
-         \x20   for x in &xs { println(f\"{x}\") }\n\
+         \x20   for x in ref xs { println(f\"{x}\") }\n\
          }\n",
     );
     assert!(found.iter().any(|f| f.code == "NK1137"), "{found:#?}");
@@ -206,7 +206,7 @@ fn a_let_over_a_place_is_a_view() {
     let rust = lowered(
         "struct Row { name: String }\n\
          struct Store { rows: Vec[Row] }\n\
-         fn first(store: &Store) -> i64 {\n\
+         fn first(store: ref Store) -> i64 {\n\
          \x20   let row = store.rows[0]\n\
          \x20   return row.name.len() as i64\n\
          }\n\
@@ -232,7 +232,7 @@ fn a_let_over_a_place_that_copies_is_not_a_view() {
     let rust = lowered(
         "struct Body { mass: f64 }\n\
          struct World { bodies: Vec[Body] }\n\
-         fn heavy(world: &World) -> f64 {\n\
+         fn heavy(world: ref World) -> f64 {\n\
          \x20   let m = world.bodies[0].mass\n\
          \x20   return m\n\
          }\n\

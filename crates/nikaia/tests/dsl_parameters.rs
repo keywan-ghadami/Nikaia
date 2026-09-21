@@ -236,7 +236,7 @@ fn an_unknown_parameter_is_an_error_and_names_the_near_miss() {
 ///
 /// **The deferred parameters write no `;` where nothing stands before them**
 /// ([ADR-133](../../../docs/specification/adr/adr-133.md) D1). The *signature*
-/// keeps its own — `pub fn execute(&self; ...args: Self::dsl)` has the subject
+/// keeps its own — `pub fn execute(ref self; ...args: Self::dsl)` has the subject
 /// D3 names — and a receiver is outside the parentheses, so at the call there
 /// is no zone for the separator to stand between.
 #[test]
@@ -244,7 +244,7 @@ fn the_statement_may_be_the_receiver_or_a_subject() {
     let found = findings(
         "pub struct Db { name: String }\n\
          impl Db {\n\
-         \x20   pub fn execute(&self; ...args: Self::dsl) -> Self::dsl { return args }\n\
+         \x20   pub fn execute(ref self; ...args: Self::dsl) -> Self::dsl { return args }\n\
          }\n\
          fn go() {\n\
          \x20   let query = dsl mysql { SELECT 1 WHERE age >= :target_age } eod\n\
@@ -269,7 +269,7 @@ fn a_rebound_name_is_no_longer_a_statement() {
     let found = findings(
         "pub struct Db { name: String }\n\
          impl Db {\n\
-         \x20   pub fn execute(&self; ...args: Self::dsl) -> Self::dsl { return args }\n\
+         \x20   pub fn execute(ref self; ...args: Self::dsl) -> Self::dsl { return args }\n\
          }\n\
          fn go() {\n\
          \x20   let query = dsl mysql { SELECT 1 WHERE age >= :target_age } eod\n\
@@ -301,7 +301,7 @@ fn a_spread_must_be_written_self_dsl() {
     let error = parse_to_ast(
         "pub struct Db { name: String }\n\
          impl Db {\n\
-         \x20   pub fn prepare(&self, statement: &str; ...args: Params) -> i32 { return 1 }\n\
+         \x20   pub fn prepare(ref self, statement: ref String; ...args: Params) -> i32 { return 1 }\n\
          }\n",
     )
     .expect_err("a spread of any other type is refused");

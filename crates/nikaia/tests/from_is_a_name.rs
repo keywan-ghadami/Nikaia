@@ -85,7 +85,7 @@ fn from_is_a_name_everywhere_and_the_program_runs() {
 #[test]
 fn the_paths_two_names_parse_as_the_page_writes_them() {
     assert!(parse_to_ast(
-        "fn rename(from: &str, to: &str) -> i64 {\n\
+        "fn rename(from: ref String, to: ref String) -> i64 {\n\
          \x20   return from.len() + to.len()\n\
          }\n\
          fn main() { println(f\"{rename(\\\"a\\\", \\\"b\\\")}\") }"
