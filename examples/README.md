@@ -75,7 +75,7 @@ They are deliberately different shapes.
   thousands of views into that buffer, not strings.
 * **`n-body.nika`** is the one with **no grammar in it at all**. Five programs in a row that
   all begin with a DSL would say Nikaia is a parser generator; this one is arithmetic in a
-  loop — `sync` methods, `&mut self`, indices and floats — and it is the only example here
+  loop — `sync` methods, `ref mut self`, indices and floats — and it is the only example here
   whose numbers are directly comparable against other languages, because the CLBG publishes
   the same program in some thirty of them with an exact expected output. Ours matches it to
   the digit.
@@ -238,7 +238,7 @@ D8 leaves three of the language's four invisible control-flow events unmarked an
 fourth would imply the other three were absent.
 
 The **ownership** half is why `fs::lines` is *gone* rather than waiting: `lines(path)` was to open
-the file and yield tethered `&str`, so the returned value would own the buffer and hand out views
+the file and yield tethered `ref String`, so the returned value would own the buffer and hand out views
 into itself — the one thing an iterator may not do, and the reason the language below allocates a
 string per line when it offers the same function. The shape that works is two calls,
 `fs::map(path)` + `.lines()`, and that separation *is* the model Part I 6.6 rests on. For a
@@ -285,7 +285,7 @@ on `Reading`, which this program builds a billion times; with parallelism that i
 billion atomic increment/decrement pairs on one refcount word shared by every worker. Nothing
 in the program actually escapes, so the right answer costs nothing at all.
 
-[ADR-008](../docs/specification/adr/adr-008.md) settles it: view types stay (`&str` is a view
+[ADR-008](../docs/specification/adr/adr-008.md) settles it: view types stay (`ref String` is a view
 marker, not a lifetime), the rule is restated over **escape** rather than storage, a view has
 three inferred states (Borrowed ⊑ Tethered ⊑ Owned), the shared handle sits on the *container*
 rather than on each slice, and `.to_owned()` is never inserted for you. `@borrowed` turns "this
@@ -366,11 +366,11 @@ a type was a name with optional generic arguments, so the example declared a two
 a type. Tuples now exist: `(A, B)` as a type, `(a, b)` as a value, `t.0` to read a part
 (Part I, 4.5). The parts live where a named type's arguments live, so everything that already
 walked a type's arguments — the view analysis of ADR-008 among them — walks a tuple's parts
-without knowing about tuples. `mul_tail` yields `(&str, i64)` and `struct Step` is gone.
+without knowing about tuples. `mul_tail` yields `(ref String, i64)` and `struct Step` is gone.
 
 **G12 — no sum type.** `calc.nika` has exactly two operators to carry, and an `enum` is what
 says that. Part I 4.4 specified enums and the bootstrap compiler did not lower them, so the
-example carried the operator as a `&str` and compared it — one typo away from a bug the
+example carried the operator as a `ref String` and compared it — one typo away from a bug the
 compiler cannot see. Enums and `match` now lower: the three variant shapes (`Quit`,
 `Write(String)`, `Move { x, y }`), and five pattern shapes, each one the language below spells
 the same way so the lowering stays a transcription. `calc.nika`'s `mul_tail` yields

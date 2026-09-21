@@ -113,7 +113,7 @@ which ones is the parser backend's question rather than this walk's.
 
 **`keeps` is what is left, and it is the tether's question rather than this
 one's.** A parse hands back views **into its input** — `Stock`'s `Entry` holds
-`&str` — so the entry keeps its `input`, and that is
+`ref String` — so the entry keeps its `input`, and that is
 [ADR-008](specification/adr/adr-008.md)'s tether rather than anything an action
 block says. Leaving the column absent is the safe reading today: absent means
 *nobody said*, so the caller does not lend, while a derived `keeps = []` would
@@ -133,7 +133,7 @@ record that named a parse failure is what put a program in it.
 *Reproduction:*
 
 ```nika
-fn both(path: &str) -> i64 throws {
+fn both(path: ref String) -> i64 throws {
     let data = fs::read_to_string(path)
     return Tiny::number(data)
 }
@@ -312,7 +312,7 @@ other four — `Locked::access`, `Locked::update`, `SharedMut::access`,
 is refused on its own merits (Part II 12.3). So what is left here is an entry
 that does not exist, and the lowering that would serve it is built and waiting:
 [ADR-122](specification/adr/adr-122.md) D1's `|p| Box::pin(async move { … })`,
-measured on a parameter declared `fn(&str) -> String throws` in this language.
+measured on a parameter declared `fn(ref String) -> String throws` in this language.
 
 *What it needs:* a `std` entry whose lambda may genuinely pause, written in
 Nikaia or described as taking a future — `|| async move { … }`, which is stable
@@ -542,7 +542,7 @@ left. Steps 1 to 4 are built: the `keeps` column is inferred, a `for` lends, a
 `let` over a place is a view where the value would move, `xs.drain()` takes the
 elements away, a parameter the callee only reads is declared `&T` and given its
 `&` at every call (`NK1137`), and `mut out: Vec[i64]` is the third state and
-lowers to `&mut T` (`NK1138`).
+lowers to `&mut T` in the language below (`NK1138`).
 
 *Evidence:* `keep(file)` says nothing about the file being flushed inside the
 callee, and nothing tells a caller when a callee *starts* keeping a value whose
@@ -813,10 +813,10 @@ longer stands here:
    which is the right answer for its signature; the implementing type's own
    entry is what (3) has now made reachable, and no program has asked for it.
 
-### 2.19. Text is one type, and `&str` is the assertion
+### 2.19. Text is one type, and `ref String` is the assertion
 
 [ADR-107](specification/adr/adr-107.md). `String` is the one text type and
-its state — borrowed, tethered, owned — is the compiler's per use; `&str` is
+its state — borrowed, tethered, owned — is the compiler's per use; `ref String` is
 the promise that a value is a borrowed view, held to at the line that would
 break it; a copy is `.to_owned()` or a refusal, never inserted. **Nothing of
 it is built**: two types in the checker, a literal in a `String` slot is
@@ -859,7 +859,7 @@ copy, compare-and-swap, retry on a collision — and the address in the lock
 otherwise, where the block runs once; nothing is moved out of the lock and no
 slot is ever empty. `update_all` takes one `mut` per lock. `access` reads.
 **D1, D4 and D6 are built, and D2's address row with them**: `fn(mut v)`
-parses, both doors are handed `&mut T`, the `Option` is gone and with it the
+parses, both doors are handed a view they may write through, the `Option` is gone and with it the
 empty slot — and the `emptied()` panic that named that state, because it cannot
 occur. **What is left is speed**: a copy and a compare-and-swap where the value
 fits a machine word. The block runs exactly once today, which D3 licenses
@@ -1286,7 +1286,7 @@ Nikaia line, which is the one thing Part III C.1 says may not happen.
    rest is worth starting has answered: **nothing in the tree needs Tethered**,
    and what would reach it is a parser handing its rows past the buffer's scope.
 3. **Three layouts per struct** (D3, D5), chosen per construction site. A
-   tethered `Entry` is not a `&str`: the **container** holds the handle (D4) and
+   tethered `Entry` is not a `ref String`: the **container** holds the handle (D4) and
    the element holds `(offset, len)`, so every read of `entry.name` becomes a
    slice of the container's buffer. That is a whole representation, emitted
    three ways and picked by the analysis's answer — handed over the way

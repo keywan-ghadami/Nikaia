@@ -4,6 +4,17 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.135] — 2026-09-21
+
+**The living pages say `ref`** — the upkeep
+[ADR-184](docs/specification/adr/adr-184.md) owes, and
+[`docs/README.md`](docs/README.md) §1's own rule: a stale note is a defect,
+because a reader cannot tell a plan from a promise.
+
+- **Four pages that describe the language as it is now**: [`open-work.md`](docs/open-work.md)'s reproductions and entries, the roadmap's examples, [`spec-promises.md`](docs/spec-promises.md)'s nullable row, and [`examples/README.md`](examples/README.md).
+- **The laboratory notes are not touched**, and that is the same rule the ADRs have. `stored-views.md`, `nightly-cost.md`, `from-for-throws-and-touches.md`, `staging-candidates.md`, `handoff.md` and `language-review.md` each carry a **date** and say what was true then — a snapshot rewritten to today's spelling would be a measurement nobody took.
+- **And a `&str` that names the generated file stays.** The roadmap's `const BANNER: &str = "nikaia 0.1";` and `spec-promises.md`'s `Option<&str>` are **Rust**, which is D2's own line: the compiler's word and the language's are allowed to differ, and only one of them is the language.
+
 ## [0.0.134] — 2026-09-21
 
 **`Array[T]` is an array of any length, and `&` leaves the language** —
