@@ -86,6 +86,20 @@ pub enum Value {
     Bool(bool),
     /// A fixed-length list, every element already a value.
     List(Vec<Value>),
+    /// Text, **as the source wrote it** — escapes and all.
+    ///
+    /// The parser keeps a string's escapes rather than decoding them, and the
+    /// emitter passes them through into the Rust literal unchanged, because
+    /// this language's escapes are that one's. Holding the written form is
+    /// therefore the shape that agrees with the lowering: what a `comptime`
+    /// writes down is the same text the same literal would have produced at
+    /// run time, character for character.
+    ///
+    /// **What it costs is every question about the value rather than the
+    /// text.** `"\u{0041}"` and `"A"` are one value and two written forms, so
+    /// `==` and `.len()` over text are refused here rather than answered
+    /// wrongly — a decoder is what they want, and nothing has asked for one.
+    Text(String),
 }
 
 /// Why a build-time expression did not come to a value.
@@ -146,6 +160,12 @@ impl<'a> BuildTime<'a> {
         match expr {
             Expr::LitInt(value) => Ok(Value::Int(*value as i128)),
             Expr::LitBool(value) => Ok(Value::Bool(*value)),
+            Expr::LitStr(text) => Ok(Value::Text(text.clone())),
+            // **`f"…"` is text with code in it** (ADR-035), and the code is
+            // Nikaia, so this evaluator can read it — which is what makes text
+            // at build time worth having at all. A literal alone would be a
+            // value somebody could have written down.
+            Expr::LitInterpolated(literal) => self.interpolated(literal, frame),
             Expr::Variable(name) => {
                 let name = self.parsed.text(*name);
                 frame
@@ -290,6 +310,13 @@ impl<'a> BuildTime<'a> {
                 BinaryOp::And | BinaryOp::Or => None,
             }
             .ok_or(Refusal::Unevaluable),
+            // **Part I 4.7's `+` over text**, and only that one. A comparison
+            // would be a question about the *value* where this holds the
+            // written form — see [`Value::Text`].
+            (Value::Text(a), Value::Text(b)) => match op {
+                BinaryOp::Add => Ok(Value::Text(format!("{a}{b}"))),
+                _ => Err(Refusal::Unevaluable),
+            },
             (Value::Bool(a), Value::Bool(b)) => match op {
                 BinaryOp::Eq => Ok(Value::Bool(a == b)),
                 BinaryOp::Ne => Ok(Value::Bool(a != b)),
@@ -299,6 +326,70 @@ impl<'a> BuildTime<'a> {
             },
             _ => Err(Refusal::Unevaluable),
         }
+    }
+
+    /// **`f"…"` while the program is built** (ADR-035, [ADR-032](../../../docs/specification/adr/adr-032.md)
+    /// D3 — a hole is code and every analysis sees it, this one included).
+    ///
+    /// The holes are split out by the same function the lowering uses, so the
+    /// two cannot disagree about where one begins. What is rebuilt is the
+    /// **written** form: a number contributes its digits, a `bool` its word,
+    /// and text its own written form, which is why nothing has to be escaped
+    /// on the way in or out.
+    ///
+    /// **A format spec is not read.** `f"{n:>8}"` asks for a width, and what
+    /// that means is `std::fmt`'s rather than this language's — so it is a
+    /// shape this evaluator does not know, not a rule it breaks.
+    fn interpolated(
+        &mut self,
+        literal: &str,
+        frame: &BTreeMap<String, Value>,
+    ) -> Result<Value, Refusal> {
+        let (format, holes) = crate::emit::interpolation(literal).map_err(|_| {
+            // A malformed literal is the lowering's refusal and it names the
+            // line; saying anything else here would be a second sentence about
+            // one mistake.
+            Refusal::Unevaluable
+        })?;
+        let mut values = Vec::with_capacity(holes.len());
+        for hole in &holes {
+            let expr = crate::parser::parse_expression(&self.parsed.interner, hole)
+                .map_err(|_| Refusal::Unevaluable)?;
+            values.push(self.expr(&expr, frame)?);
+        }
+
+        let mut out = String::with_capacity(format.len());
+        let mut taken = values.into_iter();
+        let mut chars = format.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                // `{{` and `}}` are how a format string spells one brace, and
+                // a written literal spells it with one.
+                '{' if chars.peek() == Some(&'{') => {
+                    chars.next();
+                    out.push('{');
+                }
+                '}' if chars.peek() == Some(&'}') => {
+                    chars.next();
+                    out.push('}');
+                }
+                '{' => {
+                    // `{}` and nothing else: anything between the braces is a
+                    // spec, which this does not read.
+                    if chars.next() != Some('}') {
+                        return Err(Refusal::Unevaluable);
+                    }
+                    match taken.next() {
+                        Some(Value::Int(n)) => out.push_str(&n.to_string()),
+                        Some(Value::Bool(yes)) => out.push_str(&yes.to_string()),
+                        Some(Value::Text(text)) => out.push_str(&text),
+                        _ => return Err(Refusal::Unevaluable),
+                    }
+                }
+                c => out.push(c),
+            }
+        }
+        Ok(Value::Text(out))
     }
 
     /// A call to a function this unit declares.

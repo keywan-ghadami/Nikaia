@@ -1000,6 +1000,13 @@ fn rust_constant_type(ty: &Ty) -> Option<String> {
             "i32" | "i64" | "u32" | "u64" | "f32" | "f64" | "bool" | "char" => Some(name.clone()),
             _ => None,
         },
+        // **`&str` is the crossed form of text**
+        // ([ADR-079](../../docs/specification/adr/adr-079.md) D1). A `String`
+        // allocates and `const X: String` is not a thing; `const X: &str` is,
+        // and a `const`'s elision makes its lifetime `'static`.
+        Ty::Named { name, args, view } if name == "str" && args.is_empty() && *view => {
+            Some("&str".to_string())
+        }
         // **`Array[T, N]` is `[T; N]`, and it is the one aggregate a `const`
         // holds** ([ADR-152](../../docs/specification/adr/adr-152.md)). A `Vec`
         // allocates, which is the whole of why a build-time table is an array.
@@ -1016,7 +1023,8 @@ fn rust_constant_type(ty: &Ty) -> Option<String> {
 /// The pair [ADR-079](../../docs/specification/adr/adr-079.md) D1 is about:
 /// growable going in, and a `const` below that cannot hold one.
 fn is_growable(ty: &Ty) -> bool {
-    matches!(ty, Ty::Named { name, .. } if name == "Vec" || name == "List")
+    matches!(ty, Ty::Named { name, view, .. }
+        if name == "Vec" || name == "List" || (name == "String" && !view))
 }
 
 /// The Rust element type of a growable list this checker **did** type.
@@ -1045,8 +1053,11 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
                 Err(_) => "i64".to_string(),
             },
             // An array of arrays has a length per level and this reads one, so
-            // it says nothing rather than guessing.
-            build_time::Value::List(_) => return None,
+            // it says nothing rather than guessing. An array of **text** is
+            // `[&str; N]`, which a `const` does hold — but nothing has asked
+            // for one, and a type the language can spell is what
+            // `Array[&str, N]` would need to be first.
+            build_time::Value::List(_) | build_time::Value::Text(_) => return None,
         };
         match &found {
             // `[1, 3_000_000_000]` is an `i64` array and not a mixed one: the
@@ -1067,7 +1078,7 @@ fn rust_array_value(items: &[build_time::Value]) -> Option<String> {
         written.push(match item {
             build_time::Value::Int(value) => value.to_string(),
             build_time::Value::Bool(yes) => yes.to_string(),
-            build_time::Value::List(_) => return None,
+            build_time::Value::List(_) | build_time::Value::Text(_) => return None,
         });
     }
     Some(format!("[{}]", written.join(", ")))
@@ -8580,6 +8591,19 @@ impl<'a> Checker<'a> {
         evaluated: Option<&build_time::Value>,
         span: &Span,
     ) -> Crossing {
+        // **Text is the other half of D1**, and the simpler one: a `String`
+        // arrives as a `&str`, there is no length in the type, and `const X:
+        // &str` is what the language below has where `const X: String` is not.
+        if matches!(want, Ty::Named { name, args, view: true } if name == "str" && args.is_empty())
+            && matches!(found, Ty::Named { name, view: false, .. } if name == "String")
+        {
+            return match evaluated {
+                Some(build_time::Value::Text(_)) => Crossing::Fits,
+                // Nothing computed it, so the declaration is not what is wrong
+                // — the same reading the list half gets, one type over.
+                _ => Crossing::Unanswered,
+            };
+        }
         let Ty::Named {
             name: wanted,
             args,
@@ -8634,14 +8658,43 @@ impl<'a> Checker<'a> {
     /// worth a code rather than a note on `NK1127`: the build has just computed
     /// the value, so it knows the length the reader would otherwise have to
     /// work out by reading the body.
-    fn a_constant_that_owns_memory(&mut self, bound: &str, held: &Ty, len: usize, span: &Span) {
-        let element = match held {
-            Ty::Named { args, .. } => args.first().map(|ty| ty.text()),
-            _ => None,
+    fn a_constant_that_owns_memory(
+        &mut self,
+        bound: &str,
+        held: &Ty,
+        computed: &build_time::Value,
+        span: &Span,
+    ) {
+        let (owns, fixed, way_out) = match computed {
+            build_time::Value::List(items) => {
+                let element = match held {
+                    Ty::Named { args, .. } => args.first().map(|ty| ty.text()),
+                    _ => None,
+                };
+                let element = element
+                    .filter(|ty| ty != "?")
+                    .unwrap_or_else(|| "T".to_string());
+                (
+                    "a `Vec`",
+                    "`[T; N]`",
+                    format!(
+                        "declare it `Array[{element}, {}]` - the build computed {}, \
+                         so that is the length",
+                        items.len(),
+                        plural(items.len(), "element")
+                    ),
+                )
+            }
+            // **Text is the case with no length in it**, which is why the way
+            // out is shorter: `&str` says the whole thing.
+            _ => (
+                "a `String`",
+                "`&str`",
+                "declare it `&str` - the text is the build's, so what the program \
+                 holds is a view of it"
+                    .to_string(),
+            ),
         };
-        let element = element
-            .filter(|ty| ty != "?")
-            .unwrap_or_else(|| "T".to_string());
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: span.clone(),
@@ -8650,17 +8703,12 @@ impl<'a> Checker<'a> {
                 "`{bound}` is a `{}`, and a `const` cannot hold one",
                 held.text()
             ),
-            notes: vec![
-                "a `Vec` owns memory and allocates, and the language below has no \
-                 `const` that holds one - what it does have is `[T; N]`, which is why a \
-                 build-time value crosses in fixed form (ADR-079 D1)"
-                    .to_string(),
-            ],
-            help: Some(format!(
-                "declare it `Array[{element}, {len}]` - the build computed {}, \
-                 so that is the length",
-                plural(len, "element")
-            )),
+            notes: vec![format!(
+                "{owns} owns memory and allocates, and the language below has no \
+                 `const` that holds one - what it does have is {fixed}, which is why a \
+                 build-time value crosses in its view form (ADR-079 D1)"
+            )],
+            help: Some(way_out),
         });
     }
 
@@ -9741,9 +9789,15 @@ impl<'a> Checker<'a> {
                     // way out. Only where the build computed one, because that
                     // is what lets the way out name the length.
                     match (&evaluated, is_growable(want)) {
-                        (Some(build_time::Value::List(items)), true) => {
-                            let (want, len) = (want.clone(), items.len());
-                            self.a_constant_that_owns_memory(&bound, &want, len, span);
+                        (
+                            Some(
+                                computed
+                                @ (build_time::Value::List(_) | build_time::Value::Text(_)),
+                            ),
+                            true,
+                        ) => {
+                            let (want, computed) = (want.clone(), computed.clone());
+                            self.a_constant_that_owns_memory(&bound, &want, &computed, span);
                         }
                         _ => {
                             self.expect(&narrowed, want, span.clone(), "const", |found, want| {
@@ -9785,6 +9839,12 @@ impl<'a> Checker<'a> {
                 Some(build_time::Value::List(items)) => element_below(&found)
                     .or_else(|| rust_array_type(items))
                     .map(|ty| format!("[{ty}; {}]", items.len())),
+                // **Text crosses as a view, and `&str` is the one a `const`
+                // holds** ([ADR-079](../../docs/specification/adr/adr-079.md)
+                // D1). A `String` allocates and `const X: String` is not
+                // something the language below has; `const X: &str` is, and its
+                // lifetime is `'static` by the elision a `const` already makes.
+                Some(build_time::Value::Text(_)) => Some("&str".to_string()),
                 None => None,
             },
         };
@@ -9795,6 +9855,11 @@ impl<'a> Checker<'a> {
             Some(build_time::Value::Int(value)) => Some(value.to_string()),
             Some(build_time::Value::Bool(yes)) => Some(yes.to_string()),
             Some(build_time::Value::List(items)) => rust_array_value(items),
+            // **As the source wrote it.** The value holds the written form
+            // precisely so that this is the same text the same literal would
+            // have produced at run time — the emitter passes a `.nika` string's
+            // escapes through into the Rust literal unchanged, and so does this.
+            Some(build_time::Value::Text(text)) => Some(format!("\"{text}\"")),
             None => None,
         };
         match (&below, &written) {
@@ -9816,16 +9881,18 @@ impl<'a> Checker<'a> {
                     "a `comptime` is a `let` that *must* fold, so one that cannot is \
                          refused rather than computed while the program runs (Part II, 10.2)"
                         .to_string(),
-                    "what it evaluates today is an integer, a `bool`, or a **list** \
-                         of them - a literal, arithmetic and comparisons over literals \
-                         and over other constants, an `if`, a **call** to a function of \
-                         this program whose body is made of those, a `for` over a range \
-                         or a `while` inside such a body, and `xs[i]`, `xs[i] = …`, \
-                         `xs.push(…)` and `xs.len()` over a list it holds (ADR-073 D5's \
-                         second stage). Text is not in it yet. A list built with `push` \
-                         is fine and crosses as an `Array[T, N]`, because a `const` \
-                         below cannot hold a `Vec` (ADR-079 D1)"
-                        .to_string(),
+                    "what it evaluates today is an integer, a `bool`, **text** or a \
+                         **list** - a literal, `f\"… {n} …\"`, arithmetic and \
+                         comparisons over literals and over other constants, `+` over \
+                         two texts, an `if`, a **call** to a function of this program \
+                         whose body is made of those, a `for` over a range or a `while` \
+                         inside such a body, and `xs[i]`, `xs[i] = …`, `xs.push(…)` and \
+                         `xs.len()` over a list it holds (ADR-073 D5's second stage). \
+                         What a build-time value owns, the program gets a view of: a \
+                         list crosses as an `Array[T, N]` and text as a `&str`, because \
+                         a `const` below holds neither a `Vec` nor a `String` (ADR-079 \
+                         D1)"
+                    .to_string(),
                 ],
                 help: Some(format!(
                     "write `let {bound} = …` if it is meant to be computed while the \

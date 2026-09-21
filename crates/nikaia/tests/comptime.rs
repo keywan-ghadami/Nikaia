@@ -111,9 +111,18 @@ fn a_program_with_comptime_bindings_compiles_and_prints_them() {
 /// **What does not fold is refused, not computed later** (D3, D5). The way out
 /// is in the message, and it is `let`: the program may well want the value
 /// computed while it runs, and then it was never a constant.
+///
+/// **This test used to hold `comptime GREET = "hallo"`**, because text at build
+/// time did not exist and a refusal was the whole of what a string literal got.
+/// It does exist now ([ADR-079](../../../docs/specification/adr/adr-079.md) D1,
+/// 0.0.112), so the example moved to one that still cannot fold and stayed in
+/// the same family on purpose: `.to_uppercase()` is a question about the
+/// **value** where this evaluator holds the text as the source wrote it, and
+/// answering it would want a decoder nobody has asked for.
 #[test]
 fn a_comptime_binding_this_compiler_cannot_evaluate_is_refused_by_name() {
-    let found = findings("fn main() { comptime GREET = \"hallo\" println(f\"{GREET}\") }");
+    let found =
+        findings("fn main() { comptime GREET = \"hallo\".to_uppercase() println(f\"{GREET}\") }");
     let refused: Vec<&Finding> = found.iter().filter(|f| f.code == "NK1127").collect();
     assert_eq!(refused.len(), 1, "{found:#?}");
     let said = &refused[0];
@@ -151,4 +160,13 @@ fn a_comptime_binding_may_be_built_out_of_another() {
 #[test]
 fn a_comptime_binding_cannot_be_mutable() {
     assert!(parse_to_ast("fn main() { comptime mut X = 1 }").is_err());
+}
+
+/// And the literal that used to stand in the test above **folds now**, which is
+/// the other half of the same change: a `comptime` over text reaches the
+/// generated file as the `&str` a `const` can hold.
+#[test]
+fn a_comptime_binding_over_text_folds() {
+    let rust = lower("fn main() { comptime GREET = \"hallo\" println(f\"{GREET}\") }");
+    assert!(rust.contains("const GREET: &str = \"hallo\";"), "{rust}");
 }

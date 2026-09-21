@@ -569,3 +569,118 @@ fn an_unevaluable_body_does_not_also_blame_its_declaration() {
         "and nothing about the declaration, which is right: {found:#?}"
     );
 }
+
+/// **Text while the program is built**, which the `NK1127` note had been
+/// calling out as missing since the evaluator gained a call.
+///
+/// [ADR-079](../../../docs/specification/adr/adr-079.md) D1's other half, and
+/// the simpler one: a `String` arrives as a `&str`, there is no length in the
+/// type, and `const X: &str` is what the language below has where
+/// `const X: String` is not.
+#[test]
+fn text_is_computed_while_the_program_is_built() {
+    let source = "comptime NAME: &str = \"nikaia\"\n\
+                  fn main() { println(NAME) }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const NAME: &str = \"nikaia\";"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// **`f"…"` is what makes it worth having.** A hole is Nikaia
+/// ([ADR-032](../../../docs/specification/adr/adr-032.md) D3), so this
+/// evaluator reads it like every other analysis does — and a banner built from
+/// two other constants is the case a person actually writes.
+#[test]
+fn an_interpolation_is_built_from_what_the_build_knows() {
+    let source = "comptime MAJOR: i64 = 0\n\
+                  comptime MINOR: i64 = 1\n\
+                  comptime BANNER: &str = f\"nikaia {MAJOR}.{MINOR}\"\n\
+                  fn main() { println(BANNER) }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const BANNER: &str = \"nikaia 0.1\";"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// **The escapes are the source's, unchanged**, which is what holding the
+/// *written* form buys: the same literal produces the same bytes whether it is
+/// read at build time or at run time, because the emitter passes a `.nika`
+/// string's escapes into the Rust literal untouched and so does this.
+#[test]
+fn the_escapes_are_the_ones_the_source_wrote() {
+    let source = "comptime GREETING: &str = \"a\\tb\\nc \\\"quoted\\\" {brace}\"\n\
+                  comptime JOINED: &str = \"left\" + \"/\" + \"right\"\n\
+                  fn main() { println(GREETING) println(JOINED) }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(
+        rust.contains("const GREETING: &str = \"a\\tb\\nc \\\"quoted\\\" {brace}\";"),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("const JOINED: &str = \"left/right\";"),
+        "{rust}"
+    );
+}
+
+/// A body that hands back a `String`, which is the crossing rather than a
+/// literal: the declaration says `&str` and the value is the build's, so what
+/// the program holds is a view of it.
+#[test]
+fn a_string_a_body_built_crosses_as_a_view() {
+    let source = "fn greeting() -> String {\n\
+                  \x20   return f\"hello {1}\"\n\
+                  }\n\
+                  comptime NAME: &str = greeting()\n\
+                  fn main() { println(NAME) }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert!(
+        lowered(source).contains("const NAME: &str = \"hello 1\";"),
+        "{}",
+        lowered(source)
+    );
+}
+
+/// `NK1167`'s text half ([ADR-079](../../../docs/specification/adr/adr-079.md)
+/// D2). The way out used to be `NK1166`'s *write `.to_string()`*, which is
+/// advice that makes the problem worse: a `String` is the one thing a `const`
+/// cannot hold.
+#[test]
+fn a_constant_declared_a_string_is_sent_to_the_view() {
+    let found = findings("comptime NAME: String = \"nikaia\"\nfn main() { println(NAME) }\n");
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1167")
+        .unwrap_or_else(|| panic!("NK1167: {found:#?}"));
+    assert!(
+        refusal
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("declare it `&str`")),
+        "the view-shaped equivalent, not `.to_string()`: {:?}",
+        refusal.help
+    );
+}
+
+/// **What the written form cannot answer is refused rather than answered
+/// wrongly.** `"\u{0041}"` and `"A"` are one value and two written forms, so a
+/// comparison and a length over text want a decoder — and nothing has asked
+/// for one, so they are shapes this evaluator does not read.
+#[test]
+fn a_question_about_the_value_rather_than_the_text_is_not_answered() {
+    for source in [
+        "comptime SAME: bool = \"a\" == \"a\"\nfn main() { println(f\"{SAME}\") }\n",
+        "comptime N: i64 = \"abc\".len()\nfn main() { println(f\"{N}\") }\n",
+    ] {
+        let found = findings(source);
+        assert!(
+            found.iter().any(|f| f.code == "NK1127"),
+            "not answered from the written form: {found:#?}"
+        );
+    }
+}

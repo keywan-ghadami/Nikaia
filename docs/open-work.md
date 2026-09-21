@@ -490,7 +490,16 @@ the measurement was right and the conclusion was too narrow — `NK1104` refuses
 `Vec` as a **function's declared result**, and a `comptime` is not one. By the
 time a declaration is compared the build has computed the value, so its length is
 a fact. A `Vec` as the **crossed** form is still impossible and `NK1167` says so
-by name. Text is still not in it.
+by name.
+
+*And text, at 0.0.112:* `comptime BANNER: &str = f"nikaia {MAJOR}.{MINOR}"` is
+`const BANNER: &str = "nikaia 0.1";`. The same crossing one type over — a
+`String` arrives as a `&str` ([ADR-079](specification/adr/adr-079.md) D1), which
+is the spelling Part I 2.2 already gives text, so nothing had to be invented for
+it. The value is held **as the source wrote it**, escapes and all, so a literal
+produces the same bytes at either stage; what that costs is `==` and `.len()`
+over text, which are questions about the value rather than the written form and
+are refused rather than answered wrongly.
 
 *Why it is work and not a question:* two records decided what may happen, and
 one of them now can.

@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.112] — 2026-09-21
+
+**Text while the program is built** — the thing `NK1127`'s own note had been
+calling out as missing since the evaluator gained a call, and the other half of
+[ADR-079](docs/specification/adr/adr-079.md) D1.
+
+### Added
+
+- **A `comptime` may hold text**, and it crosses as the view: `comptime BANNER: &str = f"nikaia {MAJOR}.{MINOR}"` reaches the generated file as `const BANNER: &str = "nikaia 0.1";`. A `String` allocates and `const X: String` is not a thing the language below has, where `const X: &str` is — and `&str` is the spelling Part I 2.2 already gives text, so unlike the list half nothing had to be invented for it.
+- **`f"…"` is read, and it is what makes this worth having.** A hole is Nikaia ([ADR-032](docs/specification/adr/adr-032.md) D3), so this evaluator reads it the way every other analysis does. A banner built out of two other constants is the case a person writes; a literal alone is a value they could have written down. A format spec — `f"{n:>8}"` — is `std::fmt`'s meaning rather than this language's, so it stays a shape the evaluator does not read.
+- **`+` over two texts**, which is Part I 4.7's operator and the only one this holds an answer for.
+
+### Decided by building it
+
+- **The value is the text as the source wrote it**, escapes and all. The parser keeps a string's escapes rather than decoding them and the emitter passes them into the Rust literal unchanged, so holding the written form is the shape that *agrees with the lowering*: the same literal produces the same bytes whether it is read at build time or at run time. Proved by running one — a tab, a newline, an escaped quote and a brace all arrive as themselves.
+- **What that costs is every question about the value rather than the text.** `"\u{0041}"` and `"A"` are one value and two written forms, so `==` and `.len()` over text are **refused** rather than answered wrongly. A decoder is what they want, and nothing has asked for one.
+
+### Changed
+
+- **`NK1167` gained its text half** ([ADR-079](docs/specification/adr/adr-079.md) D2): a `comptime` declared `String` is sent to `&str`. What it used to get was the ordinary type rule's *write `.to_string()`* — advice that makes the problem worse, since a `String` is the one thing a `const` cannot hold.
+- **A test that recorded the absence now records the feature.** `comptime GREET = "hallo"` was the example in *what does not fold is refused*, because text was the whole of what a string literal got; the example moved to `.to_uppercase()`, which still cannot fold and is in the same family on purpose, and the literal has a test of its own saying it folds.
+
 ## [0.0.111] — 2026-09-21
 
 **A build-time table may be grown with `push`** — which is
