@@ -25,6 +25,7 @@ pub mod cli;
 pub mod concat;
 pub mod count;
 pub mod error;
+pub mod fixed;
 pub mod foreign;
 pub mod fs;
 pub mod grammar;
@@ -81,6 +82,7 @@ pub mod prelude {
     // like `Overtaken`, because a program never writes a path to it — it
     // arrives in a `catch`, and the generated file has to find it there
     // without a `use` the program did not write.
+    pub use crate::fixed::Fixed;
     pub use crate::grammar::ParseError;
     pub use crate::hash::{TrustedMap, TrustedSet};
     pub use crate::html;

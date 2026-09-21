@@ -103,6 +103,11 @@ pub enum Value {
     /// so [`decoded`] is a faithful reading rather than an invention, and
     /// [`written`] puts it back.
     Text(String),
+    /// A tuple, which is what a **pair** is
+    /// ([ADR-176](../../../docs/specification/adr/adr-176.md) D1): a map the
+    /// build can see is written `[("get", 1), ("post", 2)]`, and that needed no
+    /// new literal — only a value for the one this language already has.
+    Tuple(Vec<Value>),
     /// A value of a `struct` this program declares, by field name.
     ///
     /// **What it is for is the method.** A `sync` method of the program's own
@@ -236,6 +241,13 @@ impl<'a> BuildTime<'a> {
             Expr::LitInt(value) => Ok(Value::Int(*value as i128)),
             Expr::LitBool(value) => Ok(Value::Bool(*value)),
             Expr::LitStr(text) => decoded(text).map(Value::Text).ok_or(Refusal::Unevaluable),
+            Expr::Tuple(parts) => {
+                let mut held = Vec::with_capacity(parts.len());
+                for part in parts {
+                    held.push(self.expr(part, frame)?);
+                }
+                Ok(Value::Tuple(held))
+            }
             // **`f"…"` is text with code in it** (ADR-035), and the code is
             // Nikaia, so this evaluator can read it — which is what makes text
             // at build time worth having at all. A literal alone would be a

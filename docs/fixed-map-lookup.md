@@ -85,19 +85,47 @@ ahead, it is ahead by 2.4× on a hit and 4.3× on a miss — a handful of keys i
 ruled out by length and one comparison, and no hash can beat that. At sixteen the
 perfect hash is already in front on both paths, and it never gives the lead back.
 
-So a threshold **around 16** is what the numbers say, and a round **20** is a
-defensible place to put it: it sits just above the crossing, on the side where
+So a threshold **around 16** is what these two say, and a round **20** would have
+been a defensible place to put it: just above the crossing, on the side where
 being wrong costs least — a `match` of twenty keys loses about 15 % on a hit,
 where a perfect hash of eight loses 140 %.
 
-**What this does not decide** is what a program *writes*. There is no map literal
-in this language and no build-time map value: a program builds a map with
-`collections::HashMap()` and `insert`, whose bodies are Rust, so the build cannot
-see the contents. [ADR-079](specification/adr/adr-079.md) §3 calls the fixed map
-*"a type in `std` and not a language rule"*, and nobody has written it. That is
-in [`open-decisions.md`](open-decisions.md).
+**That is not where it ended up**, and §6 is why: a third shape none of this had
+costed took the `match` out of the design altogether. This section is kept
+because it is the comparison the question was originally asked as, and because
+what it concludes about a *generated* `match` is still true — it just stopped
+being the thing being chosen between.
 
-## 6. Reproducing it
+## 6. The third shape, which turned the design around
+
+The two rows above are a **`match`** — generated code — and a **table**. A map
+that is a value has a third option nobody had costed: a **linear scan over the
+same static arrays**, with a length check before each compare. If it is close to
+the `match` at small `N`, then the small case needs no generated code either, and
+a fixed map can be an ordinary value rather than a function the compiler writes.
+
+| N | `match` | scan | PHF | scan ÷ `match` |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 2.84 | **2.96** | 8.23 | **1.04×** |
+| 8 | 8.57 | 10.04 | 12.72 | 1.17× |
+| 12 | 14.24 | 14.53 | **13.28** | 1.02× |
+| 16 | 11.84 | 11.98 | **9.91** | 1.01× |
+| 24 | 12.27 | 12.23 | **9.98** | 1.00× |
+| 32 | 12.82 | 28.59 | **10.00** | 2.23× |
+| 64 | 14.51 | 37.81 | **11.06** | 2.61× |
+
+**A scan is the `match` within 0 to 17 %** up to twenty-four keys — and it falls
+apart at thirty-two, which is a dozen keys *past* the point where the perfect
+hash has already taken the lead. So the range where a `match` would be worth
+generating and a scan would not do is **empty**.
+
+That is what [ADR-176](specification/adr/adr-176.md) D2 rests on: the fixed map
+is a value of four static tables, the small case is a scan inside `std`, the
+large one is CHD, and the emitter writes no lookup code at all. **The crossing is
+at twelve** — where the scan and the hash change places — and the band is wide:
+anywhere from eight to sixteen is within 30 % on the wrong side.
+
+## 7. Reproducing it
 
 The generator and the benchmark are not in the tree: they are ninety lines of
 Python that write one Rust file, and the numbers above are what it printed. What

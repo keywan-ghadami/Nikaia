@@ -1048,6 +1048,12 @@ fn a_sync_function_may_not_pause_inside_a_hole_either() {
 /// made a build-time loop written `0..<xs.len()` uncallable from a `comptime`.
 /// The list here is the thing that made adding it a decision rather than a
 /// line.
+///
+/// **And the sixth.** `Fixed::len` arrived with the table a `comptime` map
+/// crosses as ([ADR-176](../../../docs/specification/adr/adr-176.md)), and it
+/// is a length the same way the other five are: the entry promises an `i64`
+/// and the emitter writes `as i64` because the name is `len`. Naming it
+/// `count` would have compiled and been wrong.
 #[test]
 fn the_lengths_are_i64_and_are_all_called_len() {
     let library = Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
@@ -1062,6 +1068,7 @@ fn the_lengths_are_i64_and_are_all_called_len() {
         lengths,
         vec![
             "Array::len",
+            "Fixed::len",
             "String::len",
             "Vec::len",
             "collections::HashMap::len",

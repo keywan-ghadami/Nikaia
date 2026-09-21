@@ -770,6 +770,47 @@ doc = "How many elements the list holds."
 # visible price was a build-time body: `for i in 0..<xs.len()` made `squares`
 # uncallable from a `comptime` with *nothing says what it touches*, while the
 # same loop written `0..<5` was fine.
+# **A map whose keys the build knew** (ADR-176). Written as a list of pairs
+# under a `comptime`, and what it crosses as is four static tables — no
+# allocation, no generated code, and the lookup shape decided from the key count
+# while the program was built.
+#
+# `Fixed` is keyed **with no module in front**, which is `Overtaken`'s and
+# `ParseError`'s shape: a program writes it in a declaration and never reaches
+# for a path to it.
+[type."Fixed"]
+pub = true
+crosses = true
+doc = "A map whose keys were known while the program was built.\n\nWritten as a list of pairs — `comptime ROUTES: Fixed[&str, i64] = [(\"get\", 1)]` —\nand crossed as static tables. There is nothing to build one from at run time:\nwhat makes it fixed is that the key set closed at the build."
+
+[fn."Fixed::get"]
+pub = true
+sync = true
+touches = []
+signature = "(&Fixed[$K, $V], key: ?) -> $V?"
+doc = "What this key names, or nothing where the key is not there.\n\nA key is data and may be absent, which is why this hands back a `$V?` - the\nsame shape `collections::HashMap::get` has, and the same `?? 0` after it."
+
+[fn."Fixed::has"]
+pub = true
+sync = true
+touches = []
+signature = "(&Fixed[$K, $V], key: ?) -> bool"
+doc = "Whether this key is one of the table's."
+
+[fn."Fixed::len"]
+pub = true
+sync = true
+touches = []
+signature = "(&Fixed[$K, $V]) -> i64"
+doc = "How many pairs the table holds."
+
+[fn."Fixed::is_empty"]
+pub = true
+sync = true
+touches = []
+signature = "(&Fixed[$K, $V]) -> bool"
+doc = "Whether the table holds nothing."
+
 [fn."Array::len"]
 pub = true
 sync = true

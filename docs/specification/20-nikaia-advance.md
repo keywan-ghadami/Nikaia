@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.117 (Draft)
+**Version:** 0.0.118 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -102,15 +102,22 @@ evaluate is refused with `NK1127` ([ADR-073](adr/adr-073.md) D3). It is never
 evaluated at run time instead.
 
 **What an initialiser may hold** is staged ([ADR-073](adr/adr-073.md) D5). The
-current stage is an integer or a `bool`: literals, arithmetic and comparisons
-over them and over other constants, an `if`, and a call to a function of this
-program whose body is made of those. A called body may recurse with a base
-case, and it may loop: a `for` over a range, a `while`, `break` and `continue`.
-A called body must be `sync` and must touch nothing but the build's own
-parameters ([ADR-075](adr/adr-075.md)). A callee that fails either condition is
-refused with `NK1152`. `NK1127` says *not yet*; `NK1152` says *not allowed*.
+current stage is an integer, a `bool`, **text**, a **list**, a **pair** or a
+**struct**: literals, `f"… {n} …"`, arithmetic and comparisons over them and
+over other constants, `+`, `==` and `.len()` over text, `xs[i]`, `xs[i] = …`,
+`xs.push(…)` and `xs.len()` over a list, a struct literal and a field of one, an
+`if`, and a **call** to a function or a **method** this program declares — in
+any of its files — whose body is made of those. A called body may recurse with a
+base case, and it may loop: a `for` over a range, a `while`, `break` and
+`continue`. A called body must be `sync` and must touch nothing but the build's
+own parameters ([ADR-075](adr/adr-075.md)). A callee that fails either condition
+is refused with `NK1152`. `NK1127` says *not yet*; `NK1152` says *not allowed*.
 What a build-time body may do beyond this stage is decided by
 [ADR-026](adr/adr-026.md) Q4.
+
+A `comptime` may read one declared below it: a constant is an **item**, and
+items are order-independent. A ring of them has no base case to reach and is
+refused with `NK1168`.
 
 A loop has no step budget ([ADR-075](adr/adr-075.md) D4). A `while` that does
 not end hangs the build. Call depth is bounded, so an unbounded recursion does
@@ -122,6 +129,19 @@ not exhaust the compiler's stack.
 crossed. A value that owns memory is refused by its *type*, not by its parse. A
 map that crosses is a **fixed** map with a closed key set. How it is looked up is
 the compiler's decision, as a map's hasher is.
+
+**A map the build can see is written as a list of pairs**, and the declared type
+says it is a map ([ADR-176](adr/adr-176.md) D1). There is no map literal:
+
+```nika
+comptime ROUTES: Fixed[&str, i64] = [("get", 1), ("post", 2)]
+```
+
+`Fixed[&str, V]` is the fixed map, a type in `std`. `ROUTES.get(k)` is a `V?`.
+Keys are text; a key of any other type is refused with `NK1170`, and a key
+written twice with `NK1169` — a table has one value per key, and there is no
+meaning a compiler may pick between. A list of text crosses as an array of
+views, `[&str; N]`, which is the same rule read over both shapes at once.
 
 **Reading a file while the program is built** ([ADR-072](adr/adr-072.md)). A
 build given no allowlist reads nothing (D1). A file the build reads is named
@@ -137,15 +157,17 @@ switched off without editing anything ([ADR-072](adr/adr-072.md) D3).
 > **Implementation status:** Partially implemented. B is implemented: a grammar
 > name stands where a callee stands, every `pub` rule is an entry, and the
 > withdrawn `dsl X from e` is refused with a message naming the call form
-> ([ADR-082](adr/adr-082.md) §5). `comptime` is implemented inside a function
-> body for the integer and `bool` stage, calls and loops included; at item level
-> it is a parse error, so the binding in A has nowhere to stand yet, and
-> `Json::value(asset("…"))` runs at run time wherever it is written
-> ([ADR-073](adr/adr-073.md) §5, [ADR-075](adr/adr-075.md) §5). Not implemented
-> are `push` and aggregate values in a build-time body, the crossing of
-> [ADR-079](adr/adr-079.md) §5, running a grammar while the program is built,
-> which compiles the generated parser rather than interpreting the grammar
-> (`docs/open-work.md`), and the allowlist ([ADR-072](adr/adr-072.md) §4).
+> ([ADR-082](adr/adr-082.md) §5). `comptime` is implemented at item level and
+> inside a function body, for the whole stage named above — calls across the
+> files of a program, methods, loops, `push`, text, arrays and the fixed map
+> included — and so is the crossing of [ADR-079](adr/adr-079.md)
+> ([ADR-175](adr/adr-175.md), [ADR-176](adr/adr-176.md)). Not implemented are
+> `asset("…")` and the allowlist ([ADR-072](adr/adr-072.md) §4), so
+> `Json::value(asset("…"))` — the binding in A — has no bytes to read yet;
+> running a grammar while the program is built, which compiles the generated
+> parser rather than interpreting the grammar (`docs/open-work.md`); and
+> [ADR-079](adr/adr-079.md) D5's serialised blob, which waits for a table large
+> enough to ask for it.
 
 ### 10.3. Generating Code from a Type's Shape
 Where 10.1 reads data, this section reads **types**. A function such as

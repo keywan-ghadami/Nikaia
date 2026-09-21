@@ -176,6 +176,26 @@ fn a_comptime_binding_over_text_folds() {
     assert!(rust.contains("const GREET: &str = \"hallo\";"), "{rust}");
 }
 
+/// **A list of text crosses element for element**
+/// ([ADR-079](../../../docs/specification/adr/adr-079.md) D1).
+///
+/// D1's rule is that a build-time value the program cannot own reaches it as a
+/// view: a list crosses as an `Array[T, N]` and text as a `&str`. An array of
+/// text is both of those at once and nothing more, so `[&str; N]` follows from
+/// the rule rather than extending it — and it is what lets a `comptime` table
+/// be walked by a `for` over the keys that built it.
+#[test]
+fn a_comptime_list_of_text_crosses_as_an_array_of_views() {
+    let rust = lower(
+        "comptime NAMES: Array[&str, 3] = [\"get\", \"post\", \"put\"]\n\
+         fn main() { for name in NAMES { println(name) } }",
+    );
+    assert!(
+        rust.contains("const NAMES: [&str; 3] = [\"get\", \"post\", \"put\"];"),
+        "{rust}"
+    );
+}
+
 /// **Three walls, and a reader is told which one they met** (0.0.113). The
 /// generic catalogue is right for a shape this evaluator does not read and is
 /// the wrong answer everywhere else — it invites somebody to go looking for the

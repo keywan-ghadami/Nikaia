@@ -11,6 +11,7 @@ pub mod describe;
 pub mod diagnostics;
 pub mod dsl;
 pub mod emit;
+pub mod fixed;
 pub mod fold;
 pub mod foreign;
 pub mod interpreter;

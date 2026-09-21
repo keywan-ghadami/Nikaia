@@ -1038,6 +1038,12 @@ fn rust_constant_type(ty: &Ty) -> Option<String> {
     }
 }
 
+/// Whether a declared type is the table a `comptime` map crosses as
+/// ([ADR-176](../../docs/specification/adr/adr-176.md) D1).
+fn is_fixed(ty: &Ty) -> bool {
+    matches!(ty, Ty::Named { name, args, view: false } if name == "Fixed" && args.len() == 2)
+}
+
 /// Whether a type is one this language grows — a `Vec` or a `List`.
 ///
 /// The pair [ADR-079](../../docs/specification/adr/adr-079.md) D1 is about:
@@ -1072,13 +1078,18 @@ fn rust_array_type(items: &[build_time::Value]) -> Option<String> {
                 Ok(_) => "i32".to_string(),
                 Err(_) => "i64".to_string(),
             },
+            // **Text is a view where it crosses**
+            // ([ADR-079](../../docs/specification/adr/adr-079.md) D1), and an
+            // array of it is an array of views: `[&str; N]`, which a `const`
+            // holds for the same reason `const X: &str` is one.
+            build_time::Value::Text(_) => "&str".to_string(),
             // An array of arrays has a length per level and this reads one, so
-            // it says nothing rather than guessing. An array of **text** is
-            // `[&str; N]`, which a `const` does hold — but nothing has asked
-            // for one, and a type the language can spell is what
-            // `Array[&str, N]` would need to be first.
+            // it says nothing rather than guessing.
             build_time::Value::List(_)
-            | build_time::Value::Text(_)
+            // A tuple's `const` form is the pair it is, and the only place one
+            // stands is inside a `Fixed` — where the two halves are written
+            // into two tables rather than beside each other.
+            | build_time::Value::Tuple(_)
             | build_time::Value::Struct { .. } => return None,
         };
         match &found {
@@ -1104,6 +1115,10 @@ fn rust_value(value: &build_time::Value) -> Option<String> {
         build_time::Value::Int(n) => Some(n.to_string()),
         build_time::Value::Bool(yes) => Some(yes.to_string()),
         build_time::Value::Text(text) => Some(format!("\"{}\"", build_time::written(text))),
+        // A tuple has no `const` form of its own: the one place a pair stands
+        // is inside a `Fixed`, which writes its halves into two tables rather
+        // than beside each other (ADR-176 D2).
+        build_time::Value::Tuple(_) => None,
         build_time::Value::Struct { name, fields } => {
             let mut written = Vec::with_capacity(fields.len());
             for (field, held) in fields {
@@ -1132,8 +1147,10 @@ fn rust_array_value(items: &[build_time::Value]) -> Option<String> {
         written.push(match item {
             build_time::Value::Int(value) => value.to_string(),
             build_time::Value::Bool(yes) => yes.to_string(),
+            // The same literal the single text crosses as, element for element.
+            build_time::Value::Text(text) => format!("\"{}\"", build_time::written(text)),
             build_time::Value::List(_)
-            | build_time::Value::Text(_)
+            | build_time::Value::Tuple(_)
             | build_time::Value::Struct { .. } => return None,
         });
     }
@@ -8178,6 +8195,153 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **A list of pairs, crossing as a table**
+    /// ([ADR-176](../../docs/specification/adr/adr-176.md) D2).
+    ///
+    /// Hands back the two halves the `const` needs — `Fixed<i64>` and a
+    /// `Fixed::new(…)` — or `None`. The whole table fits in one expression
+    /// because a `const` promotes an array literal to `'static`, so the emitter
+    /// writes nothing it would not have written for an integer.
+    ///
+    /// The second half of the pair is **whether a refusal was already
+    /// reported**, the same handover `build_time_value` makes: a duplicate key
+    /// is `NK1169` and a key that is not text is `NK1170`, and neither wants
+    /// `NK1127` after it saying the compiler cannot evaluate what it just read
+    /// well enough to name the mistake in.
+    fn a_table_that_crosses(
+        &mut self,
+        bound: &str,
+        want: &Ty,
+        pairs: &[build_time::Value],
+        span: &Span,
+    ) -> (Option<(String, String)>, bool) {
+        let Ty::Named { args, .. } = want else {
+            return (None, false);
+        };
+        // **Text keys, and the rest by name** (D5). A number wants a dense
+        // array, which is a different table and a different measurement.
+        let value_below = match args.as_slice() {
+            [Ty::Named {
+                name, view: true, ..
+            }, value]
+                if name == "str" =>
+            {
+                match rust_constant_type(value) {
+                    Some(below) => below,
+                    None => return (None, false),
+                }
+            }
+            [key, _] => {
+                let key = key.text();
+                self.a_table_key_that_is_not_text(bound, &key, span);
+                return (None, true);
+            }
+            _ => return (None, false),
+        };
+
+        let mut keys: Vec<String> = Vec::with_capacity(pairs.len());
+        let mut values: Vec<String> = Vec::with_capacity(pairs.len());
+        let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+        for (at, pair) in pairs.iter().enumerate() {
+            let build_time::Value::Tuple(parts) = pair else {
+                return (None, false);
+            };
+            let [build_time::Value::Text(key), value] = parts.as_slice() else {
+                return (None, false);
+            };
+            // **A duplicate is refused at the build** (D4): there is no meaning
+            // a compiler may pick between, and the whole of what a `comptime`
+            // buys is that the failure moves to the line that wrote it.
+            if let Some(first) = seen.insert(key.clone(), at) {
+                self.a_table_with_one_key_twice(bound, key, first, at, span);
+                return (None, true);
+            }
+            keys.push(key.clone());
+            let Some(value) = rust_value(value) else {
+                return (None, false);
+            };
+            values.push(value);
+        }
+
+        let Some(table) = crate::fixed::build(&keys) else {
+            return (None, false);
+        };
+        let disps: Vec<String> = table
+            .disps
+            .iter()
+            .map(|(d1, d2)| format!("({d1}, {d2})"))
+            .collect();
+        let written_keys: Vec<String> = table
+            .keys
+            .iter()
+            .map(|key| format!("\"{}\"", build_time::written(key)))
+            .collect();
+        // **In slot order**, which is the whole of what the table is: the
+        // generator decided where each key landed, and a value that stayed in
+        // written order would be the wrong one for every key it moved.
+        let written_values: Vec<String> =
+            table.order.iter().map(|at| values[*at].clone()).collect();
+
+        (
+            Some((
+                format!("Fixed<{value_below}>"),
+                format!(
+                    "Fixed::new({}, &[{}], &[{}], &[{}])",
+                    table.seed,
+                    disps.join(", "),
+                    written_keys.join(", "),
+                    written_values.join(", ")
+                ),
+            )),
+            false,
+        )
+    }
+
+    /// **`NK1169`: one key, written twice** (D4).
+    fn a_table_with_one_key_twice(
+        &mut self,
+        bound: &str,
+        key: &str,
+        first: usize,
+        again: usize,
+        span: &Span,
+    ) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1169",
+            message: format!("`{bound}` writes the key `{key}` twice"),
+            notes: vec![format!(
+                "pair {} and pair {} name it, and a table has one value per key - there \
+                 is no meaning a compiler may pick between (ADR-176 D4)",
+                first + 1,
+                again + 1
+            )],
+            help: Some("take one of them out, or make the key tell them apart".to_string()),
+        });
+    }
+
+    /// **`NK1170`: a key that is not text** (D5).
+    fn a_table_key_that_is_not_text(&mut self, bound: &str, key: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1170",
+            message: format!("`{bound}` is keyed by `{key}`, and a table is keyed by text"),
+            notes: vec![
+                "a `Fixed[&str, V]` hashes and compares text; a number or a `bool` \
+                 wants a different table - a dense array, most likely - which is a \
+                 different decision with a measurement of its own (ADR-176 D5)"
+                    .to_string(),
+            ],
+            help: Some(
+                "write the keys as text, or keep it a `collections::HashMap` built \
+                 while the program runs"
+                    .to_string(),
+            ),
+        });
+    }
+
     /// **`NK1168`: a constant worked out from itself.**
     ///
     /// The cost of making a constant behave like the item it is: once
@@ -8784,6 +8948,46 @@ impl<'a> Checker<'a> {
         evaluated: Option<&build_time::Value>,
         span: &Span,
     ) -> Crossing {
+        // **A list of pairs crossing as a table**
+        // ([ADR-176](../../docs/specification/adr/adr-176.md) D1), which is the
+        // same crossing one container out: what a body wrote is growable and
+        // what the program holds is fixed, and the **declared type** is what
+        // says so. The keys are known here because the build computed them, so
+        // a table is a thing this value can be.
+        if is_fixed(want) {
+            let Ty::Named { args, .. } = want else {
+                return Crossing::Other;
+            };
+            let [key, value] = args.as_slice() else {
+                return Crossing::Other;
+            };
+            let held = match found {
+                Ty::Named { name, args, .. } if name == "Vec" || name == "List" => args.first(),
+                _ => return Crossing::Other,
+            };
+            // **`?` fits everything** ([ADR-024](../../docs/specification/adr/adr-024.md)
+            // D1), here as in the array crossing below — and that is not a
+            // corner: `[]` is a `Vec[?]`, so a table declared over an empty
+            // list would otherwise be *this is a `Vec[?]` and the `const` says
+            // `Fixed[&str, i64]`*, whose way out asks the reader to write what
+            // they already wrote. A table of nothing is a table.
+            let pairs = match held {
+                None | Some(Ty::Unknown) => true,
+                Some(Ty::Tuple(parts)) => {
+                    parts.len() == 2 && parts[0].fits(key) && parts[1].fits(value)
+                }
+                Some(_) => false,
+            };
+            if !pairs {
+                return Crossing::Other;
+            }
+            return match evaluated {
+                Some(build_time::Value::List(_)) => Crossing::Fits,
+                // Nothing computed it, so the declaration is not what is wrong
+                // — the same reading the other two crossings get.
+                _ => Crossing::Unanswered,
+            };
+        }
         // **Text is the other half of D1**, and the simpler one: a `String`
         // arrives as a `&str`, there is no length in the type, and `const X:
         // &str` is what the language below has where `const X: String` is not.
@@ -10143,6 +10347,10 @@ impl<'a> Checker<'a> {
                 // something the language below has; `const X: &str` is, and its
                 // lifetime is `'static` by the elision a `const` already makes.
                 Some(build_time::Value::Text(_)) => Some("&str".to_string()),
+                // A pair with nothing declaring what it is for says nothing:
+                // `Fixed[K, V]` is the declaration that makes a list of them a
+                // table, and without it there is no type to write.
+                Some(build_time::Value::Tuple(_)) => None,
                 // **A struct is its own name below**, and the fields carry
                 // themselves — `const P: Point = Point { x: 1, y: 2 };` is
                 // Rust, and a struct whose fields own nothing is already the
@@ -10151,6 +10359,20 @@ impl<'a> Checker<'a> {
                 Some(build_time::Value::Struct { name, .. }) => Some(name.clone()),
                 None => None,
             },
+        };
+
+        // **A map the build can see** ([ADR-176](../../docs/specification/adr/adr-176.md)
+        // D1): a list of pairs, and the **declared type** is what says it is a
+        // table rather than a list — the rule
+        // [ADR-152](../../docs/specification/adr/adr-152.md) D4 already makes
+        // for `Array[T, N]`, one shape out. Both halves at once, because the
+        // type below and the value below are one answer here: `Fixed<i64>` and
+        // a `Fixed::new(…)` are written from the same table.
+        let (crossed, said_a_table) = match (&want, &evaluated) {
+            (Some(want), Some(build_time::Value::List(pairs))) if is_fixed(want) => {
+                self.a_table_that_crosses(&bound, want, pairs, span)
+            }
+            _ => (None, false),
         };
 
         // The value, spelled below. An integer is what the evaluation came
@@ -10167,7 +10389,15 @@ impl<'a> Checker<'a> {
                 Some(format!("\"{}\"", build_time::written(text)))
             }
             Some(value @ build_time::Value::Struct { .. }) => rust_value(value),
+            // A pair has no `const` form of its own, and a list of them has one
+            // only where a declaration says it is a table — which `crossed`
+            // below is.
+            Some(build_time::Value::Tuple(_)) => None,
             None => None,
+        };
+        let (below, written) = match crossed {
+            Some((below, written)) => (Some(below), Some(written)),
+            None => (below, written),
         };
         match (&below, &written) {
             (Some(below), Some(written)) => {
@@ -10178,7 +10408,7 @@ impl<'a> Checker<'a> {
             // …and nothing at all where the refusal has already been made by
             // name: `NK1152` and `NK1165` each say what `NK1127` would, with
             // the part that matters in it.
-            _ if said || said_a_type => {}
+            _ if said || said_a_type || said_a_table => {}
             _ => self.checked.findings.push(Finding {
                 code: "NK1127",
                 severity: Severity::Error,

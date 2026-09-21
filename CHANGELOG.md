@@ -4,6 +4,45 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.118] — 2026-09-21
+
+**A map the build can see** — [ADR-176](docs/specification/adr/adr-176.md),
+answering [`open-decisions.md`](docs/open-decisions.md)'s *what does a program
+write, for a map the build can see?* with **option B**, and closing the last
+unbuilt part of [ADR-079](docs/specification/adr/adr-079.md) §3.
+
+### Added
+
+- **`comptime ROUTES: Fixed[&str, i64] = [("get", 1), ("post", 2)]`**, and **no new syntax**. The list literal is built, the tuple is a type this language has, and the **declared type** is what makes a list of pairs a table — which is [ADR-152](docs/specification/adr/adr-152.md) D4's *a use answers a literal*, the same sentence one shape out. A map literal was the other option and stays possible: it would find this crossing already built under it.
+- **`Fixed[&str, V]` in `std`**, with `get`, `has`, `len` and `is_empty`. `ROUTES.get(k)` is a `V?`, so `?? 0` is how a miss becomes a number ([ADR-161](docs/specification/adr/adr-161.md)). The `comptime` lands as one `const` holding four `&'static` tables.
+- **`Value::Tuple` in the evaluator**, which is also what [ADR-088](docs/specification/adr/adr-088.md) D1's field walk wants, so the two share the step.
+- **A `comptime` list of text crosses as `[&str; N]`.** That is [ADR-079](docs/specification/adr/adr-079.md) D1 rather than an addition to it — a list crosses as an `Array[T, N]` and text as a `&str`, and an array of text is both at once. What asked for it was walking a table's keys with a `for`.
+
+### The measurement removed the feature it was taken to size
+
+- **The plan was to emit a `match` under a threshold and a hash table over it**, because [`fixed-map-lookup.md`](docs/fixed-map-lookup.md) says a `match` beats a perfect hash for small key sets. §6 then measured the third shape nobody had: a **linear scan over the very same static arrays**. It is the `match` within **0–17 % up to twenty-four keys** — a dozen past where the hash has already taken the lead — so the range where generating a `match` would pay is **empty**.
+- **So there is no generated code at all.** A `Fixed` is a **value** a program may pass and store, the emitter stays one that knows no types ([ADR-011](docs/specification/adr/adr-011.md) D2), and which shape a table has lives in the data: no displacements *is* the small one. Neither the compiler nor `std` holds a branch that says *this table is small*.
+
+### Refused, by name and at the line that wrote it
+
+- **`NK1169`** — a key written twice. `[("get", 1), ("get", 2)]` has no meaning a compiler may pick between; the error names the key and both pairs. This is what a `comptime` is *for* ([ADR-073](docs/specification/adr/adr-073.md) D3): a duplicate in a routing table stops the build instead of resolving to whichever the map kept.
+- **`NK1170`** — a key that is not text. A number or a `bool` wants a different table, most likely a dense array, which is a different decision with a measurement of its own. Both ways out are real: text keys, or a `collections::HashMap` built while the program runs.
+- **Each is said once.** Both used to drag `NK1127` behind them — *this compiler cannot evaluate `ROUTES`* — which is not a second fact and whose way out (*write `let ROUTES = …`*) is wrong advice for a mistake the compiler just read well enough to name. Same handover [ADR-175](docs/specification/adr/adr-175.md) D2 made for `NK1165`.
+
+### Said
+
+- **Part II 10.2 had stopped being true, in three places.** *The current stage is an integer or a `bool`* was four packages out of date; *at item level it is a parse error* was false, and it was the reason the section gave for its own example not working; and *not implemented are `push` and aggregate values* had been built at 0.0.108 and 0.0.111. All three now say what the compiler does, and the section carries the `Fixed` form.
+- **`Fixed::len` joins the five names that are lengths.** [`contracts.rs`](crates/nikaia/tests/contracts.rs) lists them by hand, so adding one is a decision rather than a line — the emitter writes `as i64` because the name is `len`, and an entry promising an `i64` under any other name would emit a `usize` and nothing would notice.
+
+### Found by running it, and both would have shipped
+
+- **`Fixed::get` hands back a value, not a view of one**, which is what `std.contracts` promises (`-> $V?`). `Option<&V>` put an `Option<&&str>` in the generated file for a table of text, and `??` over one is ambiguous between two `Or` impls — `rustc` complaining about a file nobody wrote, which [Part III C.1](docs/specification/30-nikaia-tooling.md) does not allow. A table of `i64` never showed it, because one of the two impls happens to fit there.
+- **A table of nothing is a table.** `comptime EMPTY: Fixed[&str, i64] = []` was `NK1166` — *this is a `Vec[?]` and the `const` says `Fixed[&str, i64]`*, a correct program refused with a way out that asks the reader to write what they already wrote. `?` fits everything ([ADR-024](docs/specification/adr/adr-024.md) D1), which is how the array crossing one shape over had read it all along: `comptime XS: Array[i64, 0] = []` lowered the whole time.
+
+### Verified
+
+- **[`crates/nikaia/tests/fixed_map.rs`](crates/nikaia/tests/fixed_map.rs) runs the program**, over both table shapes and over **every key** of the hashed one. The compiler's FNV-1a and `std`'s are two implementations of one function in two crates with no type between them, so nothing but a running program holds them together — a generator that agreed with itself would prove nothing. Checked against a deliberately broken hash: the running tests go red, the shape tests do not.
+
 ## [0.0.117] — 2026-09-21
 
 **The fixed map's threshold is measured** — [ADR-079](docs/specification/adr/adr-079.md)

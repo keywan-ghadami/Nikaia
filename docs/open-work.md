@@ -459,7 +459,7 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
-### 2.8. The build-time evaluator has no `push` and no aggregate value
+### 2.8. The build-time evaluator has no field walk
 
 The **call** and the **loop** are built
 ([ADR-073](specification/adr/adr-073.md) D5's second stage): a `comptime`
@@ -470,8 +470,9 @@ comparisons, an `if`, `let`s, a `return`, a `for` over a range, a `while`,
 interpreter; [`fold.rs`](../crates/nikaia/src/fold.rs) stays in front of it,
 because it is what says which integer type a *declaration* pinned.
 
-*The aggregate value is built* ([ADR-175](specification/adr/adr-175.md)), and
-**what is left is the field walk.**
+*The aggregate value is built* ([ADR-175](specification/adr/adr-175.md)) and so
+is the map ([ADR-176](specification/adr/adr-176.md)), and **what is left is the
+field walk.**
 
 *What it was:* the interpreter had no aggregate value, so
 [ADR-079](specification/adr/adr-079.md) §3's table could be *computed* and had
@@ -506,6 +507,7 @@ one of them now can.
 | record | what it wants of the evaluator | |
 | :--- | :--- | :--- |
 | [ADR-079](specification/adr/adr-079.md) §3 | a **loop and `push`**, to build a table that then crosses as a view | **built** ([ADR-175](specification/adr/adr-175.md) D1), as a loop and an array |
+| [ADR-079](specification/adr/adr-079.md) §3 | a **fixed map**, as the crossed form of a map | **built** ([ADR-176](specification/adr/adr-176.md)), as `Fixed[&str, V]` |
 | [ADR-088](specification/adr/adr-088.md) D1 | a **loop over a type's fields**, which is the whole of 10.3 | open, and it is what is left |
 
 [ADR-079](specification/adr/adr-079.md) §3 says it plainly — *"This is the real
@@ -560,6 +562,26 @@ value, so `Point { x: 1, y: 2 }.scaled(10)` folds, a method may call another on
 view*, read one shape out. `NK1167` names a **field** a `const` cannot hold, and
 asks the declaration rather than the value, because a way out that tells a
 program to declare what it already declared is not one.
+
+*And a map the build can see, at 0.0.118.*
+[ADR-176](specification/adr/adr-176.md): a **list of pairs and a declared type**,
+`comptime ROUTES: Fixed[&str, i64] = [("get", 1), ("post", 2)]`, which adds no
+literal — the rule that a declaration answers a list literal is
+[ADR-152](specification/adr/adr-152.md) D4's, read one shape out. What it needed
+of the evaluator was a **tuple value**, which is also what
+[ADR-088](specification/adr/adr-088.md) D1's field walk wants, so the two share
+the step.
+
+*And it emits no code, which was not the plan.* The design this started from
+generated a `match` under a threshold and a hash table over it, because the
+numbers in [`fixed-map-lookup.md`](fixed-map-lookup.md) say a `match` beats a
+perfect hash for small key sets. Then §7 measured the third thing nobody had:
+a **linear scan over the same static arrays** is the `match` within 0 to 17 % up
+to twenty-four keys — a dozen past where the hash has already taken the lead. So
+the range where generating a `match` would be worth it is empty, a `Fixed` is a
+*value* rather than a function, and the emitter stays one that knows no types
+([ADR-011](specification/adr/adr-011.md) D2). The measurement removed the
+feature it was taken to size.
 
 *The order the records implied:* the value first — which is not the loop's step,
 since the loop is a shape the interpreter reads and a table is a *value* the
