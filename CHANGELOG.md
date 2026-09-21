@@ -4,6 +4,25 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.122] — 2026-09-21
+
+**`from` is an ordinary name** — [ADR-116](docs/specification/adr/adr-116.md)
+D1 and D3, and the drift that fell out of checking it.
+
+### Changed
+
+- **`from` is out of `parser::RESERVED_WORDS` and out of the grammar's `RESERVED` alternation**, so it is a name in every position that declares one — a field, a parameter, a `let`, a member. Part III 17.1's `pub fn rename(from: Path, to: Path, …)` parses as the page writes it, which is D3 and the reason the word was worth taking off the list: it is the most common name on it.
+- **Rust does not reserve it either**, so nothing is escaped on the way down ([ADR-076](docs/specification/adr/adr-076.md)). One table, not two.
+
+### And the reservation was paying for one sentence, which is still said
+
+- **`dsl X from e` still gets *a grammar is entered by a call*** rather than a parse error at whatever token is next. That sentence comes from the grammar's **token** and never came from the reserved list — the two are different things, and telling them apart is the whole of this change. [ADR-116](docs/specification/adr/adr-116.md) D1's *loses nothing* is literal.
+
+### Fixed: the page and the table had drifted
+
+- **Part I 2.1 printed thirty-five reserved words and the compiler enforced thirty-six.** `select` arrived with its construct ([ADR-148](docs/specification/adr/adr-148.md)) and reached `parser::RESERVED_WORDS` and not the page, so a reader counting the words there got a different answer from the compiler — for two months.
+- **A test compares them now**, rather than a memory: it reads the fenced block out of Part I and sorts it against the array. The page also gains the sentence `select` is owed, the one every word reserved *for* a construct has.
+
 ## [0.0.121] — 2026-09-21
 
 **`with` — a copy of a value with named fields changed** —

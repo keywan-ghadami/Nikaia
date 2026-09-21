@@ -1152,22 +1152,28 @@ that joins an error from **below** Nikaia, which has no envelope at all, is
 dropped. That is the boxed channel's downcast finding nothing, and it is the
 price of the box.
 
-### 2.26. `from` is a name, and a file a build reads is `asset("…")`
+### 2.26. A file a build reads is `asset("…")`
 
-[ADR-116](specification/adr/adr-116.md). `from` leaves the reserved list, so
-`fs::rename(from:, to:)` parses as Part III writes it; the build-time read is
-`asset("…")`, a call the compiler recognises in a `comptime` initialiser under
-every rule the allowlist record already states. **Nothing of it is built**:
-`from` is in `parser::RESERVED_WORDS`, and the read is unbuilt in either
-spelling.
+[ADR-116](specification/adr/adr-116.md) D2. **D1 and D3 are built**: `from` is
+an ordinary name, so Part III 17.1's `pub fn rename(from: Path, to: Path, …)`
+parses as the page writes it, and the removed `dsl X from e` keeps its sentence
+from the grammar's token rather than from the reserved list.
 
 *Evidence:* Part II 10.6's `Json::value(asset("config.json"))` parses and is
 refused as `NK1117` and `NK1127` — the page ahead of the compiler, in this
 language's words, where the old spelling was a parse fragment.
 
-*What it needs, in the record's order (§5):* the word out of the parser's
-table with the `dsl X from e` message matching the bare word; `asset("…")`
-when the second stage of `comptime` lands; the two `fs` entries.
+*What is left, and what it waits on.* `asset("…")` is a call the compiler
+recognises in a `comptime` initialiser: the argument is a string literal and may
+not be computed, the path is under the project root, and the literal is what the
+allowlist is checked against. The stage it waited on **has arrived** —
+[ADR-073](specification/adr/adr-073.md) D5's second stage is built — so what
+stands in front of it now is [ADR-072](specification/adr/adr-072.md) §4's
+**allowlist**, because D2 says every rule that record states holds unchanged and
+*a build given no allowlist reads nothing* is the first of them. An `asset`
+without it would read a file no committed line named, which is the one direction
+that record exists to prevent. The two `fs` entries wait on
+[ADR-108](specification/adr/adr-108.md)'s root, which is §2.20's.
 
 ### 2.28. A target without an operating system
 

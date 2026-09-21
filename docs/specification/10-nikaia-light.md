@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.121 (Draft)
+**Version:** 0.0.122 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -229,9 +229,9 @@ reserved word ([ADR-051](adr/adr-051.md) D1). The reserved words are:
 ```text
 as        break     catch     comptime  continue  dsl       else      enum
 extern    false     fn        for       grammar   if        impl      in
-let       match     mut       null      overlap   pub       return    self
-spawn     struct    sync      throw     throws    trait     true      unsafe
-use       while     with
+let       match     mut       null      overlap   pub       return    select
+self      spawn     struct    sync      throw     throws    trait     true
+unsafe    use       while     with
 ```
 
 **`comptime` is reserved for its construct**: a statement inside a function
@@ -256,6 +256,11 @@ changed, `p with { x: 1 }` (4.2, [ADR-118](adr/adr-118.md)).
 **`extern` and `unsafe` are reserved for their constructs**: an `extern "C"`
 block, and the `unsafe { … }` a call into one is written in
 ([ADR-124](adr/adr-124.md), Part III 15.1).
+
+**`select` is reserved for its construct**: the block that races several
+waits and takes the first to finish (Part II, 12.4,
+[ADR-148](adr/adr-148.md) D1). It arrived with its construct in the same
+change, which is the one ground [ADR-051](adr/adr-051.md) D3 accepts.
 
 **`break` and `continue` are reserved for their constructs** (3.3,
 [ADR-084](adr/adr-084.md)).

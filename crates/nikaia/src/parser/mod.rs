@@ -461,9 +461,9 @@ pub fn parse_expression(interner: &InternerContext, input: &str) -> Result<ast::
 /// `crates/nikaia/tests/parser.rs` holds the two halves together by behaviour -
 /// every word here is refused as a name, and the sublanguage's words are not -
 /// so the list and the rule cannot drift apart in silence.
-pub const RESERVED_WORDS: [&str; 37] = [
+pub const RESERVED_WORDS: [&str; 36] = [
     "as", "break", "catch", "comptime", "continue", "dsl", "else", "enum", "extern", "false", "fn",
-    "for", "from", "grammar", "if", "impl", "in", "let", "match", "mut", "null", "overlap", "pub",
+    "for", "grammar", "if", "impl", "in", "let", "match", "mut", "null", "overlap", "pub",
     "return", "select", "self", "spawn", "struct", "sync", "throw", "throws", "trait", "true",
     "unsafe", "use", "while", "with",
 ];
@@ -3165,6 +3165,11 @@ grammar! {
         rule KW_FN = "fn" not(ident)
         rule KW_FOLD = "fold" not(ident)
         rule KW_FOR = "for" not(ident)
+        // **Not in `RESERVED`** ([ADR-116](../../../../docs/specification/adr/adr-116.md)
+        // D1): `from` is an ordinary name, and this rule exists only so the
+        // removed `dsl X from e` still gets its sentence rather than a parse
+        // error at whatever token happens to be next. A token matcher and a
+        // reserved word are two different things, and this is the first.
         rule KW_FROM = "from" not(ident)
         rule KW_GRAMMAR = "grammar" not(ident)
         rule KW_IF = "if" not(ident)
@@ -3248,7 +3253,6 @@ grammar! {
           | KW_FALSE -> { 0 }
           | KW_FN -> { 0 }
           | KW_FOR -> { 0 }
-          | KW_FROM -> { 0 }
           | KW_GRAMMAR -> { 0 }
           | KW_IF -> { 0 }
           | KW_IMPL -> { 0 }
