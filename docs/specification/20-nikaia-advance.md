@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.118 (Draft)
+**Version:** 0.0.119 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -228,14 +228,19 @@ print their own analyses. There is no syntax for it.
 ([ADR-088](adr/adr-088.md) D7). A program may not use them as names. The macro
 system built out of the three is withdrawn ([ADR-088](adr/adr-088.md)).
 
-> **Implementation status:** Not implemented. `T::fields` is refused with
-> `NK1117` (nothing declares `T`), because a type is not a value in user code;
-> `Struct` is not a bound any declaration provides; and no loop runs while the
-> program is built ([ADR-079](adr/adr-079.md) §3, [ADR-073](adr/adr-073.md) D5).
-> The bound mechanism is implemented ([ADR-078](adr/adr-078.md)), as is
-> `comptime` for literals and arithmetic over them ([ADR-073](adr/adr-073.md));
-> `--comptime` is not. `macro`, `quote` and `with` are reserved
-> ([ADR-088](adr/adr-088.md) §5).
+> **Implementation status:** Not implemented, and **refused by name**.
+> `T::fields` under a type parameter is `NK1117` (nothing declares `T`), because
+> a type is not a value in user code; written against a type this program
+> declares, `Point::fields` is `NK1171`, which says that this section is
+> specified and that the compiler does not have it rather than sending a reader
+> looking for a spelling that does not exist. `Struct` is not a bound any
+> declaration provides. What has arrived since this note was first written is
+> the **loop**: a `comptime` initialiser evaluates calls, methods, `for` and
+> `while`, and hands arrays, text, structs and a fixed map to the program below
+> (10.2, [ADR-175](adr/adr-175.md), [ADR-176](adr/adr-176.md)) — so what 10.3
+> waits on is a type's **shape as data**, not the machinery to walk it. The
+> bound mechanism is implemented ([ADR-078](adr/adr-078.md)); `--comptime` is
+> not. `macro`, `quote` and `with` are reserved ([ADR-088](adr/adr-088.md) §5).
 
 Capturing an *expression* as a tree, `u.age > 18` for a provider to translate,
 is not part of the language. A query is written in the database's own SQL and

@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.119] — 2026-09-21
+
+**A name beside a type this program declares** — a defect
+([`open-work.md`](docs/open-work.md) §1), found while reading what Part II 10.3
+would need.
+
+### Fixed
+
+- **`Op::Mul`, written against `enum Op { Add, Sub }`, used to lower.** The compiler had read the declaration, the exhaustiveness check was holding the variant list in its hand, and nothing compared the two — so what refused the program was `rustc`, about the **generated file**, which is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class and the one this compiler refuses on principle. `NK1171` says it at the line that wrote it, lists what the type has, and names the one that was probably meant when a name is close.
+- **The exhaustiveness check could not have said it**, which is why it had gone unnoticed for so long. That check reads which variants an arm *covered*; a misspelling covers none, so what it reports is the variant that is **missing** — a true sentence pointing away from the mistake. With an `else` arm beside it, it reports nothing at all.
+- **A pattern nests, and so does the check** ([ADR-137](docs/specification/adr/adr-137.md) D1's *the parts are patterns*): `Event::Chose(Op::Mul)` is the same mistake one level down. A check that stopped at the outer path would be worse than none — a reader would learn that it exists and then meet `rustc` anyway.
+- **And a struct has no items under `::`.** `Point::x` is `NK1171` too, with the way out that works: a field is read from a value.
+
+### Said
+
+- **`Point::fields` says that Part II 10.3 is specified and unbuilt.** A reader who writes it has read the specification, so *`Point` has nothing called `fields`* would send them looking for a spelling that does not exist. [Part III C.2](docs/specification/30-nikaia-tooling.md) asks for a way out that can be taken, and the only one here is writing the fields out — so that is what it offers, rather than a rewrite of the same line. [ADR-088](docs/specification/adr/adr-088.md) §5 is the record it cites.
+- **Part II 10.3's status note is rewritten.** It said no loop runs while the program is built, which four packages have made false: what 10.3 waits on is a type's **shape as data**, not the machinery to walk it.
+
+### Measured, and it is what bounds the fix
+
+- **A path whose head names nothing is deliberately *not* refused** — `nowhere::wobble` still lowers. A module of a package, an item of a foreign crate and a name no ledger has been told about all look the same from inside the checker, and refusing on absence would refuse correct programs.
+- **Instrumenting the checker's path arm over the whole corpus** turns up **seven** distinct paths used as values — `Summary::merge`, `Report::merge`, `Refused::NoStatement`, `Refused::NoDatabase`, `Op::Times`, `Op::Divide`, `Json::Null` — and every one is a variant of a declared enum or a key a ledger records. Not one has a head this compiler has not read. So the unfixed half is a case no program here writes, and it can wait for the mechanism that would make its refusal right. [`open-work.md`](docs/open-work.md) §1.2.
+
 ## [0.0.118] — 2026-09-21
 
 **A map the build can see** — [ADR-176](docs/specification/adr/adr-176.md),

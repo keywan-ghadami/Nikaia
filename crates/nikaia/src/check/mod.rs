@@ -4313,6 +4313,10 @@ impl<'a> Checker<'a> {
                 self.a_constructor_written_as_new(&names.join("::"), span);
                 match names.as_slice() {
                     [ty, variant] if self.is_variant(ty, variant) => Ty::named(*ty),
+                    [ty, member] => {
+                        self.a_member_this_type_does_not_have(ty, member, span);
+                        Ty::Unknown
+                    }
                     _ => Ty::Unknown,
                 }
             }
@@ -4464,6 +4468,13 @@ impl<'a> Checker<'a> {
                     // D1), asked before the body is walked so that the body's
                     // scope is one this checker can stand behind.
                     self.an_or_pattern_that_binds_unevenly(&arm.pattern, span);
+                    // **And a pattern that names a variant the type does not
+                    // have**, which the exhaustiveness check below cannot say:
+                    // it reads which variants were *covered*, and a misspelling
+                    // covers none, so what it reports is the variant that is
+                    // missing rather than the name that is wrong — and with an
+                    // `else` arm beside it, nothing at all.
+                    self.a_pattern_naming_a_member_a_type_does_not_have(&arm.pattern, span);
                     let frame = self.pattern_bindings(&arm.pattern);
                     self.scope.push(frame);
                     // **The guard is walked inside the arm's scope** (D2): it
@@ -9381,6 +9392,165 @@ impl<'a> Checker<'a> {
                 "write `{ty}(…)`, or `{ty}` where the constructor is the value"
             )),
         });
+    }
+
+    /// **`NK1171`: `X::y`, where `X` is a type this program declares and `y` is
+    /// nothing it has.**
+    ///
+    /// **Only where the compiler *knows*.** A path whose head names nothing at
+    /// all — `nowhere::wobble` — is a different question and is not this one:
+    /// a module of a package, a foreign crate's item and a name the ledger has
+    /// not been told about all look the same from here, and refusing on absence
+    /// would refuse correct programs. That case is
+    /// [`open-work.md`](../../docs/open-work.md) §1.2, with the measurement
+    /// that says how rare it is. What is answered here is the case where this
+    /// compiler has read the declaration and can see that the name is not in
+    /// it: the same knowledge `NK1135`'s map and the exhaustiveness check
+    /// already read, asked one question earlier.
+    ///
+    /// **What it was before.** `Op::Mul` beside `enum Op { Add, Sub }` lowered,
+    /// and `rustc` refused the **generated file** — [Part III
+    /// C.1](../../docs/specification/30-nikaia-tooling.md)'s class. The
+    /// exhaustiveness check could not say it: it reads which variants an arm
+    /// *covered*, so a misspelling covers none and what it reports is the
+    /// variant that is missing; with an `else` arm beside it, it reports
+    /// nothing.
+    fn a_member_this_type_does_not_have(&mut self, ty: &str, member: &str, span: &Span) {
+        // Anything a ledger records under this exact key is a real item —
+        // `Summary::merge`, a `new` a hand-written ledger carries — and says so
+        // for itself.
+        if self.resolve(&format!("{ty}::{member}")).is_some() {
+            return;
+        }
+        if let Some(variants) = self.enums.get(ty) {
+            let known: Vec<&str> = variants.iter().map(String::as_str).collect();
+            let listed = known
+                .iter()
+                .map(|v| format!("`{ty}::{v}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let help = match nearest(member, &known) {
+                Some(near) => format!("did you mean `{ty}::{near}`?"),
+                None if known.is_empty() => {
+                    format!("`{ty}` declares no variants, so there is no name to write here")
+                }
+                None => format!("write one of {listed}"),
+            };
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK1171",
+                message: format!("`{ty}` has no variant `{member}`"),
+                notes: vec![format!(
+                    "this compiler read the declaration, so a name beside it is a misspelling \
+                     rather than something nobody has told it about - `{ty}` is {listed} and \
+                     nothing else (Part I, 4.3)"
+                )],
+                help: Some(help),
+            });
+            return;
+        }
+        let Some(fields) = self.fields_of(ty) else {
+            return;
+        };
+        // **`T::fields` is specified and unbuilt**, and that is worth its own
+        // sentence: a reader who wrote it read Part II 10.3, and *`Point` has
+        // no member `fields`* would send them looking for a spelling that does
+        // not exist ([ADR-088](../../docs/specification/adr/adr-088.md) §5).
+        if member == "fields" || member == "variants" {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK1171",
+                message: format!(
+                    "`{ty}::{member}` is specified and this compiler does not have it"
+                ),
+                notes: vec![
+                    "Part II 10.3 reads a type's shape as ordinary data - `for field in T::fields` \
+                     under a `T: Struct` bound - and ADR-088 §5 says none of D1 to D6 is built. \
+                     `Struct` is not a bound any declaration provides either, so the line above \
+                     this one would be `NK1135`"
+                        .to_string(),
+                ],
+                help: Some(
+                    "write the fields out by hand for now - there is no other spelling that does \
+                     what this would"
+                        .to_string(),
+                ),
+            });
+            return;
+        }
+        let named: Vec<&str> = fields.iter().map(|field| field.name.as_str()).collect();
+        let listed = named
+            .iter()
+            .map(|field| format!("`{field}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1171",
+            message: format!("`{ty}` is a struct, and nothing it declares is called `{member}`"),
+            notes: vec![format!(
+                "`::` reaches an **item** a type declares - a method of an `impl`, a variant of an \
+                 `enum` - and a field is not one: it is read from a value. `{ty}` holds {listed}"
+            )],
+            help: Some(match nearest(member, &named) {
+                Some(near) => format!("read it from a value: `value.{near}`"),
+                None => format!("write `impl {ty} {{ … }}` if `{member}` is meant to be a method"),
+            }),
+        });
+    }
+
+    /// One pattern's path, where it names a type and a member of it.
+    ///
+    /// One segment **binds a name** rather than naming a variant, which is the
+    /// rule [`Checker::pattern_names`] already reads, and an empty one is the
+    /// bare tuple `(0, 0)`.
+    fn a_path_in_a_pattern(&mut self, path: &[Ident], span: &Span) {
+        let names: Vec<String> = path
+            .iter()
+            .map(|s| self.parsed.text(*s).to_string())
+            .collect();
+        let [ty, member] = names.as_slice() else {
+            return;
+        };
+        if self.is_variant(ty, member) {
+            return;
+        }
+        self.a_member_this_type_does_not_have(ty, member, span);
+    }
+
+    /// The same question asked of a `match` arm's pattern
+    /// ([ADR-137](../../docs/specification/adr/adr-137.md) D1's shapes), which
+    /// is where a misspelled variant is most likely to be written and least
+    /// likely to be noticed.
+    fn a_pattern_naming_a_member_a_type_does_not_have(
+        &mut self,
+        pattern: &MatchPattern,
+        span: &Span,
+    ) {
+        match pattern {
+            MatchPattern::Path(path) | MatchPattern::Named { path, .. } => {
+                self.a_path_in_a_pattern(path, span);
+            }
+            // **The parts are patterns**, so the walk goes into them: a
+            // misspelling inside `Event::Click(Op::Mul)` is the same mistake one
+            // level down, and stopping at the outer path would find the shallow
+            // half of a rule.
+            MatchPattern::Tuple { path, parts } => {
+                self.a_path_in_a_pattern(path, span);
+                for part in parts {
+                    self.a_pattern_naming_a_member_a_type_does_not_have(part, span);
+                }
+            }
+            MatchPattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.a_pattern_naming_a_member_a_type_does_not_have(alternative, span);
+                }
+            }
+            MatchPattern::Otherwise | MatchPattern::Literal(_) | MatchPattern::Range { .. } => {}
+        }
     }
 
     /// `NK1144`: a `let` whose only name is the ignore pattern
