@@ -835,8 +835,14 @@ fn the_checker_says_which_method_calls_can_fail() {
                   fn neither(b: B) -> i64 { return b.plain() }\n\
                   fn both_names(a: A, b: B) -> i64 throws { return a.add(1) + b.add(2) }";
     let parsed = parse_to_ast(source).expect("the source parses");
-    let fallible =
-        nikaia::check::propagation_against(&parsed, &[], &Ledger::infer(&parsed)).methods;
+    let fallible = nikaia::check::propagation_against(
+        &parsed,
+        &[],
+        &Ledger::infer(&parsed),
+        // No allowlist: a build given none reads nothing (ADR-072 D1).
+        &nikaia::assets::Reads::none(),
+    )
+    .methods;
 
     let names: Vec<&str> = fallible.iter().map(|(_, name)| name.as_str()).collect();
     assert_eq!(

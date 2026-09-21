@@ -177,6 +177,88 @@ fn an_edited_source_misses() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **A file the build read, changed** ([ADR-072](../../../docs/specification/adr/adr-072.md)
+/// D7, [ADR-021](../../../docs/specification/adr/adr-021.md) D13).
+///
+/// The asset dimension travelled through the key for a year with nothing
+/// producing it; `asset("…")` is what produces it now. This is the half the
+/// unit tests over synthetic records could not reach — a recorded asset is
+/// re-hashed **as it is on disk now**, so editing the file is a miss without
+/// the source changing at all.
+#[test]
+fn an_edited_asset_misses_although_the_source_did_not_change() {
+    let dir = common::scratch_dir("cache-asset");
+    let source = a_switch_sensitive_example();
+    let choices = Choices::new("x86_64-linux/auto", "rust").reading("digest-of-the-list");
+    std::fs::write(dir.join("config.txt"), "one\n").expect("write the asset");
+
+    let mut cache = cache_in(&dir);
+    let assets = BTreeMap::from([(
+        "config.txt".to_string(),
+        orchestrator::cache::sha256_hex(b"one\n"),
+    )]);
+    cache
+        .record(
+            "1brc.nika",
+            &source,
+            assets,
+            &choices,
+            &rust(&lower(&source, Build::default())),
+        )
+        .expect("record");
+
+    assert!(
+        cache.lookup("1brc.nika", &source, &choices, &dir).is_some(),
+        "the same bytes on disk are a hit"
+    );
+    std::fs::write(dir.join("config.txt"), "two\n").expect("edit the asset");
+    assert!(
+        cache.lookup("1brc.nika", &source, &choices, &dir).is_none(),
+        "a build that read a file which has since changed must not keep the old answer"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// **The allowlist is a dimension of its own** (D7).
+///
+/// It is a file the build read, so it belongs in the key beside the files it
+/// names — and it belongs with the *switches* rather than among the assets,
+/// because it binds the whole build (D6). The empty digest is a build with **no
+/// list**, which is a different build from one with a list: the first cannot
+/// read at all, so the two must never serve each other's artifacts.
+#[test]
+fn two_allowlists_never_serve_each_others_artifacts() {
+    let dir = common::scratch_dir("cache-allowlist");
+    let source = a_switch_sensitive_example();
+    let none = Choices::new("x86_64-linux/auto", "rust");
+    let listed = Choices::new("x86_64-linux/auto", "rust").reading("one-digest");
+    let other = Choices::new("x86_64-linux/auto", "rust").reading("another-digest");
+
+    let mut cache = cache_in(&dir);
+    cache
+        .record(
+            "1brc.nika",
+            &source,
+            BTreeMap::new(),
+            &listed,
+            &rust(&lower(&source, Build::default())),
+        )
+        .expect("record");
+
+    assert!(cache.lookup("1brc.nika", &source, &listed, &dir).is_some());
+    assert!(
+        cache.lookup("1brc.nika", &source, &none, &dir).is_none(),
+        "a build with no list is not the build that had one"
+    );
+    assert!(
+        cache.lookup("1brc.nika", &source, &other, &dir).is_none(),
+        "a changed line in the list must invalidate"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// The lockfile is the committed record (D2), and the build-time choices are
 /// deliberately not in it (D5) - otherwise switching build would rewrite a
 /// tracked file for a diff that means nothing.

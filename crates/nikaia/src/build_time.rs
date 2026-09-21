@@ -34,6 +34,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::assets::{Denied, Reads, ASSET};
 use crate::ast::{BinaryOp, Block, Expr, Item, Stmt, UnaryOp};
 use crate::contracts::{touch, Ledger};
 use crate::parser::Parsed;
@@ -170,6 +171,20 @@ pub enum Refusal {
     /// `comptime B = A` has no base case to reach, and the message names the
     /// ring rather than the limit it hit.
     Circular { ring: Vec<String> },
+    /// **A file this build may not read**
+    /// ([ADR-072](../../../docs/specification/adr/adr-072.md) D1 to D5).
+    ///
+    /// Understood and refused, which is why it is not `Unevaluable`: the shape
+    /// is read, the path is in hand, and the answer is no — with a reason that
+    /// differs per shape, so the sentence is the checker's to write.
+    MayNotRead { path: String, why: Denied },
+    /// **A path that is not a literal** (D4).
+    ///
+    /// Its own variant because it is answered *before* the argument is
+    /// evaluated: a name that folds to `"config.json"` would otherwise be read
+    /// as one, and then *named in the code* would stop being decidable by
+    /// looking at the line, which is the whole of what the three namings buy.
+    PathIsComputed,
     /// An index this array does not have. **Understood and wrong**, like
     /// `NotAllowed` and unlike `Unevaluable`: the program says `xs[7]` of five
     /// elements, and a build that answered *cannot evaluate* would send the
@@ -198,6 +213,11 @@ pub struct BuildTime<'a> {
     /// is the opposite of what this needs.
     beside: &'a [&'a Parsed],
     own: &'a Ledger,
+    /// **What this build may read while it builds**
+    /// ([ADR-072](../../../docs/specification/adr/adr-072.md)). A caller that
+    /// passes [`Reads::none`] gets D1: the whole class is off, which is what
+    /// every test and every build that did not ask for it gets.
+    reads: &'a Reads,
     known: Known<'a>,
     depth: usize,
     /// Whether the body being read came from a file other than the one being
@@ -218,12 +238,14 @@ impl<'a> BuildTime<'a> {
         parsed: &'a Parsed,
         beside: &'a [&'a Parsed],
         own: &'a Ledger,
+        reads: &'a Reads,
         known: Known<'a>,
     ) -> Self {
         Self {
             parsed,
             beside,
             own,
+            reads,
             known,
             depth: 0,
             foreign: false,
@@ -410,6 +432,15 @@ impl<'a> BuildTime<'a> {
                     return Err(Refusal::Unevaluable);
                 };
                 let name = self.parsed.text(*name).to_string();
+                // **`asset("…")` is answered before the arguments are**
+                // ([ADR-116](../../../docs/specification/adr/adr-116.md) D2,
+                // [ADR-072](../../../docs/specification/adr/adr-072.md) D4).
+                // A name that folds to `"config.json"` is a path that was
+                // *computed*, and reading it would make *named in the code*
+                // something a reader cannot decide by looking at the line.
+                if name == ASSET {
+                    return self.asset(args);
+                }
                 let mut given = Vec::new();
                 for arg in args {
                     given.push(self.expr(arg, frame)?);
@@ -657,6 +688,34 @@ impl<'a> BuildTime<'a> {
             // would be just as unreadable one function further in.
             way_out: "write what it does with arithmetic, an `if`, a `for` and a call \
                       to a function of this file",
+        }
+    }
+    /// **The file a build reads**
+    /// ([ADR-116](../../../docs/specification/adr/adr-116.md) D2).
+    ///
+    /// It is the compiler's and not `std`'s, so it is read here rather than
+    /// resolved through a ledger: there is no body to describe. What comes back
+    /// is the file's **text**, which is what crosses to the program as a `&str`
+    /// ([ADR-079](../../../docs/specification/adr/adr-079.md) D1) and what a
+    /// grammar's entry takes.
+    ///
+    /// Every rule [ADR-072](../../../docs/specification/adr/adr-072.md) states
+    /// holds unchanged under the call rather than under the keyword it was
+    /// written for, and the first of them is the one that costs nothing to
+    /// keep: a build given no list reads nothing.
+    fn asset(&mut self, args: &[Expr]) -> Result<Value, Refusal> {
+        // **A string literal and nothing else** (D4). Not "an expression that
+        // evaluates to text": a name that folds to one is exactly what this
+        // refuses, and the refusal has to happen before the fold.
+        let [Expr::LitStr(written)] = args else {
+            return Err(Refusal::PathIsComputed);
+        };
+        let Some(path) = decoded(written) else {
+            return Err(Refusal::PathIsComputed);
+        };
+        match self.reads.read(&path) {
+            Ok(text) => Ok(Value::Text(text)),
+            Err(why) => Err(Refusal::MayNotRead { path, why }),
         }
     }
 

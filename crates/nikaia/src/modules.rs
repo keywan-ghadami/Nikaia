@@ -622,6 +622,21 @@ impl Program {
     /// the entry is the file that may declare `main` and a reader opens the
     /// generated file at the top.
     pub fn emit(&self, build: crate::emit::Build) -> Result<crate::emit::Lowered> {
+        self.emit_reading(build, &crate::assets::Reads::none())
+    }
+
+    /// The same, told what this build may read while it builds
+    /// ([ADR-072](../../../docs/specification/adr/adr-072.md)).
+    ///
+    /// **A second entry point and not a field on `Build`**: `Build` is the
+    /// machine and the switches, copied freely, and what a build may read is a
+    /// fact about the invocation with a lifetime on it. A caller with nothing
+    /// to say passes [`crate::assets::Reads::none`], which is D1.
+    pub fn emit_reading(
+        &self,
+        build: crate::emit::Build,
+        reads: &crate::assets::Reads,
+    ) -> Result<crate::emit::Lowered> {
         use crate::emit::{Lowered, Needs, SourceMap};
 
         let trust = crate::contracts::trust::analyse(&self.units[0].parsed, &std_ledger());
@@ -663,6 +678,7 @@ impl Program {
                 // The entry is the only file ADR-038 D4's generated `fn main`
                 // may be written from.
                 at == 0,
+                reads,
             )
             // **A refusal from the lowering gets its line here**
             // ([ADR-171](../../../docs/specification/adr/adr-171.md) D2), which

@@ -62,6 +62,15 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 pub struct Choices {
     pub build: String,
     pub backend: String,
+    /// **The allowlist's own digest**, empty where no list is in effect
+    /// ([ADR-072](../../../docs/specification/adr/adr-072.md) D7).
+    ///
+    /// The list is a file the build read, so it belongs in the key beside the
+    /// files it names — and it belongs *here*, with the switches, rather than
+    /// among the assets: those are per unit and this binds the whole build
+    /// (D6). Changing a line has to invalidate, or a build that stops reading
+    /// a file keeps the old answer.
+    pub reads: String,
 }
 
 impl Choices {
@@ -69,6 +78,15 @@ impl Choices {
         Self {
             build: build.into(),
             backend: backend.into(),
+            reads: String::new(),
+        }
+    }
+
+    /// The same, with an allowlist in effect.
+    pub fn reading(self, digest: impl Into<String>) -> Self {
+        Self {
+            reads: digest.into(),
+            ..self
         }
     }
 }
@@ -207,6 +225,10 @@ impl Key {
         b.field("toolchain", toolchain);
         b.field("build", &choices.build);
         b.field("backend", &choices.backend);
+        // **The allowlist, whether or not anything was read from it** (D7). An
+        // empty string is a build with no list, which is a different build from
+        // one with an empty list: the first cannot read at all.
+        b.field("reads", &choices.reads);
         b.field("unit", unit);
         b.field("source", &record.source);
         // `BTreeMap` iterates in key order, so the same assets hash the same

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.122 (Draft)
+**Version:** 0.0.123 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -148,7 +148,10 @@ build given no allowlist reads nothing (D1). A file the build reads is named
 three times: in the source, as the `asset("…")` literal; in an allowlist file,
 one path per line; and in the invocation that puts the list in effect,
 `--allow-read-from-list=…` (D3). The path may not be computed (D4). There are no
-patterns (D5).
+patterns (D5). What `asset("…")` comes to is the file's **text**, which crosses
+to the program as the `&str` a `const` holds
+([ADR-079](adr/adr-079.md) D1); bytes that are not UTF-8 are refused rather than
+converted. The list binds the whole build, a dependency's read included (D6).
 
 *Design rationale:* two of the three namings are committed, so adding a read is
 a diff a reviewer sees; the third lets a build run with compile-time reading
@@ -161,11 +164,16 @@ switched off without editing anything ([ADR-072](adr/adr-072.md) D3).
 > inside a function body, for the whole stage named above — calls across the
 > files of a program, methods, loops, `push`, text, arrays and the fixed map
 > included — and so is the crossing of [ADR-079](adr/adr-079.md)
-> ([ADR-175](adr/adr-175.md), [ADR-176](adr/adr-176.md)). Not implemented are
-> `asset("…")` and the allowlist ([ADR-072](adr/adr-072.md) §4), so
-> `Json::value(asset("…"))` — the binding in A — has no bytes to read yet;
-> running a grammar while the program is built, which compiles the generated
-> parser rather than interpreting the grammar (`docs/open-work.md`); and
+> ([ADR-175](adr/adr-175.md), [ADR-176](adr/adr-176.md)). **`asset("…")` and
+> the allowlist are implemented** ([ADR-072](adr/adr-072.md) §4):
+> `comptime CONFIG: &str = asset("config.txt")` is a `const` holding the file's
+> text, `NK1175` says which of the three namings a refused read is missing,
+> `NK1176` refuses a path the build worked out, and `NK1177` refuses an `asset`
+> written outside a `comptime` with the name of the run-time read. Not
+> implemented are **running a grammar** while the program is built, which
+> compiles the generated parser rather than interpreting the grammar
+> (`docs/open-work.md` §2.9) — so `Json::value(asset("…"))`, the binding in A,
+> reads its bytes and has nothing to run over them yet — and
 > [ADR-079](adr/adr-079.md) D5's serialised blob, which waits for a table large
 > enough to ask for it.
 

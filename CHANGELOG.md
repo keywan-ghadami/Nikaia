@@ -4,6 +4,41 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.123] — 2026-09-21
+
+**A file a build reads is named three times** —
+[ADR-072](docs/specification/adr/adr-072.md) entire, with
+[ADR-116](docs/specification/adr/adr-116.md) D2's `asset("…")` under it. The
+record said *built: no* because *`const` has no syntax, so there is nothing to
+check yet*; the order it implied has been walked, and the check finally had a
+`const` to hang on.
+
+### Added
+
+- **`comptime CONFIG: &str = asset("config.txt")`** reaches the generated file as `const CONFIG: &str = "…";` — the file's text, read while the program is built. `asset` is the compiler's and not `std`'s, so it is recognised in a `comptime` initialiser and nowhere else.
+- **`--allow-read-from-list=FILE`**, one path per line, `#` begins a comment. It reaches the `rustc` wrapper through `NIKAIA_ALLOW_READ_FROM_LIST`, because the wrapper is a second process that lowers the same file again and two halves of one build must not disagree about which files it may read. That is also how D6 holds: every member of the workspace is lowered under one environment, so a dependency's read is checked against the list of the build that is **running** — a package cannot bring its own permission.
+- **What crosses is text** ([ADR-079](docs/specification/adr/adr-079.md) D1), which is what a `const` holds. Bytes that are not UTF-8 are refused by name rather than converted.
+
+### The default is the whole point
+
+- **A build given no list reads nothing** (D1), and that is what happens when nothing is passed rather than a mode a project opts into. *This build reads nothing while building* is therefore a fact about the invocation, not a claim somebody has to make, keep true, and be believed about. Every other refusal below is reached only by a build that already asked for the class to be switched on.
+
+### Refused
+
+- **`NK1175`** — one claim, five reasons, and the way out differs with the reason because the three namings are not derivable from one another: *add the flag* is not the answer to a path missing from the list, and *add the line* is not the answer to a build run with the reads switched off. It also covers a path that leaves the project root, a file that is not there, and bytes that are not text.
+- **`NK1176`** — a path the build worked out (D4). **Answered before the argument is evaluated**, and the test that says so uses a path which is listed, is on disk and would have been allowed: if the check ran on the *value* there would be no finding at all, and *named in the code* would have quietly stopped being decidable by looking at the line.
+- **`NK1177`** — an `asset` written outside a `comptime`. Three words each decide one thing: `comptime` says **when**, `asset("…")` says **where the bytes come from**, and the call around it says what is done with them. The way out names `fs::read`, because a file read while the program *runs* is what a reader who wrote it there almost certainly meant.
+
+### The cache is right about it (D7)
+
+- **The asset dimension had travelled through the key for a year with nothing producing it.** This is the producer. What the build read goes into the unit's assets, and a recorded asset is re-hashed **as it is on disk now** — so editing a file the build read is a miss although the source did not change.
+- **The list's own digest is a dimension too**, beside the switches rather than among the assets, because it binds the whole build. The empty digest is a build with **no list**, which is a different build from one with an empty list: the first cannot read at all, so the two never serve each other's artifacts. Measured end to end: a second identical build is a hit, changing the file is a miss, adding a comment to the list is a miss, and dropping the flag is refused even though a cached entry for the same source exists.
+
+### And it adds no sandbox
+
+- **What a build-time body may *do* was already bounded** by two ledger columns ([ADR-075](docs/specification/adr/adr-075.md) D1, D2). This bounds what it may **read**, and the two are separate questions with separate answers. [ADR-026](docs/specification/adr/adr-026.md) stays open for the third: what bounds a build-time body's **memory**.
+- **D8**: an entry nothing read is named at the end of the build. A list that may hold names nothing uses decays into *everything we ever needed*, which is how an allowlist stops being read.
+
 ## [0.0.122] — 2026-09-21
 
 **`from` is an ordinary name** — [ADR-116](docs/specification/adr/adr-116.md)

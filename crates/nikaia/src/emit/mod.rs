@@ -28,6 +28,7 @@ use anyhow::{anyhow, Result};
 pub mod template;
 use winnow_grammar::Symbol;
 
+use crate::assets::Reads;
 use crate::ast::{
     BinaryOp, Block, Expr, FnArg, FoldSpec, FrameAttr, GrammarDef, GrammarRule, Item, MatchPattern,
     Pattern, Receiver, Repeat, SelectArm, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
@@ -616,6 +617,19 @@ pub fn emit_program(parsed: &Parsed, build: Build) -> Result<Lowered> {
     Emitter::new(parsed, build, trust.provenance).program()
 }
 
+/// The same, told what this build may read while it builds
+/// ([ADR-072](../../docs/specification/adr/adr-072.md)).
+///
+/// **A second entry point rather than a field on [`Build`]**, for the reason
+/// `beside` is a parameter: `Build` is the machine and the switches, copied
+/// freely, and what a build may read is a fact about the *invocation* with a
+/// lifetime on it. Every caller that has nothing to say passes
+/// [`assets::Reads::none`], which is D1.
+pub fn emit_program_reading(parsed: &Parsed, build: Build, reads: &Reads) -> Result<Lowered> {
+    let trust = crate::contracts::trust::analyse(parsed, &std_ledger());
+    Emitter::new_reading(parsed, build, trust.provenance, reads).program()
+}
+
 /// The same, with the provenance already decided.
 ///
 /// The CLI analyses once and prints the answer under `--trust`; this is what it
@@ -660,7 +674,15 @@ pub fn emit_module_body(
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
 ) -> Result<Lowered> {
-    emit_module_body_at(parsed, &[], build, provenance, contracts, false)
+    emit_module_body_at(
+        parsed,
+        &[],
+        build,
+        provenance,
+        contracts,
+        false,
+        &Reads::none(),
+    )
 }
 
 /// The same, saying whether these items are the crate root's.
@@ -679,8 +701,12 @@ pub fn emit_module_body_at(
     provenance: crate::contracts::Provenance,
     contracts: &crate::contracts::Ledger,
     entry: bool,
+    // **And what it may read**, for the same reason one line up: the check the
+    // emitter runs has to be the check that refused, or the two halves
+    // disagree about one program ([ADR-072](../../docs/specification/adr/adr-072.md)).
+    reads: &Reads,
 ) -> Result<Lowered> {
-    Emitter::with_contracts(parsed, beside, build, provenance, contracts.clone())
+    Emitter::with_contracts(parsed, beside, build, provenance, contracts.clone(), reads)
         .for_entry(entry)
         .items_only()
 }
@@ -1849,8 +1875,19 @@ impl<'a> Flow<'a> {
 
 impl<'p> Emitter<'p> {
     fn new(parsed: &'p Parsed, build: Build, provenance: crate::contracts::Provenance) -> Self {
+        Self::new_reading(parsed, build, provenance, &Reads::none())
+    }
+
+    /// The same, told what this build may read
+    /// ([ADR-072](../../docs/specification/adr/adr-072.md)).
+    fn new_reading(
+        parsed: &'p Parsed,
+        build: Build,
+        provenance: crate::contracts::Provenance,
+        reads: &Reads,
+    ) -> Self {
         let own = crate::contracts::Ledger::infer(parsed);
-        Self::with_contracts(parsed, &[], build, provenance, own)
+        Self::with_contracts(parsed, &[], build, provenance, own, reads)
     }
 
     /// The same, against contracts that already exist - a program's rather than
@@ -1861,6 +1898,7 @@ impl<'p> Emitter<'p> {
         build: Build,
         provenance: crate::contracts::Provenance,
         own_contracts: crate::contracts::Ledger,
+        reads: &Reads,
     ) -> Self {
         let mut grammars = HashMap::new();
         let mut structs = HashSet::new();
@@ -1927,7 +1965,7 @@ impl<'p> Emitter<'p> {
         // `let s = io::lines()` followed by `for line in s`. ADR-028 for the
         // method calls: a receiver's type is the type checker's to know, and
         // there is one type checker (ADR-028).
-        let propagation = crate::check::propagation_against(parsed, beside, &own_contracts);
+        let propagation = crate::check::propagation_against(parsed, beside, &own_contracts, reads);
 
         // ADR-037 D7: which count each `Shared` value gets. Computed over the
         // whole unit, because a count belongs to an allocation and a handle's
@@ -8850,6 +8888,9 @@ pub fn branch_starts_first<'p>(
         build,
         crate::contracts::Provenance::Trusted,
         contracts.clone(),
+        // This asks whether a branch pauses, which no file a build read can
+        // change — so D1's default is the honest answer here.
+        &Reads::none(),
     );
     move |stmt| emitter.branch_pauses(stmt, Flow::PLAIN)
 }

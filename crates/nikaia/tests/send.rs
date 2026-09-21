@@ -126,6 +126,9 @@ fn refused_at(source: &str, user_parallelism: &str) -> Option<String> {
             // …and one file is the whole program here, so a `comptime` has
             // nowhere else to call into.
             beside: &[],
+            // …and no allowlist, so it reads nothing while it builds
+            // (ADR-072 D1).
+            reads: &nikaia::assets::Reads::none(),
         },
         Path::new("app.nika"),
         source,

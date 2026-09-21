@@ -27,6 +27,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::assets::{Denied, Reads, ASSET};
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
 use crate::build_time;
 use crate::contracts::{send, ty, ty::Ty, FieldContract, FnContract, Ledger};
@@ -524,7 +525,15 @@ pub fn check_program(
     library: &Ledger,
     modules: &BTreeSet<String>,
 ) -> Checked {
-    check_against(parsed, &[], own, library, modules, &NewlyThrowing::new())
+    check_against(
+        parsed,
+        &[],
+        own,
+        library,
+        modules,
+        &NewlyThrowing::new(),
+        &Reads::none(),
+    )
 }
 
 /// The same, told what a callee has newly gained since the committed ledger
@@ -546,11 +555,19 @@ pub fn check_against<'a>(
     library: &'a Ledger,
     modules: &BTreeSet<String>,
     newly: &'a NewlyThrowing,
+    // **What this build may read while it builds**
+    // ([ADR-072](../../docs/specification/adr/adr-072.md)). The same shape as
+    // `beside`, and for the same reason: it is a fact about the *build* that no
+    // ledger can carry, and a caller with nothing to say passes
+    // [`assets::Reads::none`], which is D1 — a build given no list reads
+    // nothing.
+    reads: &'a Reads,
 ) -> Checked {
     let mut checker = Checker {
         newly,
         parsed,
         beside,
+        reads,
         said_rings: BTreeSet::new(),
         own,
         library,
@@ -573,6 +590,7 @@ pub fn check_against<'a>(
             })
             .collect(),
         scope: Vec::new(),
+        inside_a_comptime: false,
         at_a_write_door: false,
         set_receiver: None,
         stamped_condition: None,
@@ -972,12 +990,17 @@ pub fn fallible_loops(parsed: &Parsed) -> BTreeSet<usize> {
 /// The same, against contracts the caller already has - which for a program of
 /// several files is the **program's** ledger and not this file's (Part I, 9.1).
 pub fn fallible_loops_against(parsed: &Parsed, own: &Ledger) -> BTreeSet<usize> {
-    propagation_against(parsed, &[], own).loops
+    propagation_against(parsed, &[], own, &Reads::none()).loops
 }
 
 /// Both halves of ADR-023 D8's propagation, against contracts the caller
 /// already has.
-pub fn propagation_against(parsed: &Parsed, beside: &[&Parsed], own: &Ledger) -> Propagation {
+pub fn propagation_against(
+    parsed: &Parsed,
+    beside: &[&Parsed],
+    own: &Ledger,
+    reads: &Reads,
+) -> Propagation {
     let Ok(library) = Ledger::parse(crate::contracts::STD) else {
         return Propagation::default();
     };
@@ -986,6 +1009,10 @@ pub fn propagation_against(parsed: &Parsed, beside: &[&Parsed], own: &Ledger) ->
     // emitter writes is that answer. Handing it fewer files than the check had
     // would make the emitter refuse an item the checker accepted, which is the
     // two halves disagreeing about one program.
+    // **And the same reads**, for the reason `beside` is here: a `comptime`
+    // that reads a file is answered by the checker and what the emitter writes
+    // is that answer, so a walk handed a different allowlist would refuse an
+    // item the check accepted ([ADR-072](../../docs/specification/adr/adr-072.md)).
     let checked = check_against(
         parsed,
         beside,
@@ -993,6 +1020,7 @@ pub fn propagation_against(parsed: &Parsed, beside: &[&Parsed], own: &Ledger) ->
         &library,
         &BTreeSet::new(),
         &NewlyThrowing::new(),
+        reads,
     );
     Propagation {
         loops: checked.fallible_loops,
@@ -1296,6 +1324,9 @@ struct Checker<'a> {
     /// `--input` outside a project. It carries `Parsed` and not just items,
     /// because each one owns the interner its symbols resolve in.
     beside: &'a [&'a Parsed],
+    /// **What this build may read while it builds** (ADR-072), carried beside
+    /// the files for the same reason: no ledger can say it.
+    reads: &'a Reads,
     /// The rings of constants this walk has already reported, by their members.
     ///
     /// Every constant in a ring is circular, and each would report the same
@@ -1320,6 +1351,14 @@ struct Checker<'a> {
     grammars: BTreeMap<String, BTreeSet<String>>,
     /// Names in scope, innermost frame last.
     scope: Vec<Vec<Local>>,
+    /// **Whether the walk is inside a `comptime` initialiser**
+    /// ([ADR-116](../../docs/specification/adr/adr-116.md) D2).
+    ///
+    /// `asset("…")` is the compiler's name for the file a build reads, and it
+    /// stands there and nowhere else. The evaluator answers it where it
+    /// belongs; this says where the ordinary walk must keep quiet, so that two
+    /// walks over one expression do not both have an opinion about one call.
+    inside_a_comptime: bool,
     /// What the function being walked declared it hands back.
     expected: Option<Ty>,
     /// The type parameters in scope where the body being walked stands - the
@@ -6119,6 +6158,15 @@ impl<'a> Checker<'a> {
             if let Some(door) = MultiLock::named(self.parsed.text(*name)) {
                 return self.locks(door, args, span);
             }
+            // **`asset("…")` stands in a `comptime` initialiser and nowhere
+            // else** ([ADR-116](../../docs/specification/adr/adr-116.md) D2).
+            // The evaluator reads it where it belongs, so anything that reaches
+            // *here* is one written somewhere it does not — and the file a
+            // program reads while it **runs** has a name of its own.
+            if self.parsed.text(*name) == ASSET && !self.inside_a_comptime {
+                self.an_asset_outside_a_comptime(span);
+                return Ty::Unknown;
+            }
         }
         // **`NK2203`**: a free call inside a door's block, to something that
         // takes a lock (ADR-039 D2). `println` is the one every program writes,
@@ -8365,7 +8413,8 @@ impl<'a> Checker<'a> {
                     .clone()
                     .or_else(|| held.constant.map(build_time::Value::Int))
             };
-            build_time::BuildTime::new(self.parsed, self.beside, self.own, &known).evaluate(value)
+            build_time::BuildTime::new(self.parsed, self.beside, self.own, self.reads, &known)
+                .evaluate(value)
         };
         match outcome {
             Ok(value) => (Some(value), false),
@@ -8388,6 +8437,14 @@ impl<'a> Checker<'a> {
             }
             Err(build_time::Refusal::NotHere { what, why, way_out }) => {
                 self.a_build_time_body_that_is_not_here(bound, &what, why, way_out, span);
+                (None, true)
+            }
+            Err(build_time::Refusal::MayNotRead { path, why }) => {
+                self.a_file_this_build_may_not_read(&path, &why, span);
+                (None, true)
+            }
+            Err(build_time::Refusal::PathIsComputed) => {
+                self.a_path_that_is_not_a_literal(span);
                 (None, true)
             }
         }
@@ -9837,6 +9894,133 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// **`NK1175`: a file this build may not read**
+    /// ([ADR-072](../../docs/specification/adr/adr-072.md) D1, D3).
+    ///
+    /// One claim and four reasons. The first is the one a project that never
+    /// intends to read anything still gets, and it costs nothing to keep: with
+    /// no list in effect the whole class is off, so *this build reads nothing
+    /// while building* is what happens rather than something somebody has to
+    /// promise.
+    ///
+    /// Each reason carries the way out that can actually be taken
+    /// ([Part III C.2](../../docs/specification/30-nikaia-tooling.md)), and the
+    /// three namings are why they differ: *add the flag* is not the answer to a
+    /// path missing from the list, and *add the line* is not the answer to a
+    /// build run with the reads switched off.
+    fn a_file_this_build_may_not_read(&mut self, path: &str, why: &Denied, span: &Span) {
+        let (note, way_out) = match why {
+            Denied::NoList => (
+                "a build given no allowlist reads nothing while it builds (ADR-072 D1), and \
+                 that is the default rather than a mode: *this build reads nothing* is what \
+                 happens when nothing is passed, not a claim somebody keeps true"
+                    .to_string(),
+                "pass `--allow-read-from-list=<file>`, and name this path in that file".to_string(),
+            ),
+            Denied::NotListed { list } => (
+                format!(
+                    "a file is named in three places and a read missing any of them is \
+                     refused (ADR-072 D3): the flag says a list is in effect, the list says \
+                     which files, and the literal says which one this line reads. `{list}` \
+                     does not name `{path}`"
+                ),
+                format!("write `{path}` on a line of `{list}`"),
+            ),
+            Denied::OutsideTheRoot => (
+                "a build reads under the project root and nowhere else, and this path \
+                 leaves it - it is absolute, or it climbs with `..`. The check is on the \
+                 literal rather than on where a symlink points, because what a reader can \
+                 decide by looking at the line is the property the three namings buy \
+                 (ADR-072 D4)"
+                    .to_string(),
+                "write the path relative to the project root".to_string(),
+            ),
+            Denied::Unreadable { because } => (
+                format!(
+                    "the allowlist names `{path}` and this build could not read it: \
+                     {because}"
+                ),
+                "add the file, or take the line out of the allowlist".to_string(),
+            ),
+            Denied::NotText => (
+                format!(
+                    "`{path}` was read and is not text. What crosses from build time to \
+                     run time is a `&str` (ADR-079 D1), so the bytes have to be UTF-8"
+                ),
+                "read a text file here; bytes that are not text have no crossed form yet"
+                    .to_string(),
+            ),
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1175",
+            message: format!("this build may not read `{path}`"),
+            notes: vec![note],
+            help: Some(way_out),
+        });
+    }
+
+    /// **`NK1177`: `asset("…")` written where it cannot stand**
+    /// ([ADR-116](../../docs/specification/adr/adr-116.md) D2).
+    ///
+    /// It is the compiler's name and not `std`'s: it is recognised inside a
+    /// `comptime` initialiser, where the read happens while the program is
+    /// built. Written anywhere else there is nothing to recognise it, and the
+    /// message says what a file read **while the program runs** is called —
+    /// because that is what a reader who wrote it here almost certainly meant.
+    fn an_asset_outside_a_comptime(&mut self, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1177",
+            message: "`asset` reads a file while the program is **built**, and this is not a \
+                      `comptime`"
+                .to_string(),
+            notes: vec![
+                "three words each decide one thing (ADR-116 D2): `comptime` says **when**, \
+                 `asset(\"…\")` says **where the bytes come from**, and the call around it \
+                 says what is done with them. Without the first there is no build-time \
+                 evaluation for the other two to happen in"
+                    .to_string(),
+            ],
+            help: Some(
+                "write `comptime NAME = …` if the bytes belong in the program, or \
+                 `fs::read(…)` to read the file while the program runs"
+                    .to_string(),
+            ),
+        });
+    }
+
+    /// **`NK1176`: a path that is not a literal**
+    /// ([ADR-072](../../docs/specification/adr/adr-072.md) D4).
+    ///
+    /// The cost is real and the record accepts it: a build that wants
+    /// `config/linux.toml` and `config/wasm.toml` writes both, in the code and
+    /// in the list. What it buys is that *named in the code* stays decidable by
+    /// looking at the line — which is the whole of D3, and which a path assembled
+    /// from a constant would quietly take away.
+    fn a_path_that_is_not_a_literal(&mut self, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1176",
+            message: "`asset` takes a written path, and this one is worked out".to_string(),
+            notes: vec![
+                "the allowlist is checked against the **literal** (ADR-072 D4), so a path \
+                 the build computes - even one that folds to text this evaluator can read - \
+                 would make *named in the code* something a reader cannot decide by looking \
+                 at the line"
+                    .to_string(),
+            ],
+            help: Some(
+                "write the path out: two files wanted is two `asset(\"…\")` and two lines \
+                 in the list"
+                    .to_string(),
+            ),
+        });
+    }
+
     /// **`NK1174`: a `with` that names no field**
     /// ([ADR-118](../../docs/specification/adr/adr-118.md) D1).
     ///
@@ -10738,7 +10922,13 @@ impl<'a> Checker<'a> {
         value: &Expr,
         span: &Span,
     ) -> Ty {
+        // **`asset("…")` is a name only here** (ADR-116 D2), so the ordinary
+        // walk's refusal is off while the initialiser is read: the evaluator
+        // answers it, and two walks over one expression must not both have an
+        // opinion about the same call.
+        let outside = std::mem::replace(&mut self.inside_a_comptime, true);
         let found = self.expr(value, span);
+        self.inside_a_comptime = outside;
         let bound = self.parsed.text(name).to_string();
         self.nameable(&bound, span, "a `comptime`");
         let want = ty.as_ref().map(|ty| self.declared(ty, span));

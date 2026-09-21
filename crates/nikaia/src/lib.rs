@@ -3,6 +3,7 @@
 // The compiler front-end as a library, so integration tests (and later other
 // tools) can drive it. The binary in `main.rs` is the CLI on top of this.
 
+pub mod assets;
 pub mod ast;
 pub mod build_time;
 pub mod check;

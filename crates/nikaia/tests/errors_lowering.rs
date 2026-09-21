@@ -633,6 +633,9 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
             // One file is the whole program here, so a `comptime` has
             // nowhere else to call into.
             beside: &[],
+            // …and this build was given no allowlist, so it reads nothing
+            // while it builds (ADR-072 D1).
+            reads: &nikaia::assets::Reads::none(),
         },
         &path,
         source,

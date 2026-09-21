@@ -35,7 +35,7 @@ use crate::contracts::{sync, Ledger, STD};
 use crate::emit::{Build, Target};
 use crate::manifest::{Dependency, Manifest};
 use crate::sysroot::{Codegen, Sysroot};
-use crate::{check, diagnostics, modules, refuse, refused};
+use crate::{assets, check, diagnostics, modules, refuse, refused};
 
 /// The extension a Nikaia source carries, and therefore the argument the
 /// wrapper is looking for in a `rustc` command line.
@@ -55,6 +55,20 @@ const PARALLELISM_VAR: &str = "NIKAIA_USER_PARALLELISM";
 const REENTRANCY_VAR: &str = "NIKAIA_REENTRANCY_CHECK";
 const GEN_DIR_VAR: &str = "NIKAIA_GEN_DIR";
 const NO_CACHE_VAR: &str = "NIKAIA_NO_CACHE";
+
+/// How `--allow-read-from-list` reaches the `rustc` wrapper
+/// ([ADR-072](../../docs/specification/adr/adr-072.md) D2, D6).
+///
+/// The wrapper is a **second process**, started by Cargo, and it lowers the
+/// same file a second time — so it has to be told the same list or the two
+/// halves would disagree about which files this build may read. The value is
+/// an absolute path, because the wrapper runs in a directory Cargo chose.
+///
+/// **And it is how D6 holds.** Every member of the workspace is lowered under
+/// one environment, so a dependency's `asset("…")` is checked against the list
+/// of the build that is running rather than against anything the dependency
+/// ships.
+const READS_VAR: &str = "NIKAIA_ALLOW_READ_FROM_LIST";
 
 /// A file the wrapper appends one line to per `rustc` it is handed: the crate
 /// Cargo named, and whether this compiler lowered it or passed it through.
@@ -530,13 +544,41 @@ pub fn lower(
     no_cache: bool,
     packages: &[modules::Dependency],
 ) -> Result<Lowered> {
+    lower_reading(input, settings, no_cache, packages, None)
+}
+
+/// The same, told which allowlist is in effect
+/// ([ADR-072](../../docs/specification/adr/adr-072.md) D2).
+///
+/// `None` is D1, and D1 is what every caller that does not pass the flag gets:
+/// a build given no list reads nothing while it builds.
+pub fn lower_reading(
+    input: &Path,
+    settings: &Settings,
+    no_cache: bool,
+    packages: &[modules::Dependency],
+    allowlist: Option<&Path>,
+) -> Result<Lowered> {
     // `Layout` decides where the lock and the store go, and guarantees that
     // outside a `nikaia.toml` project nothing is written into the source tree.
     // It also names the unit relative to its root: an absolute path is D7's
     // first failure direction, a key that moves with the checkout.
     let layout = Layout::resolve(input);
     let unit = layout.unit_name(input);
-    let choices = settings.choices();
+    // **What this build may read, resolved before anything is read**
+    // ([ADR-072](../../docs/specification/adr/adr-072.md) D1, D2). A list that
+    // cannot be read fails the build on its own account: a flag that names a
+    // file and is quietly treated as *no list* would turn a build that meant
+    // to read into one that says a path is not named, which is the wrong
+    // sentence about the wrong thing.
+    let reads = match allowlist {
+        Some(list) => assets::Reads::with(&layout.root, assets::Allowlist::read(list)?),
+        None => assets::Reads::none(),
+    };
+    let choices = match reads.list_digest() {
+        Some(digest) => settings.choices().reading(digest),
+        None => settings.choices(),
+    };
 
     // A cache that cannot be opened is a slower build, never a failed one
     // (D12).
@@ -614,6 +656,7 @@ pub fn lower(
                 foreign: &foreign,
                 newly: &newly,
                 beside: &beside,
+                reads: &reads,
             };
             for unit in &program.units {
                 check(
@@ -627,19 +670,30 @@ pub fn lower(
                 )?;
             }
 
-            let lowered = program.emit(settings.build)?;
+            let lowered = program.emit_reading(settings.build, &reads)?;
             let ledger = program.contracts.render();
 
+            // **An entry nothing read** ([ADR-072](../../docs/specification/adr/adr-072.md)
+            // D8): a list that may hold names nothing uses decays into
+            // *everything we ever needed*, which is how an allowlist stops
+            // being read. Said at the end of the build, where the whole set is
+            // known, and a warning rather than a refusal — the line is a
+            // permission that is no longer used, not a program that is wrong.
+            for entry in reads.unused() {
+                eprintln!(
+                    "warning: the allowlist names `{entry}` and nothing read it (ADR-072 D8)"
+                );
+            }
+
             if let Some(cache) = &mut cache {
-                // Nothing reports assets yet: compile-time I/O
-                // (`from "schema.sql"`) is specified and not implemented. The
-                // dimension travels through the key regardless, so switching it
-                // on later does not reshape the key.
+                // **What the build actually read** (ADR-021 D13, ADR-072 D7).
+                // An empty map is correct and usual: with no list in effect
+                // nothing can be read at all.
                 let artifacts = Artifacts::new()
                     .with(RUST, &lowered.rust)
                     .with(CONTRACTS, &ledger);
                 let stored = cache
-                    .record(&unit, &key_source, BTreeMap::new(), &choices, &artifacts)
+                    .record(&unit, &key_source, reads.taken(), &choices, &artifacts)
                     .and_then(|()| cache.save());
                 if let Err(error) = stored {
                     // The outputs are in hand; only the next build is slower.
@@ -867,6 +921,15 @@ fn description_at(root: &Path, name: &str) -> Option<Ledger> {
 pub struct Around<'a> {
     pub foreign: &'a Foreign,
     pub newly: &'a check::NewlyThrowing,
+    /// **What this build may read while it builds**
+    /// ([ADR-072](../../docs/specification/adr/adr-072.md)).
+    ///
+    /// The fourth fact, and it belongs beside the other three for the reason
+    /// the doc above gives: it is about the *build* rather than about a file,
+    /// no ledger can carry it, and it binds the whole build — a dependency's
+    /// `asset("…")` is checked against the list of the build that is running,
+    /// never against anything the dependency ships (D6).
+    pub reads: &'a crate::assets::Reads,
     /// **Every file of the program being built.**
     ///
     /// The third fact this carries, and the one that had to be a `Parsed`
@@ -890,6 +953,7 @@ pub fn check(
         foreign,
         newly,
         beside,
+        reads,
     } = around;
     let library = foreign.library()?;
 
@@ -897,7 +961,8 @@ pub fn check(
     // `modules` is: a set of words that appear in front of a `::` and are not
     // `std`'s ([`Foreign::packages`]).
     let modules = foreign.packages(modules);
-    let mut all = check::check_against(parsed, beside, own, &library, &modules, newly).findings;
+    let mut all =
+        check::check_against(parsed, beside, own, &library, &modules, newly, reads).findings;
     // A separate walk, for the reason the three inside `check_program` are
     // separate: it asks about the **boundary** of the build rather than about a
     // type, and it needs the manifest rather than a ledger.
@@ -1616,6 +1681,7 @@ impl Project {
     /// where it is what `rustc` is actually handed. Both go through [`lower`]
     /// and the second is a cache hit, so the work is done once even though the
     /// decision is made in two places.
+    #[allow(clippy::too_many_arguments)]
     pub fn drive(
         &self,
         subcommand: &str,
@@ -1623,6 +1689,8 @@ impl Project {
         no_cache: bool,
         locked: bool,
         want: Explain,
+        // **The list this build reads under** (ADR-072 D2), or `None` for D1.
+        allowlist: Option<&Path>,
     ) -> Result<i32> {
         let entry = self.entry();
         if !entry.is_file() {
@@ -1668,11 +1736,12 @@ impl Project {
         let mut rust: Vec<Option<String>> = vec![None; members.len()];
         for at in order {
             let member = &members[at];
-            let lowered = lower(
+            let lowered = lower_reading(
                 &member.entry,
                 &self.settings,
                 no_cache,
                 &member.dependencies,
+                allowlist,
             )?;
             // **Each package's ledger in that package's own root**
             // (Part III 13.5, ADR-100 D1): written here so the consumers
@@ -1722,6 +1791,13 @@ impl Project {
         env.push((GEN_DIR_VAR.to_string(), self.gen_dir().into_os_string()));
         if no_cache {
             env.push((NO_CACHE_VAR.to_string(), OsString::from("1")));
+        }
+        // **Absolute**, because the wrapper runs in a directory Cargo chose.
+        if let Some(list) = allowlist {
+            let list = list
+                .canonicalize()
+                .with_context(|| format!("reading the allowlist `{}`", list.display()))?;
+            env.push((READS_VAR.to_string(), list.into_os_string()));
         }
 
         let cargo = Cargo {
@@ -2044,11 +2120,13 @@ pub fn wrapper_main() -> Result<i32> {
         Some(root) => packages_of(&manifest, root, false)?,
         None => Vec::new(),
     };
-    let lowered = lower(
+    let allowlist = std::env::var_os(READS_VAR).map(PathBuf::from);
+    let lowered = lower_reading(
         &source,
         &settings,
         std::env::var_os(NO_CACHE_VAR).is_some(),
         &packages,
+        allowlist.as_deref(),
     )?;
 
     let name = invocation.crate_name.clone().unwrap_or_else(|| {

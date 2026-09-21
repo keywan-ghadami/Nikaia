@@ -22,6 +22,7 @@
 
 use std::collections::BTreeSet;
 
+use nikaia::assets::Reads;
 use nikaia::check::{self, Finding, NewlyThrowing};
 use nikaia::contracts::{Ledger, STD};
 use nikaia::parser::parse_to_ast;
@@ -39,7 +40,17 @@ fn findings(source: &str, newly: &[(&str, &[&str])]) -> Vec<Finding> {
             )
         })
         .collect();
-    check::check_against(&parsed, &[], &own, &library, &BTreeSet::new(), &newly).findings
+    check::check_against(
+        &parsed,
+        &[],
+        &own,
+        &library,
+        &BTreeSet::new(),
+        &newly,
+        // No allowlist: a build given none reads nothing (ADR-072 D1).
+        &Reads::none(),
+    )
+    .findings
 }
 
 const HANDLED: &str = "use std::io\n\n\
@@ -186,6 +197,7 @@ fn no_handler_in_the_repository_is_noted_without_a_change() {
             &library,
             &BTreeSet::new(),
             &NewlyThrowing::new(),
+            &Reads::none(),
         )
         .findings;
         assert!(

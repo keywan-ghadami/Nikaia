@@ -710,18 +710,17 @@ emits Rust and already drives Cargo, so the machinery is not new.
 do. Running a generated parser is covered by the same rule as any other
 build-time call.
 
-*And what stood in front of it is gone, measured at 0.0.109.*
-[ADR-072](specification/adr/adr-072.md) says *built: no* and gives the reason as
-*`const` has no syntax, so there is nothing to check yet*; `comptime` has had
-syntax at item level and inside a body since
-[ADR-097](specification/adr/adr-097.md), and that record's own *order this
-implies* — `const` first, then this check, and
-[ADR-026](specification/adr/adr-026.md) Q4's evaluation rules alongside — is
-satisfied on both counts, Q4 being [ADR-075](specification/adr/adr-075.md). So
+*And what stood in front of it is gone, and the front door is built.*
+[ADR-072](specification/adr/adr-072.md) said *built: no* because *`const` has no
+syntax, so there is nothing to check yet*; the order that record implied has
+been walked — `comptime` since [ADR-097](specification/adr/adr-097.md), Q4's
+evaluation rules as [ADR-075](specification/adr/adr-075.md)'s two ledger
+columns, the evaluator at 0.0.108 to 0.0.120 — and at 0.0.123 the check landed
+with `asset("…")` under it. `comptime CONFIG: &str = asset("config.txt")` is a
+`const` holding the file's text, under a list named in three places. So
 [ADR-026](specification/adr/adr-026.md) is down to one open thing, what bounds a
-build-time body's **memory**, and this is work rather than a design space. What
-is missing at the front is one rule: `comptime PORT: i64 = Cfg::value(from "port.txt")`
-is a parse error at the `from`.
+build-time body's **memory**, and what this entry needs is no longer a rule at
+the front: it is the second compilation itself.
 
 *What it unblocks:* `comptime CONFIG = Config.value(from "config.toml")` — the
 case [ADR-082](specification/adr/adr-082.md) rewrote the syntax for and
@@ -1151,29 +1150,6 @@ envelope — was answered **A**: a body that joins puts one on.
 that joins an error from **below** Nikaia, which has no envelope at all, is
 dropped. That is the boxed channel's downcast finding nothing, and it is the
 price of the box.
-
-### 2.26. A file a build reads is `asset("…")`
-
-[ADR-116](specification/adr/adr-116.md) D2. **D1 and D3 are built**: `from` is
-an ordinary name, so Part III 17.1's `pub fn rename(from: Path, to: Path, …)`
-parses as the page writes it, and the removed `dsl X from e` keeps its sentence
-from the grammar's token rather than from the reserved list.
-
-*Evidence:* Part II 10.6's `Json::value(asset("config.json"))` parses and is
-refused as `NK1117` and `NK1127` — the page ahead of the compiler, in this
-language's words, where the old spelling was a parse fragment.
-
-*What is left, and what it waits on.* `asset("…")` is a call the compiler
-recognises in a `comptime` initialiser: the argument is a string literal and may
-not be computed, the path is under the project root, and the literal is what the
-allowlist is checked against. The stage it waited on **has arrived** —
-[ADR-073](specification/adr/adr-073.md) D5's second stage is built — so what
-stands in front of it now is [ADR-072](specification/adr/adr-072.md) §4's
-**allowlist**, because D2 says every rule that record states holds unchanged and
-*a build given no allowlist reads nothing* is the first of them. An `asset`
-without it would read a file no committed line named, which is the one direction
-that record exists to prevent. The two `fs` entries wait on
-[ADR-108](specification/adr/adr-108.md)'s root, which is §2.20's.
 
 ### 2.28. A target without an operating system
 

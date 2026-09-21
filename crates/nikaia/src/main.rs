@@ -130,6 +130,23 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub tethers: bool,
 
+    /// The file that names the files this build may read while it builds
+    /// ([ADR-072](../../../docs/specification/adr/adr-072.md) D2).
+    ///
+    /// **Without it a build reads nothing** (D1), and that is the whole of why
+    /// the default is worth having: *this build reads nothing while building*
+    /// is what happens when nothing is passed, rather than a claim somebody has
+    /// to make, keep true, and be believed about.
+    ///
+    /// One path per line, `#` begins a comment. A file has to be named in all
+    /// three places — this flag, that list, and the `asset("…")` literal — and
+    /// they are deliberately not derivable from one another (D3). Two of the
+    /// three are committed, so a change to either is a diff in review; this one
+    /// is not, which is what lets a build run with the reads switched off
+    /// without editing anything.
+    #[arg(long, global = true, value_name = "FILE")]
+    pub allow_read_from_list: Option<PathBuf>,
+
     /// Print where this program's bytes came from and which hash its maps got
     /// (ADR-010 D7).
     ///
@@ -278,7 +295,13 @@ fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Re
 
     // No packages: `--input` is one file outside a project (ADR-047 D1), and a
     // dependency is declared in a manifest there is none of.
-    let lowered = project::lower(input, settings, args.no_cache, &[])?;
+    let lowered = project::lower_reading(
+        input,
+        settings,
+        args.no_cache,
+        &[],
+        args.allow_read_from_list.as_deref(),
+    )?;
     std::fs::write(&output_path, &lowered.rust)?;
 
     // The ledger goes beside the output, because that is where a build puts
@@ -421,6 +444,7 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
             tethers: args.tethers,
             trust: args.trust,
         },
+        args.allow_read_from_list.as_deref(),
     )
 }
 
