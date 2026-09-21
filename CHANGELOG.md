@@ -4,6 +4,29 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.128] — 2026-09-21
+
+**A fixed table holds a declared type, as a view of one** —
+[ADR-180](docs/specification/adr/adr-180.md), answering the second of the two
+questions 0.0.125 put on [`open-decisions.md`](docs/open-decisions.md). That
+page is empty of build-time questions now.
+
+### The message was the wrong claim, and the feature was one line away
+
+- **`comptime PAIRS: Fixed[&str, Row] = [("x", Row { a: 1 }), …]` was `NK1127`** — *this compiler cannot evaluate it* — for a value that evaluated perfectly well. Every part of it crosses on its own: a `Row` is a `const` ([ADR-079](docs/specification/adr/adr-079.md) D1) and a table of `&str` keys is one ([ADR-176](docs/specification/adr/adr-176.md)). Only the combination did not.
+- **What stood in the way is `get`'s shape, and it is 0.0.118's own correction.** `Fixed<V>::get` hands back `Option<V> where V: Copy`, because `Option<&V>` put a `&&str` in the generated file for a table of text and `??` over one is ambiguous between two `Or` impls. A Nikaia `struct` derives `Clone` and `Debug` and not `Copy`.
+- **A reference to one *is* `Copy`.** So the table holds `&'static Row` and nothing about `Fixed::get` changes: the ledger still promises `-> $V?`, and what the program reads is a **view** of the row — the only thing a table living in the binary could ever have handed it. An `enum` is the same case.
+
+### `Copy` is not derived, and that is the option not taken
+
+- **It would make a struct's copyability a consequence of its fields, one file away**: adding a `String` field would silently remove a type from every `Fixed` that held it — and from the *moves* elsewhere that had quietly become copies.
+- **And it would quiet a check.** A value used after a move is refused today; a `Copy` struct is not moved at all, so the refusal [ADR-118](docs/specification/adr/adr-118.md) D3 leans on would go silent for a whole class of types. [ADR-008](docs/specification/adr/adr-008.md) D5 and [ADR-107](docs/specification/adr/adr-107.md) D3 both say a copy is **written** and never inserted, and a derive is an insertion the source cannot see.
+
+### And the table opened a second door onto an old hole
+
+- **A row holding a `Vec` lowered.** `Fixed[&str, Bad]` whose `Bad` declares `Vec[i64]` reached `rustc` as *expected `Vec<i64>`, found `[{integer}; 2]`* about the generated file — [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class, and the same hole the `enum` had at 0.0.125 one shape over. The walk that asks what a `const` cannot hold now reaches a **pair**, which is what a table's rows are, so it is `NK1167` naming the field.
+- **The rows are spelled against their declarations**, so a `&[T]` inside one gets its `&` ([ADR-179](docs/specification/adr/adr-179.md) D2) and an `Array[T, N]` does not. That is the one place this package and the last meet, and the test runs it.
+
 ## [0.0.127] — 2026-09-21
 
 **`&[T]` is a type of this language** — [ADR-179](docs/specification/adr/adr-179.md),

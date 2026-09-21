@@ -8650,15 +8650,31 @@ impl<'a> Checker<'a> {
         };
         // **Text keys, and the rest by name** (D5). A number wants a dense
         // array, which is a different table and a different measurement.
-        let value_below = match args.as_slice() {
+        let (held, value_below, borrow) = match args.as_slice() {
             [Ty::Named {
                 name, view: true, ..
             }, value]
                 if name == "str" =>
             {
                 match rust_constant_type(value) {
-                    Some(below) => below,
-                    None => return (None, false),
+                    Some(below) => (value, below, ""),
+                    // **A `struct` or an `enum` this program declares is held
+                    // as a *view* of one** ([ADR-180](../../docs/specification/adr/adr-180.md)
+                    // D1). `Fixed::get` hands back a **value**, which is what
+                    // the ledger promises and what `ROUTES.get(k) ?? 0` means,
+                    // and it needs that value to be `Copy` — 0.0.118's own
+                    // correction, made because `Option<&V>` put a `&&str` in
+                    // the generated file and `??` over one is ambiguous.
+                    //
+                    // A Nikaia `struct` is not `Copy` and **a reference to one
+                    // is**, so the table holds `&'static Row` and nothing about
+                    // `get` changes. What the program reads is a view of the
+                    // row, which is what a `const` of a table could ever have
+                    // handed it.
+                    None => match self.declared_below(value) {
+                        Some(below) => (value, format!("&'static {below}"), "&"),
+                        None => return (None, false),
+                    },
                 }
             }
             [key, _] => {
@@ -8687,10 +8703,14 @@ impl<'a> Checker<'a> {
                 return (None, true);
             }
             keys.push(key.clone());
-            let Some(value) = rust_value(value) else {
+            // **Written against the declaration**, so a `&[T]` inside a row
+            // gets its `&` ([ADR-179](../../docs/specification/adr/adr-179.md)
+            // D2) - and the table's own `&` goes in front, where the value is
+            // a declared type.
+            let Some(value) = self.written_below(value, Some(held)) else {
                 return (None, false);
             };
-            values.push(value);
+            values.push(format!("{borrow}{value}"));
         }
 
         let Some(table) = crate::fixed::build(&keys) else {
@@ -9629,6 +9649,16 @@ impl<'a> Checker<'a> {
                 .or_else(|| payload.iter().find_map(|held| self.unwritable_in(held))),
             build_time::Value::List(items) => {
                 items.iter().find_map(|held| self.unwritable_in(held))
+            }
+            // **A pair, which is what a table's rows are**
+            // ([ADR-176](../../docs/specification/adr/adr-176.md) D1). Without
+            // this a `Fixed[&str, Bad]` whose `Bad` holds a `Vec` lowered and
+            // `rustc` answered about the generated file — the same hole the
+            // `enum` had one shape over, and it opened the moment a table
+            // learned to hold a declared type
+            // ([ADR-180](../../docs/specification/adr/adr-180.md) D1).
+            build_time::Value::Tuple(parts) => {
+                parts.iter().find_map(|held| self.unwritable_in(held))
             }
             _ => None,
         }

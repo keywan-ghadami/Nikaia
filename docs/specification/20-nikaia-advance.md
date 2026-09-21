@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.127 (Draft)
+**Version:** 0.0.128 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -145,7 +145,11 @@ comptime ROUTES: Fixed[&str, i64] = [("get", 1), ("post", 2)]
 `Fixed[&str, V]` is the fixed map, a type in `std`. `ROUTES.get(k)` is a `V?`.
 Keys are text; a key of any other type is refused with `NK1170`, and a key
 written twice with `NK1169` — a table has one value per key, and there is no
-meaning a compiler may pick between. A list of text crosses as an array of
+meaning a compiler may pick between. **A value may be a `struct` or an `enum`
+this program declares**, and what the program then reads is a **view** of the
+row ([ADR-180](adr/adr-180.md) D1): the row lives in the binary, so there is
+nothing to copy it out of. `TABLE.get(k)?.field ?? …` is how a field of one is
+reached, which is what a `T?` asks for anywhere (2.3). A list of text crosses as an array of
 views, `[&str; N]`, which is the same rule read over both shapes at once.
 
 **Reading a file while the program is built** ([ADR-072](adr/adr-072.md)). A

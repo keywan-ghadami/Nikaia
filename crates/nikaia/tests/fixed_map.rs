@@ -272,3 +272,82 @@ fn the_compiler_and_the_library_hash_the_same_bytes() {
 fn the_threshold_is_twelve() {
     assert_eq!(nikaia::fixed::HASHED_FROM, 12);
 }
+
+/// **A table may hold a `struct`, as a view of one**
+/// ([ADR-180](../../../docs/specification/adr/adr-180.md) D1).
+///
+/// It was `NK1127` — *this compiler cannot evaluate it* — for a value that
+/// evaluated perfectly well: every part of it crosses on its own, and only the
+/// combination did not. What stood in the way is `get`'s shape, which hands
+/// back a **value** and needs that value to be `Copy` (0.0.118's own
+/// correction). A Nikaia `struct` is not, and **a reference to one is** — so
+/// the table holds `&'static Row` and nothing about `get` changes.
+///
+/// **The row is read through `?.`**, which is what a `T?` already asks for
+/// (Part I 2.3), and a `&[&str]` inside it gets its `&` from
+/// [ADR-179](../../../docs/specification/adr/adr-179.md) D2 — this is the one
+/// place the two records meet.
+#[test]
+fn a_table_holds_a_declared_type_and_the_program_reads_it() {
+    let source = "struct Row { a: i64, tags: &[&str] }\n\
+                  enum Shade { Odd, Even }\n\
+                  \n\
+                  comptime TABLE: Fixed[&str, Row] = [\n\
+                  \x20   (\"x\", Row { a: 1, tags: [\"one\", \"uno\"] }),\n\
+                  \x20   (\"y\", Row { a: 2, tags: [\"two\"] }),\n\
+                  ]\n\
+                  comptime SHADES: Fixed[&str, Shade] = [(\"a\", Shade::Odd), (\"b\", Shade::Even)]\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   println(f\"{TABLE.get(\\\"y\\\")?.a ?? 0}\")\n\
+                  \x20   println(f\"{TABLE.get(\\\"x\\\")?.tags?.len() ?? 0}\")\n\
+                  \x20   println(f\"{TABLE.get(\\\"zz\\\")?.a ?? -1}\")\n\
+                  \x20   println(f\"{SHADES.len()}\")\n\
+                  }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lower(source);
+    // **A view of the row**, and the `&` in front of each one.
+    assert!(
+        rust.contains(
+            "const TABLE: Fixed<&'static Row> = Fixed::new(0, &[], &[\"x\", \"y\"], &[&Row {"
+        ),
+        "{rust}"
+    );
+    assert!(
+        rust.contains("tags: &[\"one\", \"uno\"]"),
+        "the run inside the row is a view too: {rust}"
+    );
+    assert!(
+        rust.contains("const SHADES: Fixed<&'static Shade>"),
+        "an `enum` is the same case: {rust}"
+    );
+
+    assert_eq!(run("a table of rows", source), "2\n2\n-1\n2\n");
+}
+
+/// …and **a part of a row the language below cannot write is still `NK1167`**
+/// ([ADR-180](../../../docs/specification/adr/adr-180.md) D3).
+///
+/// The table opened a second door to the same place: a row holding a `Vec`
+/// lowered and `rustc` answered *expected `Vec<i64>`, found `[{integer}; 2]`*
+/// about the generated file, which is
+/// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md)'s class.
+/// The walk that asks the question now reaches a **pair**, which is what a
+/// table's rows are.
+#[test]
+fn a_row_that_owns_memory_is_refused_by_name() {
+    let found = findings(
+        "struct Bad { items: Vec[i64] }\n\
+         \n\
+         comptime T: Fixed[&str, Bad] = [(\"x\", Bad { items: [1, 2] })]\n\
+         \n\
+         fn main() { println(f\"{T.len()}\") }\n",
+    );
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1167");
+    assert!(
+        found[0].message.contains("`items` is declared `Vec[i64]`"),
+        "{}",
+        found[0].message
+    );
+}
