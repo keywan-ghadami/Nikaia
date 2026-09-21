@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.129 (Draft)
+**Version:** 0.0.130 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -247,8 +247,10 @@ error: `println` cannot format a `Vec[u8]`
 ```
 
 **What cannot be read is printed** (D6). `nikaia --comptime` prints what was
-unrolled, for the types actually used, as `--overlaps`, `--sharing` and `--trust`
-print their own analyses. There is no syntax for it.
+unrolled, for the types actually used, as `--overlaps`, `--sharing`,
+`--tethers` and `--trust` print their own analyses. There is no syntax for it.
+A function that walks a shape and is **never called** has a line of its own,
+because no copy is written for it and nothing else says it exists.
 
 `macro`, `quote` and `with` are **reserved words and not constructs**
 ([ADR-088](adr/adr-088.md) D7). A program may not use them as names. The macro
@@ -272,11 +274,15 @@ system built out of the three is withdrawn ([ADR-088](adr/adr-088.md)).
 > message carries the field it came from; a member a reflected field does not
 > have is `NK1180`.
 >
-> **`T::variants` is not built** and is `NK1171`, whose sentence says which half
-> is which: an `enum`'s shape is a different value, because a variant carries a
-> payload where a field carries a type. Nor is D6's `--comptime`, which is the
-> same information the diagnostic carries offered on demand. `macro`, `quote`
-> and `with` are reserved ([ADR-088](adr/adr-088.md) §5).
+> **D6's `--comptime` is built since 0.0.130**, printed once for the program
+> because an unrolling is a fact about a **call** — and a call may stand in a
+> different file from the function it names, which is the same reason the
+> unrolling itself reaches across the files of a package (Part I 9.1).
+> **`T::variants` is not built** and is
+> `NK1171`, whose sentence says which half is which: an `enum`'s shape is a
+> different value, because a variant carries a payload where a field carries a
+> type. `macro`, `quote` and `with` are reserved
+> ([ADR-088](adr/adr-088.md) §5).
 
 Capturing an *expression* as a tree, `u.age > 18` for a provider to translate,
 is not part of the language. A query is written in the database's own SQL and

@@ -1360,11 +1360,14 @@ pub struct Explain {
     /// inspection rather than assertion.
     pub tethers: bool,
     pub trust: bool,
+    /// [ADR-088](../../docs/specification/adr/adr-088.md) D6's report: what a
+    /// `T::fields` loop was unrolled to, for the types actually used.
+    pub comptime: bool,
 }
 
 impl Explain {
     pub fn asked(&self) -> bool {
-        self.overlaps || self.sharing || self.tethers || self.trust
+        self.overlaps || self.sharing || self.tethers || self.trust || self.comptime
     }
 }
 
@@ -1384,6 +1387,29 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
     }
     let library = Ledger::parse(STD).context("std's shipped ledger")?;
     let several = program.units.len() > 1;
+
+    // **Once for the program and not once per file**
+    // ([ADR-181](../../docs/specification/adr/adr-181.md) D5), which is the
+    // difference from the four reports below: an unrolling is a fact about a
+    // **call**, and the call may stand in a different file from the function it
+    // names. Printing it per unit would print each one as many times as the
+    // program has files.
+    if want.comptime {
+        let beside: Vec<&crate::parser::Parsed> =
+            program.units.iter().map(|unit| &unit.parsed).collect();
+        // **`Reads::none()`**, because what is reported is which types a
+        // function was **used with**, and no file a build reads changes that.
+        // Handing it a real allowlist would run a grammar to answer a question
+        // about call sites ([ADR-177](../../docs/specification/adr/adr-177.md)).
+        print!(
+            "{}",
+            crate::check::unrolling_report(
+                &beside,
+                &program.contracts,
+                &crate::assets::Reads::none(),
+            )
+        );
+    }
 
     for unit in &program.units {
         if several {

@@ -130,6 +130,22 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub tethers: bool,
 
+    /// Print what a `T::fields` loop was unrolled to, for the types actually
+    /// used ([ADR-088](../../../docs/specification/adr/adr-088.md) D6,
+    /// [ADR-181](../../../docs/specification/adr/adr-181.md)).
+    ///
+    /// **The one readability problem every build-time system shares** is that
+    /// you cannot see what a function becomes for a given type without
+    /// unrolling it in your head. The usual answer is to invent syntax; this
+    /// project already has the other one, and `--overlaps`, `--sharing`,
+    /// `--tethers` and `--trust` are it. So this is the same information
+    /// [ADR-181](../../../docs/specification/adr/adr-181.md) D3's diagnostic
+    /// carries, offered **on demand instead of on failure** (D5).
+    ///
+    /// Like the other four, it explains a decision rather than changing one.
+    #[arg(long, global = true)]
+    pub comptime: bool,
+
     /// The file that names the files this build may read while it builds
     /// ([ADR-072](../../../docs/specification/adr/adr-072.md) D2).
     ///
@@ -290,6 +306,7 @@ fn lower_to_rust(input: &std::path::Path, args: &Cli, settings: &Settings) -> Re
             sharing: args.sharing,
             tethers: args.tethers,
             trust: args.trust,
+            comptime: args.comptime,
         },
     )?;
 
@@ -443,6 +460,7 @@ fn project_command(args: &Cli, command: &Command) -> Result<i32> {
             sharing: args.sharing,
             tethers: args.tethers,
             trust: args.trust,
+            comptime: args.comptime,
         },
         args.allow_read_from_list.as_deref(),
     )

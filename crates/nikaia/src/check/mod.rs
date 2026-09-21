@@ -592,6 +592,52 @@ pub fn check_against<'a>(
     // nothing.
     reads: &'a Reads,
 ) -> Checked {
+    walked(parsed, beside, own, library, modules, newly, reads, false)
+}
+
+/// **Which types the program's other files called this unit's shape walks
+/// with** ([ADR-181](../../docs/specification/adr/adr-181.md) D2).
+///
+/// A walk of `parsed` that stops as soon as the calls have been typed: nothing
+/// past the item walk is read, so none of the separate passes below run and no
+/// finding is kept. What comes back is one file's contribution to a question
+/// about the whole program.
+fn instantiations_in<'a>(
+    parsed: &'a Parsed,
+    beside: &'a [&'a Parsed],
+    own: &'a Ledger,
+    library: &'a Ledger,
+    // **The same module names the asking unit was checked with**, because a
+    // name this walk cannot resolve is a call whose argument it cannot type -
+    // and an instantiation it misses is a copy nobody writes.
+    modules: &BTreeSet<String>,
+    reads: &'a Reads,
+) -> BTreeMap<(String, String), Vec<FieldContract>> {
+    walked(
+        parsed,
+        beside,
+        own,
+        library,
+        modules,
+        &NewlyThrowing::new(),
+        reads,
+        true,
+    )
+    .unrolled
+}
+
+/// The walk both entry points above share.
+#[allow(clippy::too_many_arguments)]
+fn walked<'a>(
+    parsed: &'a Parsed,
+    beside: &'a [&'a Parsed],
+    own: &'a Ledger,
+    library: &'a Ledger,
+    modules: &BTreeSet<String>,
+    newly: &'a NewlyThrowing,
+    reads: &'a Reads,
+    harvesting: bool,
+) -> Checked {
     let mut checker = Checker {
         newly,
         parsed,
@@ -605,6 +651,7 @@ pub fn check_against<'a>(
         variant_owner: BTreeMap::new(),
         walks_fields: BTreeMap::new(),
         unrolling: None,
+        harvesting,
         grammars: parsed
             .program
             .items
@@ -706,6 +753,16 @@ pub fn check_against<'a>(
     };
     checker.collect_types();
     checker.program();
+    // **Only the call sites were wanted**, and everything below this line
+    // answers a different question at a cost the asking unit has already paid
+    // for itself (ADR-181 D2).
+    if harvesting {
+        return checker.checked;
+    }
+    // **The calls that stand in the program's other files**, before the turns
+    // are walked, because a copy is written by the unit that declares the
+    // function and decided at the call - which may be a file away (Part I 9.1).
+    checker.instantiations_beside();
     // **And once more per unrolled turn** (ADR-088 D5, ADR-181 D2), which the
     // walk above is what found: a call may stand above the function it names.
     checker.unroll();
@@ -1033,6 +1090,70 @@ pub fn fallible_loops(parsed: &Parsed) -> BTreeSet<usize> {
 /// several files is the **program's** ledger and not this file's (Part I, 9.1).
 pub fn fallible_loops_against(parsed: &Parsed, own: &Ledger) -> BTreeSet<usize> {
     propagation_against(parsed, &[], own, &Reads::none()).loops
+}
+
+/// **What a `T::fields` loop was unrolled to, for the types actually used**
+/// ([ADR-088](../../docs/specification/adr/adr-088.md) D6, built as
+/// [ADR-181](../../docs/specification/adr/adr-181.md) D5's `--comptime`).
+///
+/// Every build-time system shares one readability problem: you cannot see what
+/// a function becomes for a given type without unrolling it in your head. The
+/// usual answer is to invent syntax; this project already has the other one,
+/// and `--overlaps`, `--sharing`, `--tethers` and `--trust` are it. So this is
+/// the **same information** [ADR-181](../../docs/specification/adr/adr-181.md)
+/// D3's diagnostic carries, offered on demand instead of on failure.
+///
+/// **A function that walks a shape and was never called is printed too**, with
+/// its own line. It is the one thing a reader could not otherwise find out: no
+/// copy is emitted for it at all, so nothing in the generated file says it
+/// exists.
+///
+/// The whole program at once, because an instantiation is a fact about a
+/// **call** and a call may stand in a different file from the function it names.
+pub fn unrolling_report(beside: &[&Parsed], own: &Ledger, reads: &Reads) -> String {
+    // **Every unit and not just the first**, because the two halves of one
+    // line may stand in three different files: the function is declared in
+    // one, called from a second, and the report is asked for by a build that
+    // has a third. A report built from one file would say *nothing calls it*
+    // about a function called twice.
+    let mut walks_fields: BTreeMap<String, String> = BTreeMap::new();
+    let mut unrolled: BTreeMap<(String, String), Vec<FieldContract>> = BTreeMap::new();
+    for parsed in beside {
+        let found = propagation_against(parsed, beside, own, reads);
+        walks_fields.extend(found.walks_fields);
+        unrolled.extend(found.unrolled);
+    }
+    let found = Propagation {
+        walks_fields,
+        unrolled,
+        ..Propagation::default()
+    };
+    let mut out = String::new();
+    for (function, parameter) in &found.walks_fields {
+        let copies: Vec<(&String, &Vec<FieldContract>)> = found
+            .unrolled
+            .iter()
+            .filter(|((written, _), _)| written == function)
+            .map(|((_, on), fields)| (on, fields))
+            .collect();
+        if copies.is_empty() {
+            out.push_str(&format!(
+                "comptime: `{function}` walks `{parameter}::fields` and nothing calls it, \
+                 so no copy is written\n"
+            ));
+            continue;
+        }
+        for (on, fields) in copies {
+            out.push_str(&format!(
+                "comptime: `{function}` unrolled over `{on}` as `{}`\n",
+                specialised(function, on)
+            ));
+            for field in fields {
+                out.push_str(&format!("    {}: {}\n", field.name, field.ty.text()));
+            }
+        }
+    }
+    out
 }
 
 /// Both halves of ADR-023 D8's propagation, against contracts the caller
@@ -1512,6 +1633,15 @@ struct Checker<'a> {
     /// so `field.of(value)` answers `?` there and refuses nothing, and the
     /// refusals that matter come from the unrolled walks.
     unrolling: Option<(String, FieldContract)>,
+    /// **This walk is one unit harvesting another's call sites**, so it does
+    /// not harvest in turn ([ADR-181](../../docs/specification/adr/adr-181.md)
+    /// D2).
+    ///
+    /// Which types a shape walk was used with is a fact about the **program**
+    /// and not about the file the function stands in, and the calls may all
+    /// stand somewhere else - so the unit that writes the copies asks the
+    /// others. Without this flag that question asks itself back.
+    harvesting: bool,
     /// `Shape::Spot` → `Shape`, for every variant that carries **named**
     /// fields — the ones a struct literal builds.
     ///
@@ -2078,8 +2208,22 @@ impl<'a> Checker<'a> {
     /// Collected before any body is walked, because a call may stand **above**
     /// the function it names — items are order-independent here — and what a
     /// call has to do about one of these is decided at the call.
+    ///
+    /// **Over the program's other files too**, for the same reason one file
+    /// over: the files of a package share one namespace (Part I 9.1), so
+    /// `describe` may be declared in `shapes.nika` and called from `main.nika`
+    /// — and a call that did not know it names a shape walk would be left
+    /// pointing at a generic original nobody emits.
     fn collect_field_walks(&mut self) {
-        for item in &self.parsed.program.items {
+        self.field_walks_in(self.parsed);
+        for other in self.beside {
+            self.field_walks_in(other);
+        }
+    }
+
+    /// One file's shape walks, under the interner its symbols resolve in.
+    fn field_walks_in(&mut self, parsed: &Parsed) {
+        for item in &parsed.program.items {
             let Item::Fn {
                 name: Some(name),
                 generics,
@@ -2090,17 +2234,17 @@ impl<'a> Checker<'a> {
                 continue;
             };
             let walked = generics.iter().find_map(|g| {
-                let parameter = self.parsed.text(g.name).to_string();
+                let parameter = parsed.text(g.name).to_string();
                 let bounded = g
                     .bounds
                     .iter()
-                    .any(|b| self.parsed.text(*b) == crate::types::SHAPE_BOUNDS[0]);
-                let asked = bounded && walks_the_fields_of(self.parsed, body, &parameter);
+                    .any(|b| parsed.text(*b) == crate::types::SHAPE_BOUNDS[0]);
+                let asked = bounded && walks_the_fields_of(parsed, body, &parameter);
                 asked.then_some(parameter)
             });
             if let Some(parameter) = walked {
                 self.walks_fields
-                    .insert(self.parsed.text(*name).to_string(), parameter);
+                    .insert(parsed.text(*name).to_string(), parameter);
             }
         }
     }
@@ -10674,6 +10818,67 @@ impl<'a> Checker<'a> {
             notes: vec![note],
             help: Some(way_out),
         });
+    }
+
+    /// **The instantiations that stand in the program's other files**
+    /// ([ADR-181](../../docs/specification/adr/adr-181.md) D2).
+    ///
+    /// A copy is written by the unit that declares the function, and which
+    /// copies there are is decided at the **call** — which may stand in any
+    /// file of the package, because they share one namespace (Part I 9.1). So
+    /// this unit asks the others what they called its shape walks with, and
+    /// without it `describe` in `shapes.nika` called from `main.nika` is a
+    /// function with no copies and no generic original: a name that reaches
+    /// the language below undeclared, which is
+    /// [Part III C.1](../../docs/specification/30-nikaia-tooling.md)'s class.
+    ///
+    /// **Nothing to ask about costs nothing**: a unit that declares no shape
+    /// walk returns before a second file is looked at, which is every unit of
+    /// every program in the corpus.
+    fn instantiations_beside(&mut self) {
+        if self.harvesting || self.beside.is_empty() {
+            return;
+        }
+        let mine: BTreeSet<String> = self
+            .parsed
+            .program
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
+                Item::Fn {
+                    name: Some(name), ..
+                } => Some(self.parsed.text(*name).to_string()),
+                _ => None,
+            })
+            .filter(|name| self.walks_fields.contains_key(name))
+            .collect();
+        if mine.is_empty() {
+            return;
+        }
+        let mut found: Vec<((String, String), Vec<FieldContract>)> = Vec::new();
+        for other in self.beside {
+            if std::ptr::eq(*other, self.parsed) {
+                continue;
+            }
+            found.extend(
+                instantiations_in(
+                    other,
+                    self.beside,
+                    self.own,
+                    self.library,
+                    &self.modules,
+                    self.reads,
+                )
+                .into_iter()
+                .filter(|((name, _), _)| mine.contains(name)),
+            );
+        }
+        // **This unit's own calls win**, because they were typed by the walk
+        // that also holds the spans: the two agree, and a harvest that
+        // disagreed would be a second answer to a question already answered.
+        for (instantiation, fields) in found {
+            self.checked.unrolled.entry(instantiation).or_insert(fields);
+        }
     }
 
     /// **The body, once per unrolled turn**

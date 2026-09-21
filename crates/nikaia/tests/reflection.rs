@@ -1,6 +1,6 @@
 //! **Generating code from a type's shape** — Part II 10.3,
-//! [ADR-088](../../../docs/specification/adr/adr-088.md) D2, D4 and D5, built
-//! by [ADR-181](../../../docs/specification/adr/adr-181.md).
+//! [ADR-088](../../../docs/specification/adr/adr-088.md) D2, D4, D5 and D6,
+//! built by [ADR-181](../../../docs/specification/adr/adr-181.md).
 //!
 //! That section was specified in full and built by halves: the **bound** landed
 //! at 0.0.120 and what it reaches was `NK1171` — *this is specified and this
@@ -206,4 +206,120 @@ fn variants_says_which_half_is_built() {
         "{:#?}",
         refused[0]
     );
+}
+
+/// **`--comptime` prints what was unrolled**
+/// ([ADR-088](../../../docs/specification/adr/adr-088.md) D6).
+///
+/// The same information [ADR-181](../../../docs/specification/adr/adr-181.md)
+/// D3's diagnostic carries, offered on demand instead of on failure — which is
+/// the arrangement `--overlaps`, `--sharing`, `--tethers` and `--trust` already
+/// have, and the alternative to inventing syntax for it.
+///
+/// **A shape walk nobody calls has its own line**, and it is the one thing a
+/// reader could not otherwise find out: no copy is written for it, so nothing
+/// in the generated file says it exists.
+#[test]
+fn the_report_prints_what_was_unrolled() {
+    let source = "struct User { name: &str, age: i64 }\n\
+                  struct Point { x: i64, y: i64 }\n\
+                  \n\
+                  fn describe[T: Struct](value: T) {\n\
+                  \x20   for field in T::fields { println(field.name) }\n\
+                  }\n\
+                  \n\
+                  fn unused[T: Struct](value: T) {\n\
+                  \x20   for field in T::fields { println(field.name) }\n\
+                  }\n\
+                  \n\
+                  fn main() {\n\
+                  \x20   describe(User { name: \"ada\", age: 36 })\n\
+                  \x20   describe(Point { x: 1, y: 2 })\n\
+                  }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let report = check::unrolling_report(&[&parsed], &own, &nikaia::assets::Reads::none());
+
+    assert!(
+        report.contains("`describe` unrolled over `User` as `describe__User`")
+            && report.contains("    name: &str")
+            && report.contains("    age: i64"),
+        "{report}"
+    );
+    assert!(
+        report.contains("`describe` unrolled over `Point` as `describe__Point`"),
+        "one line per type actually used: {report}"
+    );
+    assert!(
+        report.contains("`unused` walks `T::fields` and nothing calls it"),
+        "the one thing only this report can say: {report}"
+    );
+}
+
+/// **A shape walk declared in one file and called from another**
+/// ([ADR-181](../../../docs/specification/adr/adr-181.md) D2, 0.0.130).
+///
+/// The files of a package share one namespace (Part I 9.1), so both halves of
+/// an unrolling cross files: *which functions walk a shape* is read off the
+/// items of the file that declares one, and *which types they were used with*
+/// off the calls, which may all stand somewhere else. Collected per unit, the
+/// declaring unit wrote no copy and no generic original at all.
+///
+/// Asked from **either side**, because neither file is the one that knows: the
+/// unit holding the call learns that the name it wrote is a shape walk, and the
+/// unit holding the body learns which copies to write.
+#[test]
+fn a_shape_walk_is_unrolled_across_the_files_of_a_package() {
+    let declares = parse_to_ast(
+        "struct User { name: &str, age: i64 }\n\
+         struct Point { x: i64, y: i64 }\n\
+         \n\
+         fn describe[T: Struct](value: T) {\n\
+         \x20   for field in T::fields { println(field.name) }\n\
+         }\n",
+    )
+    .expect("the first file parses");
+    let calls = parse_to_ast(
+        "fn main() {\n\
+         \x20   describe(User { name: \"ada\", age: 36 })\n\
+         \x20   describe(Point { x: 1, y: 2 })\n\
+         }\n",
+    )
+    .expect("the second file parses");
+
+    let beside = [&declares, &calls];
+    let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+    let own = Ledger::infer_package(&beside, &library);
+    let reads = nikaia::assets::Reads::none();
+
+    // **The unit that writes the copies** knows both, although neither call
+    // stands in it.
+    let there = check::propagation_against(&declares, &beside, &own, &reads);
+    assert!(
+        there
+            .unrolled
+            .contains_key(&("describe".into(), "User".into()))
+            && there
+                .unrolled
+                .contains_key(&("describe".into(), "Point".into())),
+        "{:#?}",
+        there.unrolled
+    );
+
+    // **The unit that holds the calls** knows the name is a shape walk, so each
+    // call is rewritten to the copy rather than left pointing at an original
+    // nobody emits.
+    let here = check::propagation_against(&calls, &beside, &own, &reads);
+    assert_eq!(here.unrolled_calls.len(), 2, "{:#?}", here.unrolled_calls);
+    assert!(here.walks_fields.contains_key("describe"));
+
+    // And the report is one report for the program, whichever file is first.
+    for order in [[&declares, &calls], [&calls, &declares]] {
+        let report = check::unrolling_report(&order, &own, &reads);
+        assert!(
+            report.contains("`describe` unrolled over `User` as `describe__User`")
+                && report.contains("`describe` unrolled over `Point` as `describe__Point`"),
+            "{report}"
+        );
+    }
 }

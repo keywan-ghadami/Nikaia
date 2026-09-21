@@ -1777,3 +1777,74 @@ fn a_grammar_at_build_time_reaches_a_project_build() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A shape walk reaches across a file of the same package**, which it did not
+/// ([ADR-181](../../../docs/specification/adr/adr-181.md) D2, 0.0.130).
+///
+/// `T::fields` shipped at 0.0.129 able to unroll a function whose calls stood
+/// in the **same file** and unable to build the shape anybody would write it
+/// in: a helper in `shapes.nika`, called from `main.nika`. Both halves of the
+/// walk were collected per unit — which functions walk a shape (off the items
+/// of `self.parsed`) and which types the calls gave them (off the calls in
+/// `self.parsed`) — and the relation crosses files, because the files of a
+/// package share one namespace (Part I 9.1).
+///
+/// So the declaring unit wrote **no copy** (it saw no call) and **no generic
+/// original** (it knew the function walks a shape), and what reached the user
+/// was *cannot find function `describe` in this scope* about a function
+/// declared two lines up in the package —
+/// [Part III C.2](../../../docs/specification/30-nikaia-tooling.md)'s way out
+/// that cannot be taken.
+///
+/// **This test builds and runs.** Every unit test of the unrolling passed
+/// throughout, and so did the single-file path the corpus sweep exercises.
+#[test]
+fn a_shape_walk_reaches_across_the_files_of_a_package() {
+    let dir = a_project(
+        "project-reflection",
+        "[package]\nname = \"reflect\"\nversion = \"0.1.0\"\n",
+        "fn main() {\n\
+         \x20   describe(User { name: \"ada\", age: 36 })\n\
+         \x20   describe(Point { x: 1, y: 2 })\n\
+         }\n",
+    );
+    std::fs::write(
+        dir.join("src/shapes.nika"),
+        "struct User { name: &str, age: i64 }\n\
+         struct Point { x: i64, y: i64 }\n\
+         \n\
+         fn describe[T: Struct](value: T) {\n\
+         \x20   for field in T::fields {\n\
+         \x20       println(f\"{field.name} = {field.of(value)}\")\n\
+         \x20   }\n\
+         }\n",
+    )
+    .expect("the second file");
+
+    let ran = nikaia(&["run"], &dir);
+    assert!(ran.status.success(), "{}", said(&ran));
+    let printed = String::from_utf8_lossy(&ran.stdout);
+    assert!(
+        printed.contains("name = ada")
+            && printed.contains("age = 36")
+            && printed.contains("x = 1")
+            && printed.contains("y = 2"),
+        "one copy per type, from a function a file away: {}",
+        said(&ran)
+    );
+
+    // **And the report says the same thing**, which is the other half of the
+    // defect: `--comptime` read one unit's tables, so it printed nothing at all
+    // for this program.
+    let told = nikaia(&["build", "--comptime"], &dir);
+    assert!(told.status.success(), "{}", said(&told));
+    let report = String::from_utf8_lossy(&told.stdout);
+    assert!(
+        report.contains("`describe` unrolled over `User` as `describe__User`")
+            && report.contains("`describe` unrolled over `Point` as `describe__Point`"),
+        "{}",
+        said(&told)
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.130] — 2026-09-21
+
+**`--comptime` prints what was unrolled, and the unrolling reaches across the
+files of a package** — [ADR-181](docs/specification/adr/adr-181.md) D5, which is
+[ADR-088](docs/specification/adr/adr-088.md) D6 and the last of that record's
+six decisions this compiler can supply. Part II 10.3 is built, less
+`T::variants`.
+
+### The report
+
+- **The same information the diagnostic carries, offered on demand instead of on failure.** Every build-time system shares one readability problem: you cannot see what a function becomes for a given type without unrolling it in your head. The usual answer is to invent syntax; this project already has the other one, and `--overlaps`, `--sharing`, `--tethers` and `--trust` are it.
+- **A shape walk nobody calls has a line of its own**, and it is the one thing only the report can say: no copy is written for it, so nothing in the generated file says it exists.
+- **Printed once for the program**, which is the difference from the other four: an unrolling is a fact about a **call**, and a call may stand in a different file from the function it names.
+
+### And that is what found the defect: an unrolling stopped at the file
+
+- **A shape walk called from the next file over built into nothing.** `describe` in `shapes.nika`, called from `main.nika`, is the shape anybody would write Part II 10.3's example in — and the build refused it, with the language below answering *cannot find function `describe` in this scope* about a function declared in the same package. A correct program refused ([Part III C.4](docs/specification/30-nikaia-tooling.md)) by a claim that is false ([Part I 9.1](docs/specification/10-nikaia-light.md): the files of a package share one namespace, so there is nothing to import and nothing the author could have written differently).
+- **Both halves of the relation crossed the boundary and neither collection did.** *Which functions walk a shape* is read off the **items**, *which types they were used with* off the **calls**, and each was gathered from one unit's own tree. So the unit holding the calls did not know the name was a shape walk, and the unit holding the body saw no call — writing no copy, and no generic original either, because it knew the function walks a shape.
+- **Both are gathered over the program's other files now.** Asking the other files what they called this unit's shape walks with costs a second walk of them, so a unit that declares no shape walk returns before a second file is looked at — which is every unit of every program in the corpus.
+- **The report had the same hole one turn further out.** It read the *first* unit's tables, so a program whose function, calls and build stood in three files would have been told *nothing calls it* about a function called twice. It is a union over every unit.
+- **A test that builds and runs**, in `crates/nikaia/tests/project.rs`: every unit test of the unrolling passed throughout, and so did the single-file path the corpus sweep exercises. The checker-level test beside it asks from **both** sides, because neither file is the one that knows.
+
+### What is still out
+
+- **`T::variants`** ([ADR-088](docs/specification/adr/adr-088.md) D4), which wants a value nobody has designed, and `NK1171` says which half is which.
+- **A method that walks a shape**, and a shape walked through a second parameter.
+
 ## [0.0.129] — 2026-09-21
 
 **`T::fields` is a list the build walks, and the loop over it is unrolled per
