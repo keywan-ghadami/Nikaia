@@ -37,14 +37,33 @@ pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Finding> {
     found
 }
 
+/// **The two bounds that ask what a type *is*** — Part II 10.3 and
+/// [ADR-088](../../../docs/specification/adr/adr-088.md) D2.
+///
+/// `[T: Struct]` and `[T: Enum]` are not traits anybody declares and no
+/// `impl` answers them: what answers is the **declaration**, which is the whole
+/// of D2's *the bound is what makes the shape reachable*. They are language
+/// words, like `sync` and `throws`, and they live in one constant because the
+/// checker, the bound check and the emitter each have to know the same two
+/// names — the emitter because Rust has no such trait, so a bound that reached
+/// it would come back as *cannot find trait `Struct` in this scope*, about a
+/// file nobody wrote ([Part III
+/// C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// **A program that declares one wins.** `trait Struct { … }` beside this is
+/// an ordinary trait and every check reads the declaration first, so nothing
+/// here takes a name away from a program that wanted it.
+pub const SHAPE_BOUNDS: [&str; 2] = ["Struct", "Enum"];
+
 /// The names a **bound** may have: a `trait` this unit declares, or one either
-/// ledger records ([ADR-106](../../../docs/specification/adr/adr-106.md)).
+/// ledger records ([ADR-106](../../../docs/specification/adr/adr-106.md)),
+/// or one of [`SHAPE_BOUNDS`].
 ///
 /// A set of its own and not `known_names`, because the two questions are not
 /// the same one: `[T: Summary]` asks for a trait where `x: Summary` asks for a
 /// type, and a `struct` is not an answer to the first.
 fn known_traits(parsed: &Parsed, own: &Ledger, library: &Ledger) -> BTreeSet<String> {
-    let mut known: BTreeSet<String> = BTreeSet::new();
+    let mut known: BTreeSet<String> = SHAPE_BOUNDS.iter().map(|n| n.to_string()).collect();
     for ledger in [own, library] {
         for key in ledger.traits.keys() {
             known.insert(key.clone());

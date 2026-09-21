@@ -541,7 +541,7 @@ one of them now can.
 | :--- | :--- | :--- |
 | [ADR-079](specification/adr/adr-079.md) §3 | a **loop and `push`**, to build a table that then crosses as a view | **built** ([ADR-175](specification/adr/adr-175.md) D1), as a loop and an array |
 | [ADR-079](specification/adr/adr-079.md) §3 | a **fixed map**, as the crossed form of a map | **built** ([ADR-176](specification/adr/adr-176.md)), as `Fixed[&str, V]` |
-| [ADR-088](specification/adr/adr-088.md) D1 | a **loop over a type's fields**, which is the whole of 10.3 | open, and it is what is left |
+| [ADR-088](specification/adr/adr-088.md) D1 | a **loop over a type's fields**, which is the whole of 10.3 | the **bound** is built (D2, D3); the shape it reaches is not, and it is what is left |
 
 [ADR-079](specification/adr/adr-079.md) §3 says it plainly — *"This is the real
 work behind the feature, and this record does not shorten it"* — and until this
@@ -616,11 +616,32 @@ the range where generating a `match` would be worth it is empty, a `Fixed` is a
 ([ADR-011](specification/adr/adr-011.md) D2). The measurement removed the
 feature it was taken to size.
 
+*And the bound that reaches a type's shape, at 0.0.120.*
+[ADR-088](specification/adr/adr-088.md) D2: `[T: Struct]` and `[T: Enum]` are
+bounds this compiler answers, and what answers them is the **declaration**
+rather than an `impl` — which is why they could not be ordinary traits and why
+`NK1135` used to refuse them. D3 comes with it: a caller that passes something
+which is not a struct is refused **at the call**, which is the one class of
+failure a bound exists to move out of the body. Neither bound reaches the
+language below, which has no trait by either name — and that mattered
+immediately, because making the bound legal turned `T::fields` from `NK1135` on
+the line above into **silence**. `NK1171` says it now, and says which half of
+10.3 is built.
+
 *The order the records implied:* the value first — which is not the loop's step,
 since the loop is a shape the interpreter reads and a table is a *value* the
 whole compiler has to carry from the build into the program. That is done. The
 field walk last, because it needs something the other two do not — see the entry
 below, *running a grammar while the program is built*.
+
+*What is left of the field walk, in order:* a type's shape as a **value** the
+evaluator holds — a list of fields, each with a name and a way to read it off a
+value; then D4's loop over it, which is a `for` the evaluator already reads, one
+container out; then D5's per-iteration check, whose cost is not the seconds but
+the **message**, because a body wrong for one field is wrong at one unrolled
+copy on a line correct for the others; then D6's `--comptime`. The first of
+those is the one that needs something new. The rest are shapes this compiler
+has.
 
 *What it does **not** include:* running a **grammar**. That looks like the same
 job and is not; it is the next entry's, and the reason is there.

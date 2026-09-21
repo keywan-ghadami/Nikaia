@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.119 (Draft)
+**Version:** 0.0.120 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -228,19 +228,24 @@ print their own analyses. There is no syntax for it.
 ([ADR-088](adr/adr-088.md) D7). A program may not use them as names. The macro
 system built out of the three is withdrawn ([ADR-088](adr/adr-088.md)).
 
-> **Implementation status:** Not implemented, and **refused by name**.
-> `T::fields` under a type parameter is `NK1117` (nothing declares `T`), because
-> a type is not a value in user code; written against a type this program
-> declares, `Point::fields` is `NK1171`, which says that this section is
-> specified and that the compiler does not have it rather than sending a reader
-> looking for a spelling that does not exist. `Struct` is not a bound any
-> declaration provides. What has arrived since this note was first written is
-> the **loop**: a `comptime` initialiser evaluates calls, methods, `for` and
-> `while`, and hands arrays, text, structs and a fixed map to the program below
-> (10.2, [ADR-175](adr/adr-175.md), [ADR-176](adr/adr-176.md)) — so what 10.3
-> waits on is a type's **shape as data**, not the machinery to walk it. The
-> bound mechanism is implemented ([ADR-078](adr/adr-078.md)); `--comptime` is
-> not. `macro`, `quote` and `with` are reserved ([ADR-088](adr/adr-088.md) §5).
+> **Implementation status:** Partially implemented. **The bound is built**
+> ([ADR-088](adr/adr-088.md) D2): `[T: Struct]` and `[T: Enum]` are bounds this
+> compiler answers, and what answers them is the **declaration** rather than an
+> `impl`. So is the refusal the bound exists to make — a caller that passes
+> something which is not a struct is `NK1164` **at the call** (D3), which is the
+> one class of failure a bound moves out of the body. Neither bound reaches the
+> language below, which has no trait by either name.
+>
+> **What the bound reaches is not built.** `T::fields` is `NK1171`, which says
+> that this section is specified, that the compiler does not have it, and which
+> half of it is built — rather than sending a reader looking for a spelling that
+> does not exist. The **loop** has arrived since this note was first written: a
+> `comptime` initialiser evaluates calls, methods, `for` and `while`, and hands
+> arrays, text, structs and a fixed map to the program below (10.2,
+> [ADR-175](adr/adr-175.md), [ADR-176](adr/adr-176.md)). So what is left is a
+> type's **shape as data**, the unrolled loop, the per-iteration check with the
+> field named in the diagnostic, and `--comptime`. `macro`, `quote` and `with`
+> are reserved ([ADR-088](adr/adr-088.md) §5).
 
 Capturing an *expression* as a tree, `u.age > 18` for a provider to translate,
 is not part of the language. A query is written in the database's own SQL and

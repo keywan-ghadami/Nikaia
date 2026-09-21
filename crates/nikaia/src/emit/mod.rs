@@ -2859,18 +2859,45 @@ impl<'p> Emitter<'p> {
 
     /// A type parameter with its bounds: `T`, or `T: Summarize + Clone`
     /// ([ADR-078](../../docs/specification/adr/adr-078.md) D2).
+    ///
+    /// **A shape bound does not travel** ([`crate::types::SHAPE_BOUNDS`],
+    /// [ADR-088](../../docs/specification/adr/adr-088.md) D2): `Struct` and
+    /// `Enum` are answered by a **declaration** rather than by an `impl`, and
+    /// the language below has no trait by either name — so one written into the
+    /// generated file would come back as *cannot find trait `Struct` in this
+    /// scope*, about a file nobody wrote
+    /// ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Two names and not types**, which is why this does not break
+    /// [ADR-011](../../docs/specification/adr/adr-011.md) D2: the emitter is
+    /// reading a word of this language, as it already reads `sync` and
+    /// `throws`, and not asking what a value's type is.
+    /// Whether this bound is one of [`crate::types::SHAPE_BOUNDS`] **and** the
+    /// program did not declare a `trait` by that name.
+    ///
+    /// A program that writes `trait Struct { … }` has an ordinary trait, and
+    /// the bound is its own — so it travels, and the `impl` that answers it
+    /// travels with it. Checking the declaration here is the same order every
+    /// other reader of the two names takes.
+    fn is_a_shape_bound(&self, bound: &str) -> bool {
+        crate::types::SHAPE_BOUNDS.contains(&bound)
+            && !self.parsed.program.items.iter().any(|item| {
+                matches!(&item.node, crate::ast::Item::Trait { name, .. }
+                    if self.name(*name) == bound)
+            })
+    }
+
     fn bounded(&self, param: &crate::ast::GenericParam) -> String {
         let name = self.name(param.name);
-        match param.bounds.is_empty() {
+        let bounds: Vec<String> = param
+            .bounds
+            .iter()
+            .map(|b| self.name(*b).into_owned())
+            .filter(|bound| !self.is_a_shape_bound(bound))
+            .collect();
+        match bounds.is_empty() {
             true => name.into_owned(),
-            false => {
-                let bounds: Vec<String> = param
-                    .bounds
-                    .iter()
-                    .map(|b| self.name(*b).into_owned())
-                    .collect();
-                format!("{name}: {}", bounds.join(" + "))
-            }
+            false => format!("{name}: {}", bounds.join(" + ")),
         }
     }
 

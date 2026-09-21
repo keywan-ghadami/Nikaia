@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.120] — 2026-09-21
+
+**The two bounds that ask what a type *is*** —
+[ADR-088](docs/specification/adr/adr-088.md) D2 and D3, the first part of
+Part II 10.3 to be built.
+
+### Added
+
+- **`[T: Struct]` and `[T: Enum]` are bounds this compiler answers**, and what answers them is the **declaration** rather than an `impl`. That is D2's whole point and the reason they could not be ordinary traits: no `impl Struct for Point` exists to be written. `NK1135` used to refuse `Struct` as a trait nothing declares, which was true and was not the answer.
+- **D3 is the half that pays now**: a caller that passes something which is not a struct is refused **at the call**, with `NK1164`. That is the one class of failure a bound exists to move out of the body — the record cites Zig's `anytype` as the counter-example, where the signature says nothing and the caller learns its type does not fit from a message pointing into somebody else's code.
+- **The way out is a declaration and never an `impl`**, because `impl Struct for Op` is not a line anybody can write and [Part III C.2](docs/specification/30-nikaia-tooling.md) says a way out that cannot be taken is not one.
+- **It fails open where this compiler has read no declaration** — a `std` type, a foreign one, a name no ledger classifies all look alike from inside the checker, and [Part III C.4](docs/specification/30-nikaia-tooling.md) says a correct program refused is the worse mistake. What stays refused is what it has read: the other shape, and the types Part I 2.2 offers.
+
+### The hole this would have opened, closed in the same package
+
+- **Neither bound reaches the language below**, which has no trait by either name: one written into the generated file would come back as *cannot find trait `Struct` in this scope*, about a file nobody wrote. The two names live in one constant, `types::SHAPE_BOUNDS`, because the checker, the bound check and the emitter each have to know the same two.
+- **And a program that declares `trait Struct { … }` keeps its own.** Every reader of the two names asks the declaration first, so the bound travels then, with the `impl` that answers it — which the emitter has to get right, since dropping it there would be `rustc`'s *no method named `label`*.
+- **`T::fields` went from `NK1135` on the line above to silence** the moment the bound became legal, and from there it would have gone to `rustc`. `NK1171` says it instead, and says **which half** is built: the bound is, and D4's unrolled loop, D5's per-iteration check and D6's report are not.
+
+### Where 10.3 stands now
+
+- **Its status note said no loop runs while the program is built.** Four packages have made that false — a `comptime` initialiser evaluates calls, methods, `for` and `while`, and hands arrays, text, structs and a fixed map to the program below. So what 10.3 waits on is a type's **shape as a value**, not the machinery to walk it, and [`open-work.md`](docs/open-work.md) §2.8 now lists the four steps in order.
+- **The specification's own block moved with it.** `fn describe[T: Struct](value: T)` used to be refused with `NK1135`, on the bound; it is refused with `NK1171` now, on the member — which is the baseline recording one line of progress.
+
 ## [0.0.119] — 2026-09-21
 
 **A name beside a type this program declares** — a defect

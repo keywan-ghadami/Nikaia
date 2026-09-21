@@ -32,6 +32,7 @@ use crate::build_time;
 use crate::contracts::{send, ty, ty::Ty, FieldContract, FnContract, Ledger};
 use crate::fold::Constant;
 use crate::parser::Parsed;
+use crate::types::SHAPE_BOUNDS;
 use winnow_grammar::Symbol as Ident;
 
 /// The types Part I 2.2 offers, which is what an `as` may name
@@ -3511,8 +3512,39 @@ impl<'a> Checker<'a> {
                 if self.answers_for(&actual, &trait_name) {
                     continue;
                 }
-                let (message, note, way_out) = match of_the_caller {
-                    true => (
+                // **A shape bound is a third sentence**, because the other
+                // two both end in an `impl` and no `impl` answers `Struct`:
+                // what answers it is the declaration, so *write `impl Struct
+                // for i64`* would be a way out that cannot be taken, which
+                // [Part III C.2](../../docs/specification/30-nikaia-tooling.md)
+                // says is not one.
+                let shape = SHAPE_BOUNDS.contains(&trait_name.as_str())
+                    && !self.own.traits.contains_key(&trait_name);
+                let (message, note, way_out) = match (shape, of_the_caller) {
+                    (true, of_the_caller) => (
+                        format!(
+                            "`{key}` asks for {} `{trait_name}` here, and `{actual}` is not one",
+                            match trait_name.as_str() {
+                                "Enum" => "an",
+                                _ => "a",
+                            }
+                        ),
+                        format!(
+                            "`[{parameter}: {trait_name}]` asks what a type **is** rather than \
+                             what it does, so what answers it is a declaration and not an `impl` \
+                             (Part II, 10.3) - and `{actual}` is {}",
+                            self.what_shape_it_is(&actual)
+                        ),
+                        match of_the_caller {
+                            true => format!("add it to the bound: `[{actual}: … + {trait_name}]`"),
+                            false => format!(
+                                "pass a value of a type this program declares with `{}`, or leave \
+                                 the bound off",
+                                trait_name.to_lowercase()
+                            ),
+                        },
+                    ),
+                    (false, true) => (
                         format!(
                             "`{key}` asks for a `{trait_name}` here, and `{actual}` is not \
                              declared to be one"
@@ -3524,7 +3556,7 @@ impl<'a> Checker<'a> {
                         ),
                         format!("add it to the bound: `[{actual}: … + {trait_name}]`"),
                     ),
-                    false => (
+                    (false, false) => (
                         format!(
                             "`{key}` asks for a `{trait_name}` here, and `{actual}` is not one"
                         ),
@@ -3552,11 +3584,48 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// What this compiler can say `{ty}` is, for a shape bound's note.
+    fn what_shape_it_is(&self, ty: &str) -> String {
+        if self.structs.contains_key(ty) {
+            return format!("a `struct` - `[{ty}: Struct]` is the bound it answers");
+        }
+        if self.enums.contains_key(ty) {
+            return format!("an `enum` - `[{ty}: Enum]` is the bound it answers");
+        }
+        "one of the types Part I 2.2 offers, which no declaration makes either shape".to_string()
+    }
+
     /// Whether `ty` may stand where `trait_name` is asked for.
     ///
     /// **`true` where nothing says otherwise** — see the three fail-open cases
     /// on `NK1164` above.
     fn answers_for(&self, ty: &str, trait_name: &str) -> bool {
+        // **A shape bound is answered by the declaration**
+        // ([ADR-088](../../docs/specification/adr/adr-088.md) D2), which is why
+        // it is asked before the trait map: no `impl` says `Struct`, so the
+        // fail-open line below would let every argument through.
+        //
+        // **And it fails open everywhere this compiler has not read a
+        // declaration.** A `std` type, a foreign one, a name no ledger
+        // classifies — this walk cannot tell a struct from anything else there,
+        // and [Part III C.4](../../docs/specification/30-nikaia-tooling.md)
+        // says a correct program refused is the worse mistake. What is left is
+        // the case D3 is about: a type this file declares as the *other* shape,
+        // and a primitive, both of which it has read.
+        if SHAPE_BOUNDS.contains(&trait_name) && !self.own.traits.contains_key(trait_name) {
+            if let Some(bounds) = self.type_parameters.get(ty) {
+                return bounds.iter().any(|declared| declared == trait_name);
+            }
+            let is_struct = self.structs.contains_key(ty);
+            let is_enum = self.enums.contains_key(ty);
+            if !is_struct && !is_enum && !is_one_of_part_one_2_2(ty) {
+                return true;
+            }
+            return match trait_name {
+                "Struct" => is_struct,
+                _ => is_enum,
+            };
+        }
         if !self.own.traits.contains_key(trait_name) {
             return true;
         }
@@ -9422,6 +9491,19 @@ impl<'a> Checker<'a> {
         if self.resolve(&format!("{ty}::{member}")).is_some() {
             return;
         }
+        // **A type parameter is a type this compiler has not read either**, so
+        // it fails open the way an unknown head does — with one exception,
+        // which is the name a reader of Part II 10.3 writes. `[T: Struct]`
+        // became a legal bound in the same package as this line, and without it
+        // `T::fields` went from `NK1135` on the bound to **silence**, and from
+        // there to `rustc` about the generated file
+        // ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+        if self.type_parameters.contains_key(ty) {
+            if member == "fields" || member == "variants" {
+                self.a_shape_that_is_not_reachable_yet(ty, member, span);
+            }
+            return;
+        }
         if let Some(variants) = self.enums.get(ty) {
             let known: Vec<&str> = variants.iter().map(String::as_str).collect();
             let listed = known
@@ -9458,26 +9540,7 @@ impl<'a> Checker<'a> {
         // no member `fields`* would send them looking for a spelling that does
         // not exist ([ADR-088](../../docs/specification/adr/adr-088.md) §5).
         if member == "fields" || member == "variants" {
-            self.checked.findings.push(Finding {
-                severity: Severity::Error,
-                span: span.clone(),
-                code: "NK1171",
-                message: format!(
-                    "`{ty}::{member}` is specified and this compiler does not have it"
-                ),
-                notes: vec![
-                    "Part II 10.3 reads a type's shape as ordinary data - `for field in T::fields` \
-                     under a `T: Struct` bound - and ADR-088 §5 says none of D1 to D6 is built. \
-                     `Struct` is not a bound any declaration provides either, so the line above \
-                     this one would be `NK1135`"
-                        .to_string(),
-                ],
-                help: Some(
-                    "write the fields out by hand for now - there is no other spelling that does \
-                     what this would"
-                        .to_string(),
-                ),
-            });
+            self.a_shape_that_is_not_reachable_yet(ty, member, span);
             return;
         }
         let named: Vec<&str> = fields.iter().map(|field| field.name.as_str()).collect();
@@ -9499,6 +9562,61 @@ impl<'a> Checker<'a> {
                 Some(near) => format!("read it from a value: `value.{near}`"),
                 None => format!("write `impl {ty} {{ … }}` if `{member}` is meant to be a method"),
             }),
+        });
+    }
+
+    /// **`NK1171`, for the one member Part II 10.3 names and nothing has**
+    /// ([ADR-088](../../docs/specification/adr/adr-088.md) §5).
+    ///
+    /// A reader who writes `T::fields` has read the specification, so *`Point`
+    /// has nothing called `fields`* would send them looking for a spelling that
+    /// does not exist. [Part III
+    /// C.2](../../docs/specification/30-nikaia-tooling.md) asks for a way out
+    /// that can be taken, and here there is exactly one — write the fields out
+    /// — so that is what it offers rather than a rewrite of the same line.
+    fn a_shape_that_is_not_reachable_yet(&mut self, ty: &str, member: &str, span: &Span) {
+        let parameter = self.type_parameters.get(ty);
+        let under_a_bound = parameter
+            .is_some_and(|bounds| bounds.iter().any(|b| SHAPE_BOUNDS.contains(&b.as_str())));
+        let note = if under_a_bound {
+            // The bound is there and the member is not, which is the honest
+            // half-built state: D2 and D3 are built and D4 to D6 are not.
+            format!(
+                "`[{ty}: Struct]` is a bound this compiler answers, and a caller that passes \
+                 something that is not a struct is refused at the call (ADR-088 D3) - but the \
+                 **shape** it makes reachable is not: D4's unrolled loop, D5's per-iteration \
+                 check and D6's report are what ADR-088 §5 still lists as open"
+            )
+        } else if parameter.is_some() {
+            format!(
+                "Part II 10.3 reads a type's shape as ordinary data, and the **bound** is what \
+                 makes it reachable - `for field in {ty}::{member}` under a `[{ty}: Struct]` \
+                 (ADR-088 D2). That bound is built; what it reaches is not, and ADR-088 §5 \
+                 lists D4 to D6 as open - so writing the bound changes this message and not \
+                 the outcome"
+            )
+        } else {
+            // A type written by name, which is not what 10.3 writes at all: the
+            // shape is reached through a **bound**, so the sentence says that
+            // rather than suggest `[Point: Struct]`, which nobody can write.
+            format!(
+                "Part II 10.3 reads a type's shape through a **bound** rather than by name - \
+                 `fn describe[T: Struct](value: T)`, and then `T::{member}` inside it \
+                 (ADR-088 D2). The bound is built; what it reaches is not, and ADR-088 §5 \
+                 lists D4 to D6 as open"
+            )
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1171",
+            message: format!("`{ty}::{member}` is specified and this compiler does not have it"),
+            notes: vec![note],
+            help: Some(
+                "write the fields out by hand for now - there is no other spelling that does \
+                 what this would"
+                    .to_string(),
+            ),
         });
     }
 
@@ -11337,6 +11455,15 @@ fn moves_away(ty: &Ty) -> bool {
         Ty::Tuple(parts) => parts.iter().any(moves_away),
         _ => false,
     }
+}
+
+/// Whether a name is one of the types **Part I 2.2** offers, which no
+/// declaration in any program makes a `struct` or an `enum`.
+///
+/// This is the one half of a shape bound this compiler can refuse with
+/// certainty: everything else it has not read a declaration for fails open.
+fn is_one_of_part_one_2_2(name: &str) -> bool {
+    is_number(name) || matches!(name, "bool" | "char" | "String" | "str")
 }
 
 fn is_number(name: &str) -> bool {
