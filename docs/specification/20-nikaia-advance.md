@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.126 (Draft)
+**Version:** 0.0.127 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -125,7 +125,9 @@ not exhaust the compiler's stack.
 
 **What crosses from build time to run time** is decided
 ([ADR-079](adr/adr-079.md)). A result arrives in its **view** form: `Vec[T]` as
-an `Array[T, N]`, `String` as a `&str`. A value built with `push` is fixed once
+a `&[T]` — or as an `Array[T, N]` where the program writes the length into the
+type ([ADR-152](adr/adr-152.md), [ADR-179](adr/adr-179.md) D1) — and `String` as
+a `&str`. A value built with `push` is fixed once
 it has crossed. A value that owns memory is refused by what it *is* and never by
 its parse — by its **type** for a `struct`, and for an `enum` by the **variant
 the value is**, because `Shape::Empty` is a `const` and `Shape::Many([1, 2])` is
@@ -180,10 +182,11 @@ switched off without editing anything ([ADR-072](adr/adr-072.md) D3).
 > same syntax and the same meaning* is a tautology. Invalid input fails the build
 > in the parser's own words. What A's own example still meets is the
 > **crossing**: a build-time value is a whole number, a float, a `bool`, text, a
-> list, a `struct` and an `enum` variant, and `Json::Value` carries a `Vec`
-> **inside** a variant — so it is `NK1178` with the reason rather than a parse
-> that happens and has nowhere to land. A rule whose result is one of the seven
-> crosses and runs.
+> list, a `struct` and an `enum` variant, and a rule whose result is one of the
+> seven crosses and runs — including into a `&[T]`, which is what a run of
+> `struct`s arrives as ([ADR-179](adr/adr-179.md) D1, D3). What a rule may
+> **not** hand back is a value it built into a position that views a run, and
+> `NK1179` says so on the action's own line.
 >
 > Not implemented is [ADR-079](adr/adr-079.md) D5's serialised blob, which waits
 > for a table large enough to ask for it.

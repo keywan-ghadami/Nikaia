@@ -4124,6 +4124,25 @@ impl<'p> Emitter<'p> {
             return format!("Option<{}>", self.ty_counted(&inner, lifetimes, count));
         }
 
+        // **`&[T]` is a view of a run of elements**
+        // ([ADR-179](../../docs/specification/adr/adr-179.md) D1), and Rust's
+        // own `&[T]` is what it lowers to: a fat pointer that carries its
+        // length, which is the half of it a `Vec` and an `Array` also carry and
+        // a declaration at the C boundary does not.
+        //
+        // **The boundary has its own writer** (`foreign_ty`), which turns the
+        // same type into an address beside a count
+        // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D2). Two
+        // writers for one spelling is the arrangement that record already
+        // chose, and this is the second half of it arriving.
+        if ty.is_slice {
+            let element = match ty.generics.first() {
+                Some(element) => self.ty_counted(element, lifetimes, count),
+                None => "u8".to_string(),
+            };
+            return format!("{}[{element}]", lifetimes.reference);
+        }
+
         // A view is a borrow of the parser's input, and that is where the
         // lifetime comes from - the source never writes one (ADR-008).
         if ty.is_view {

@@ -187,6 +187,29 @@ where
     }
 }
 
+/// **A run of elements, which is what a `&[T]` is**
+/// ([ADR-179](../../../docs/specification/adr/adr-179.md) D1).
+///
+/// The same body the two above have, and it has to be written a third time
+/// because `[V]` is neither a `Vec<V>` nor a `[V; N]` to the language below —
+/// a blanket impl over `SliceIndex` would overlap with the map's. What a
+/// `const` holds is this one: `const ROWS: &[Row] = &[…];` reaches `Get`
+/// through the `&'b T` impl further down, whose `T` is `[Row]`.
+impl<V, I> Get<I> for [V]
+where
+    I: std::slice::SliceIndex<[V]> + 'static,
+{
+    type Out<'a>
+        = &'a I::Output
+    where
+        Self: 'a;
+
+    #[track_caller]
+    fn get(&self, key: I) -> &I::Output {
+        &self[key]
+    }
+}
+
 /// **Text is sliced by a range** and never indexed by a number: a byte of
 /// UTF-8 is not a character, which is why Part I 2.2 has no such read.
 impl<I> Get<I> for str

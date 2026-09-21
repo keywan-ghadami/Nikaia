@@ -315,6 +315,23 @@ impl Ty {
         match self {
             Ty::Named { view, .. } | Ty::Var { view, .. } => *view,
             Ty::Nullable(inner) => inner.is_a_view(),
+            // **`&[T]` is a view of a run**
+            // ([ADR-179](../../../docs/specification/adr/adr-179.md) D1), and
+            // saying so is what makes the compiler write the `&` a caller does
+            // not ([ADR-094](../../../docs/specification/adr/adr-094.md) D1):
+            // `total(xs)` for an `xs: Vec[i64]` used to reach `rustc` as
+            // *expected `&[i64]`, found `Vec<i64>`*, about a file nobody wrote.
+            //
+            // **`&mut [T]` is not**, and the distinction is the word: a
+            // position the callee may write through is a declaration
+            // ([ADR-094](../../../docs/specification/adr/adr-094.md) D3) and
+            // gains its `&mut` from that, so both answering would put two
+            // references on one parameter.
+            Ty::Pointed {
+                slice: true,
+                mutable: false,
+                ..
+            } => true,
             _ => false,
         }
     }

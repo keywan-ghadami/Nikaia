@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.126 (Draft)
+**Version:** 0.0.127 (Draft)
 **Date:** 2026-09-21
 
 ---
@@ -324,6 +324,20 @@ Nikaia provides basic types to represent simple values.
       `'\n'`, `'\''`. Iterating a text yields it (`for c in name.chars()`),
       and a `match` over one compares against it (3.4). A text is not a list
       of `char`; turning one into the other is written in the program.
+* **A run of elements:**
+    * `&[T]`: a **view** of a run of `T`, with the same promise `&str` carries
+      one type over — *this points at elements somebody else keeps, no copy
+      and no handle* ([ADR-179](adr/adr-179.md)). It is read with `.len()`,
+      `xs[i]` and `for`, and it is what a `Vec[T]` **crosses as** when a build
+      hands one to the program (10.2, [ADR-079](adr/adr-079.md) D1): a
+      `comptime` declared `&[T]` is a `const` the program reads and nothing
+      allocates. `&[u8]` is the byte buffer that follows from it.
+    * A value a body **built** does not go into one, because a view of a run
+      is gone when whatever owns the run is. Where the program builds the run
+      while it runs, the type is `Vec[T]`; a **parameter** is the one place
+      the `&` is the compiler's to write, so `total(xs)` for a `Vec[i64]`
+      needs no word ([ADR-094](adr/adr-094.md) D1). `NK1179` says which of
+      the two a line is.
 
 **A number may carry a digit separator or a radix prefix, and nothing else**
 ([ADR-136](adr/adr-136.md)). `1_000_000`, `0xFF`, `0b1010` and `0o17` are the

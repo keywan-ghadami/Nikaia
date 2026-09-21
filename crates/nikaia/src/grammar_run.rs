@@ -240,6 +240,13 @@ fn driver(parsed: &Parsed, ask: &Ask<'_>) -> Result<String, Wall> {
         Item::Comptime { .. } => false,
         _ => true,
     });
+    // **The sub-program owns what the program views**
+    // ([ADR-179](../../../docs/specification/adr/adr-179.md) D3): a rule action
+    // builds a `Vec`, so a struct field the program declares `&[T]` is a
+    // `Vec[T]` here. The dump below is generated from the **program's**
+    // declaration and reads a run either way, which is what keeps the two
+    // sides one crossing rather than two opinions.
+    let items = items.growing();
     let lowered = crate::emit::emit_program(&items, crate::emit::Build::default())
         .map_err(|error| Wall::DidNotBuild {
             detail: format!("lowering the grammar: {error:#}"),
@@ -365,6 +372,23 @@ fn dump(parsed: &Parsed, ty: &Ty, expr: &str, depth: usize, out: &mut String) ->
             out.push_str(&format!(
                 "{pad}out.push_str(&format!(\"(i {{}})\", {expr}));\n"
             ));
+            Ok(())
+        }
+        // **A `&[T]` is a run too** (ADR-179 D1), dumped as the list it views.
+        // The sub-program owns a `Vec` where this stands, which `growing`
+        // above is, so what the encoder walks is `.iter()` either way.
+        Ty::Pointed {
+            item,
+            slice: true,
+            mutable: false,
+        } => {
+            let held = format!("__nikaia_{depth}");
+            out.push_str(&format!("{pad}out.push_str(\"(l\");\n"));
+            out.push_str(&format!("{pad}for {held} in {expr}.iter() {{\n"));
+            out.push_str(&format!("{pad}    out.push(' ');\n"));
+            dump(parsed, item, &held, depth + 1, out)?;
+            out.push_str(&format!("{pad}}}\n"));
+            out.push_str(&format!("{pad}out.push(')');\n"));
             Ok(())
         }
         // A list, by either spelling, and an `Array[T, N]` with it: what

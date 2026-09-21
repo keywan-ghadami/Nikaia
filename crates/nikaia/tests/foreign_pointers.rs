@@ -143,16 +143,23 @@ fn the_shapes_do_not_fit_each_other() {
     assert!(Ty::parse("&mut [u8]").fits(&Ty::parse("&mut [u8]")));
 }
 
-/// **Both forms are the C boundary's and nowhere else's** (`NK1158`).
+/// **`&mut` is the C boundary's and nowhere else's** (`NK1158`), and since
+/// 0.0.127 that is the whole of the rule
+/// ([ADR-179](../../../docs/specification/adr/adr-179.md) D1, which supersedes
+/// [ADR-147](../../../docs/specification/adr/adr-147.md) D1 in part).
 ///
 /// A parameter this language may change is written `mut name: T`
 /// ([ADR-094](../../../docs/specification/adr/adr-094.md) D3) — the word goes
 /// in front of the **name**, because what it decides is also what the caller
-/// sees — and a run of elements is a `Vec[T]` or an `Array[T, N]` here, both of
-/// which carry their length.
+/// sees.
+///
+/// **`&[T]` is a type of the language now.** The reasoning that refused it was
+/// *a run of elements whose length the type does not carry has no lowering
+/// here*, which was true of a **declaration** and never of a **view**: `&str`
+/// is exactly such a run and is what Part I 2.2 gives text.
 #[test]
-fn neither_form_is_a_type_away_from_the_boundary() {
-    let refused: Vec<_> = findings(
+fn the_mut_is_the_boundarys_and_the_run_is_not() {
+    let found = findings(
         "fn fill(out: &mut Vec[i64]) {\n\
          \x20   out.push(1)\n\
          }\n\
@@ -162,24 +169,22 @@ fn neither_form_is_a_type_away_from_the_boundary() {
          }\n\
          \n\
          fn main() { println(\"x\") }\n",
-    )
-    .into_iter()
-    .filter(|f| f.code == "NK1158")
-    .collect();
-    assert_eq!(refused.len(), 2, "{refused:#?}");
-    assert!(
-        refused.iter().any(|f| f.message.contains("`&mut`")),
-        "{refused:#?}"
     );
+    let refused: Vec<_> = found.iter().filter(|f| f.code == "NK1158").collect();
+    assert_eq!(refused.len(), 1, "{found:#?}");
+    assert!(refused[0].message.contains("`&mut`"), "{refused:#?}");
     assert!(
-        refused.iter().any(|f| f.message.contains("`[T]`")),
-        "{refused:#?}"
-    );
-    assert!(
-        refused
-            .iter()
-            .any(|f| f.help.as_deref().unwrap_or_default().contains("mut out")),
+        refused[0]
+            .help
+            .as_deref()
+            .unwrap_or_default()
+            .contains("mut out"),
         "and the help names the shape this language does have:\n{refused:#?}"
+    );
+    // …and nothing at all about `total`, whose `&[i64]` is an ordinary type.
+    assert!(
+        found.iter().all(|f| !f.message.contains("`[T]`")),
+        "{found:#?}"
     );
 }
 

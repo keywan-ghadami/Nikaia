@@ -387,3 +387,52 @@ fn the_decoder_reads_every_shape_the_dumper_writes() {
     // And a shape it does not know is said rather than guessed at.
     assert!(decode("(q 1)").is_err());
 }
+
+/// **A rule handing back a run crosses into a `&[T]`**
+/// ([ADR-179](../../../docs/specification/adr/adr-179.md) D1, D3), which is the
+/// crossing [ADR-177](../../../docs/specification/adr/adr-177.md) §5's
+/// measurement said neither corpus grammar had.
+///
+/// The count is not in the type, so the same program takes a file with three
+/// settings in it without the declaration changing — which is the whole of what
+/// an `Array[Setting, N]` could not do.
+///
+/// **D3 is what makes it work at all**: a parser builds a `Vec`, so the
+/// sub-program owns what the program views, and the dump — generated from the
+/// **program's** declaration — reads a run either way.
+#[test]
+fn a_rule_that_hands_back_a_run_crosses_as_a_view() {
+    let (dir, reads) = workshop("grammar-run-view");
+    let source = format!(
+        "{SETTINGS}\n\
+         comptime SETTINGS: &[Setting] = \
+         Cfg::file(\"host = example.com\\nport = 8080\\nuser = ada\\n\")\n\
+         \n\
+         fn main() {{\n\
+         \x20   println(f\"{{SETTINGS.len()}}\")\n\
+         \x20   for s in SETTINGS {{\n\
+         \x20       println(f\"{{s.key}}={{s.value}}\")\n\
+         \x20   }}\n\
+         }}"
+    );
+    assert!(
+        findings_in(&source, &reads).is_empty(),
+        "{:#?}",
+        findings_in(&source, &reads)
+    );
+
+    let parsed = parse_to_ast(&source).expect("parses");
+    let rust = nikaia::emit::emit_program_reading(&parsed, Default::default(), &reads)
+        .expect("lowers")
+        .rust;
+    assert!(
+        rust.contains("const SETTINGS: &[Setting] = &[Setting { key: \"host\""),
+        "{rust}"
+    );
+
+    assert_eq!(
+        run(&dir, &reads, &source),
+        "3\nhost=example.com\nport=8080\nuser=ada\n"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

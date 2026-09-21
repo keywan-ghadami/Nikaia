@@ -384,6 +384,76 @@ impl Parsed {
         }
     }
 
+    /// **Every `&[T]` written back as the `Vec[T]` it is a view of**, for the
+    /// sub-program only ([ADR-179](../../../docs/specification/adr/adr-179.md) D3).
+    ///
+    /// A `&[T]` is the **crossed** form: it is what the program holds once the
+    /// build has handed it over. The build itself does not hold one — a parser
+    /// produces a `Vec`, and a rule action writing `Section { name, settings }`
+    /// with `settings: Vec<Setting>` cannot build a struct whose field is a view
+    /// of a run nobody owns.
+    ///
+    /// So the two programs declare the same struct differently, and that is the
+    /// crossing rather than a disagreement: the sub-program is the **growable**
+    /// side of [ADR-079](../../../docs/specification/adr/adr-079.md) D1 and the
+    /// program is the fixed one. What holds them together is that the **dump** is
+    /// generated from the program's declaration and reads a run either way — so a
+    /// field the sub-program owns arrives as the list the program views.
+    ///
+    /// Fields and variant payloads, which is where a type may stand inside a value
+    /// this crosses. A parameter or a result is untouched: nothing in the
+    /// sub-program calls the program's functions.
+    pub fn growing(&self) -> Parsed {
+        let vec = self.interner.intern_string("Vec");
+        fn grown(ty: &ast::Type, vec: Symbol) -> ast::Type {
+            let mut out = ty.clone();
+            out.generics = out.generics.iter().map(|g| grown(g, vec)).collect();
+            if out.is_slice && !out.is_mut {
+                return ast::Type {
+                    name: vec,
+                    generics: out.generics,
+                    is_view: false,
+                    is_slice: false,
+                    ..out
+                };
+            }
+            out
+        }
+        let mut items = self.program.items.clone();
+        for item in &mut items {
+            match &mut item.node {
+                ast::Item::Struct { fields, .. } => {
+                    for field in fields.iter_mut() {
+                        field.ty = grown(&field.ty, vec);
+                    }
+                }
+                ast::Item::Enum { variants, .. } => {
+                    for variant in variants.iter_mut() {
+                        match &mut variant.fields {
+                            ast::VariantFields::Unit => {}
+                            ast::VariantFields::Tuple(types) => {
+                                for ty in types.iter_mut() {
+                                    *ty = grown(ty, vec);
+                                }
+                            }
+                            ast::VariantFields::Named(fields) => {
+                                for field in fields.iter_mut() {
+                                    field.ty = grown(&field.ty, vec);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Parsed {
+            program: ast::Program { items },
+            interner: self.interner.clone(),
+            aliases: self.aliases.clone(),
+        }
+    }
+
     /// Resolve an identifier back to its text.
     pub fn text(&self, sym: Symbol) -> &str {
         self.interner.resolve(sym)

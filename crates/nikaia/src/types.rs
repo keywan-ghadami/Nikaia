@@ -491,16 +491,27 @@ fn written_at(
     span: &Span,
     out: &mut Vec<Finding>,
 ) {
-    // **`&mut` and `&[T]` are the C boundary's and nowhere else's**
-    // ([ADR-147](../../../docs/specification/adr/adr-147.md) D1). A parameter
+    // **`&mut` is the C boundary's and nowhere else's**
+    // ([ADR-147](../../../docs/specification/adr/adr-147.md) D1): a parameter
     // this language may change is written `mut name: T`
-    // ([ADR-094](../../../docs/specification/adr/adr-094.md) D3), and a run of
-    // elements whose length the type does not carry has no lowering here - so
-    // the two forms are refused outside an `extern "C"` declaration rather than
-    // handed to the language below, which is where `written_foreign` above lets
-    // them through.
-    if ty.is_slice || ty.is_mut {
-        out.push(only_at_the_c_boundary(ty.is_slice, span));
+    // ([ADR-094](../../../docs/specification/adr/adr-094.md) D3), so the form
+    // is refused outside an `extern "C"` declaration rather than handed to the
+    // language below — which is where `written_foreign` above lets it through.
+    //
+    // **`&[T]` is not**, since 0.0.127
+    // ([ADR-179](../../../docs/specification/adr/adr-179.md) D1). It used to
+    // be, on the reasoning that *a run of elements whose length the type does
+    // not carry has no lowering here* — and that was true of a declaration and
+    // never of a **view**: `&str` is exactly such a run and is the type Part I
+    // 2.2 already gives text. What a `&[T]` away from the boundary lowers to
+    // is Rust's own `&[T]`, a fat pointer that carries its length; what it
+    // lowers to **at** the boundary is still D1's address beside D2's count,
+    // and that difference is why the two have separate writers.
+    //
+    // `&mut [T]` is refused for the `mut` rather than for the run, which is
+    // what the message now says.
+    if ty.is_mut {
+        out.push(only_at_the_c_boundary(false, span));
         return;
     }
     // **A function type is not a name**

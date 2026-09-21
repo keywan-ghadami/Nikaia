@@ -4,6 +4,44 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.127] — 2026-09-21
+
+**`&[T]` is a type of this language** — [ADR-179](docs/specification/adr/adr-179.md),
+the owner's Option A on [`open-decisions.md`](docs/open-decisions.md)'s question
+of whether a build-time value may cross as a view into what the build allocated.
+[ADR-079](docs/specification/adr/adr-079.md) D1 has said since it was written
+that a `Vec[T]` arrives as a `&[T]`; four records later it does.
+
+### What was built instead, and where it ran out
+
+- **The array was what the type language could spell**, and [ADR-152](docs/specification/adr/adr-152.md)'s `Array[T, N]` carries its length in its **type**. So a `struct` **field** can be one only where every value of that struct has a run of the same length — and `struct Section { settings: Vec[Setting] }` is the shape **both corpus grammars produce**. [ADR-177](docs/specification/adr/adr-177.md) §5's measurement, *neither grammar in the corpus produces a result that crosses*, is this sentence from the other side.
+- **Two more absences wanted the same type.** A binary asset has no result type an `asset_bytes` could have, and `Bytes` owns its run.
+- **And the spelling already parsed**, for the C boundary. What [ADR-147](docs/specification/adr/adr-147.md) D1 added was a refusal away from it, on the reasoning that *a run of elements whose length the type does not carry has no lowering here* — true of a **declaration** and never of a **view**, since `&str` is exactly such a run and is what Part I 2.2 gives text.
+
+### So there are two writers for one spelling
+
+- **At the C boundary** `&[T]` is still an address beside a count ([ADR-147](docs/specification/adr/adr-147.md) D1, D2); **everywhere else** it is Rust's own `&[T]`, a fat pointer that carries its length. `&mut [T]` and `&mut T` stay the boundary's alone, and `NK1158` is narrowed to that half — the message now names the `mut` rather than the run.
+- **A program reads one** with `.len()`, `xs[i]`, `xs[i].field` and `for`. `std` gains one impl, `Get` for `[V]`, because `[V]` is neither a `Vec<V>` nor a `[V; N]` to the language below and a blanket one would overlap the map's.
+- **A `Vec` is lent to a `&[T]` parameter and the caller writes nothing** — [ADR-094](docs/specification/adr/adr-094.md) D1, the rule `&str` already had. What makes it happen is that a `&[T]` now answers `is_a_view`.
+
+### The crossing is walked against the declaration
+
+- **The same computed list is `[1, 2, 3]` and `&[1, 2, 3]`**, and nothing in the value says which — so the type is walked beside it, down through a struct's fields and a variant's payload, and the `&` lands exactly where a slice was declared. `comptime ROWS: &[Row] = [Row { … }, Row { … }]` reaches the generated file as `const ROWS: &[Row] = &[Row { … }, …];`, with the array literal promoted to `'static` by the `const` itself.
+- **A rule handing back a run crosses now**: `pub rule file -> Vec[Setting]` into `comptime SETTINGS: &[Setting]`, which is the crossing ADR-177's measurement said neither corpus grammar had. What makes it work is D3 — a parser **builds** a `Vec`, so the sub-program owns what the program views, and the dump is generated from the *program's* declaration and reads a run either way.
+- **`examples/config.nika` still does not cross, and that is not a gap.** It parses a file the **user** names on the command line, so what it holds has to be built while the program runs. The crossing is for a file the **build** names.
+
+### `NK1179`, because the two lines look identical
+
+- **A view points at a run somebody else keeps.** A `Vec[T]` a body just built is not one, and there is no `&` the compiler may write for it: a struct outlives the expression that fills it, so the view would point at something already gone ([ADR-107](docs/specification/adr/adr-107.md) D3). Without this `rustc` answered *expected `&[Setting]`, found `Vec<Setting>`* about the generated file, which is [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class.
+- **A parameter is the case where the `&` *is* the compiler's**, which is why this needs a message of its own rather than a fit that quietly holds.
+- **Inside a grammar action the sentence is a different one** (D4): a rule's binding has no type there, so the message may not print a `?` the reader would have to write ([Part III C.2](docs/specification/30-nikaia-tooling.md)). What it names is `Vec[T]`, which is what a parse builds.
+- **And a `comptime`'s own literal is not this**, which is the one line the type was added for: there the run is the build's, and refusing it would be C.4.
+
+### What this does not do
+
+- **`asset_bytes`.** The result type exists now and the read does not; [ADR-072](docs/specification/adr/adr-072.md)'s three-part naming is what it would be written under, and that is a package rather than a line.
+- **The escape question.** D2 refuses the one shape that is certainly wrong; where a view may travel in general is the **Tethered** entry on [`open-work.md`](docs/open-work.md), which is built and read by nothing.
+
 ## [0.0.126] — 2026-09-21
 
 **Tier-1 staging is withdrawn** — [ADR-178](docs/specification/adr/adr-178.md),
