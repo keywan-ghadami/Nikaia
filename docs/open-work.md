@@ -534,14 +534,20 @@ evaluator is handed the files instead, and a body travels with the `Parsed` that
 owns it, because every `parse_to_ast` builds its own interner and a symbol read
 with the wrong one resolves to nothing or to the wrong text.
 
-*What is left of it, and it is deliberate:* a **free name** in a body read from
-another file is not answered. The checker's scope is the file being checked, and
-a body elsewhere names its own file's constants — answering from the wrong scope
-would be a wrong value rather than a missing one, which is the direction
-[ADR-010](specification/adr/adr-010.md) D1 calls a vulnerability generator. The
-refusal says so and offers the two ways out: pass it in, or move the `comptime`
-beside the body that reads it. What it wants is a per-file constant scope, and
-nothing has asked for one.
+*And a constant it reads comes from its own file, at 0.0.116.* 0.0.115 refused
+that, on the grounds that answering from the checker's scope would be a wrong
+value rather than a missing one — [ADR-010](specification/adr/adr-010.md) D1's
+direction. The premise was right and the conclusion was one step short: the
+scope to read is the one the **body** came from, and while a foreign body runs
+that file is what the evaluator is holding. So the constant is looked up as the
+**item** it is, in the file that wrote it.
+
+*Which made a second thing true, and it was a defect:* a constant may stand
+above the one it reads. Items are order-independent — a function declared below
+its caller has always been callable — and a constant was not, because the walk
+that binds them goes down the file: `comptime A = B * 2` above
+`comptime B = 21` was `NK1117`, *nothing declares `B`*, on a line whose
+successor declares it. And the ring that buys is `NK1168`, said once and named.
 
 *And a method of this program folds, at 0.0.114* — the wall the owner asked
 about. It was never `sync`, which is the **permission**

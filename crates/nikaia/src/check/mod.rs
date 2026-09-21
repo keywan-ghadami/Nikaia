@@ -540,6 +540,7 @@ pub fn check_against<'a>(
         newly,
         parsed,
         beside,
+        said_rings: BTreeSet::new(),
         own,
         library,
         structs: BTreeMap::new(),
@@ -1251,6 +1252,12 @@ struct Checker<'a> {
     /// `--input` outside a project. It carries `Parsed` and not just items,
     /// because each one owns the interner its symbols resolve in.
     beside: &'a [&'a Parsed],
+    /// The rings of constants this walk has already reported, by their members.
+    ///
+    /// Every constant in a ring is circular, and each would report the same
+    /// loop from a different corner — which is one mistake said as many times
+    /// as it has members.
+    said_rings: BTreeSet<Vec<String>>,
     /// This unit's own contracts, inferred from the source being checked.
     own: &'a Ledger,
     /// `std`'s, as `std` ships them.
@@ -8160,11 +8167,57 @@ impl<'a> Checker<'a> {
                 self.a_build_time_index_is_not_there(at, len, span);
                 (None, true)
             }
+            Err(build_time::Refusal::Circular { ring }) => {
+                self.a_constant_built_from_itself(bound, &ring, span);
+                (None, true)
+            }
             Err(build_time::Refusal::NotHere { what, why, way_out }) => {
                 self.a_build_time_body_that_is_not_here(bound, &what, why, way_out, span);
                 (None, true)
             }
         }
+    }
+
+    /// **`NK1168`: a constant worked out from itself.**
+    ///
+    /// The cost of making a constant behave like the item it is: once
+    /// `comptime A = B * 2` may stand above `comptime B = 21`, the ring
+    /// `comptime A = B` beside `comptime B = A` becomes writable — and it has
+    /// no base case to reach, so nothing would end it.
+    ///
+    /// **Not the call depth** ([ADR-075](../../docs/specification/adr/adr-075.md)
+    /// D4's neighbour), which catches a recursion that *would* terminate if the
+    /// stack were deeper and says so. This one never would, and the message
+    /// names the ring rather than a limit that has nothing to do with it.
+    fn a_constant_built_from_itself(&mut self, bound: &str, ring: &[String], span: &Span) {
+        // **One ring, one error.** Every constant in it is circular and each
+        // would report the same loop from a different corner — which is one
+        // mistake said as many times as it has members.
+        let mut sorted: Vec<String> = ring.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        if !self.said_rings.insert(sorted) {
+            return;
+        }
+        let named: Vec<String> = ring.iter().map(|name| format!("`{name}`")).collect();
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1168",
+            // **The constant on this line**, which is the one the reader
+            // declared; the ring below says where it goes.
+            message: format!("`{bound}` is worked out from itself"),
+            notes: vec![format!(
+                "the ring is {} - a `comptime` must fold (ADR-073 D3), and nothing in \
+                 this one reaches a value that does not need the next",
+                named.join(" → ")
+            )],
+            help: Some(
+                "give one of them a value that stands on its own, or make the \
+                 dependent one a `let`, where it is computed while the program runs"
+                    .to_string(),
+            ),
+        });
     }
 
     /// **`NK1127`, with the wall it met named** rather than a catalogue of what
@@ -9909,6 +9962,28 @@ impl<'a> Checker<'a> {
     /// between the two places is where the name is visible and nothing else).
     fn item_constants(&mut self) {
         self.scope.push(Vec::new());
+        // **Every name first, because a constant is an item.** A function
+        // declared below its caller has always been callable — items are
+        // order-independent — and a constant was not, because this walk goes
+        // down the file and binds as it goes. So `comptime A = B * 2` above
+        // `comptime B = 21` was `NK1117`, *nothing declares `B`*: a correct
+        // program refused ([Part III C.4](../../docs/specification/30-nikaia-tooling.md))
+        // with a sentence that was not true, since the next line declares it.
+        //
+        // The type is the **declared** one where there is one and `?` where
+        // there is not — which says nothing, and is what a name whose value
+        // this walk has not reached yet honestly is. The binding below shadows
+        // it with the answer.
+        for item in &self.parsed.program.items {
+            let Item::Comptime { name, ty, .. } = &item.node else {
+                continue;
+            };
+            let declared = ty
+                .as_ref()
+                .map(|ty| self.declared(ty, &item.span))
+                .unwrap_or(Ty::Unknown);
+            self.bind_with(self.parsed.text(*name).to_string(), declared, None);
+        }
         for item in &self.parsed.program.items {
             let Item::Comptime {
                 name, ty, value, ..

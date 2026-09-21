@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.116] — 2026-09-21
+
+**A constant is an item, and an item is visible wherever its file is** — which
+answers 0.0.115's one deliberate limit and a defect that had been sitting beside
+it.
+
+### Fixed
+
+- **A constant may stand above the one it reads.** `comptime A: i64 = B * 2` over `comptime B: i64 = 21` was `NK1117`, *nothing declares `B`* — on a line whose successor declares it. That is a **correct program refused** ([C.4](docs/specification/30-nikaia-tooling.md)) with a sentence that is not true, and it was odd twice over: a **function** declared below its caller has always been callable, from a `comptime` included, because items are order-independent. A constant was not, because the walk that binds them goes down the file.
+- **And a constant a foreign body reads comes from its own file.** 0.0.115 refused that, on the grounds that answering from the checker's scope would be a **wrong value** rather than a missing one — [ADR-010](docs/specification/adr/adr-010.md) D1's direction. The premise was right and the conclusion was one step short: the scope to read is the one the **body** came from, and while a foreign body runs that file is exactly what the evaluator is holding. Measured on a four-file project that builds and runs.
+
+### Added
+
+- **`NK1168`: a constant worked out from itself.** The cost of the above: once a constant may read one declared later, `comptime A = B` beside `comptime B = A` becomes writable, and it has no base case to reach. **Not the call depth** ([ADR-075](docs/specification/adr/adr-075.md) D4's neighbour), which catches a recursion that *would* end if the stack were deeper and says so — this one never would. The message names the ring: *the ring is `B` → `A` → `B`*.
+- **One ring, one error.** Every constant in a ring is circular and each would report the same loop from a different corner, which is one mistake said as many times as it has members.
+
+### Changed
+
+- `item_constants` declares every name before it evaluates any, which is what makes an item behave like one. The type is the **declared** one where there is one and `?` where there is not — which says nothing, and is what a name this walk has not reached the value of honestly is.
+
 ## [0.0.115] — 2026-09-21
 
 **A `comptime` reaches across a file boundary** — and the ledger needed nothing

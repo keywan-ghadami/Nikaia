@@ -158,6 +158,13 @@ pub enum Refusal {
         /// asks for a way out, and one that cannot be taken is not one.
         way_out: &'static str,
     },
+    /// A constant worked out from itself.
+    ///
+    /// Not the call depth above, which is a *recursion* that would terminate if
+    /// the stack were deeper. This one never does: `comptime A = B` beside
+    /// `comptime B = A` has no base case to reach, and the message names the
+    /// ring rather than the limit it hit.
+    Circular { ring: Vec<String> },
     /// An index this array does not have. **Understood and wrong**, like
     /// `NotAllowed` and unlike `Unevaluable`: the program says `xs[7]` of five
     /// elements, and a build that answered *cannot evaluate* would send the
@@ -191,6 +198,14 @@ pub struct BuildTime<'a> {
     /// Whether the body being read came from a file other than the one being
     /// checked — see [`BuildTime::call`] for what it costs.
     foreign: bool,
+    /// The item-level constants being worked out, innermost last.
+    ///
+    /// **A constant is an item, so it is visible wherever its file is** — which
+    /// makes `comptime A = B * 2` above `comptime B = 21` a program, and makes
+    /// `comptime A = B` beside `comptime B = A` one this has to refuse rather
+    /// than run forever. The stack is what tells the two apart, and it names
+    /// the ring.
+    resolving: Vec<String>,
 }
 
 impl<'a> BuildTime<'a> {
@@ -207,6 +222,7 @@ impl<'a> BuildTime<'a> {
             known,
             depth: 0,
             foreign: false,
+            resolving: Vec::new(),
         }
     }
 
@@ -226,39 +242,25 @@ impl<'a> BuildTime<'a> {
             // value somebody could have written down.
             Expr::LitInterpolated(literal) => self.interpolated(literal, frame),
             Expr::Variable(name) => {
-                let name = self.parsed.text(*name);
-                frame
-                    .get(name)
-                    .cloned()
-                    // **A free name is the *checking* file's scope**, so it is
-                    // asked only while the body is that file's. A body read
-                    // from another file names its own file's constants, and
-                    // answering those from this one's scope would be a wrong
-                    // value rather than a missing one — the direction
-                    // [ADR-010](../../../docs/specification/adr/adr-010.md) D1
-                    // calls a vulnerability generator. Unevaluable is the
-                    // fail-closed half, and `open-work.md` carries the rest.
-                    .or_else(|| match self.foreign {
-                        true => None,
-                        false => (self.known)(name),
-                    })
-                    .ok_or_else(|| match self.foreign {
-                        // **Named rather than shrugged at.** A reader looking
-                        // at a `sync` function two files over, whose body reads
-                        // one constant, is owed the reason — and it is not the
-                        // catalogue of what this evaluator reads.
-                        true => Refusal::NotHere {
-                            what: name.to_string(),
-                            why: "it is read by a body in another file, and a free name \
-                                  there is resolved in the file being checked - which \
-                                  is not the one that wrote it. Answering from the \
-                                  wrong scope would be a wrong value rather than a \
-                                  missing one, so it is not answered at all",
-                            way_out: "pass it in as an argument, or move the `comptime` \
-                                      beside the body that reads it",
-                        },
-                        false => Refusal::Unevaluable,
-                    })
+                let name = self.parsed.text(*name).to_string();
+                if let Some(held) = frame.get(&name) {
+                    return Ok(held.clone());
+                }
+                // **The checking file's scope**, which holds what the walk
+                // above this one has already worked out. Asked only while the
+                // body is that file's: a body read elsewhere names its own
+                // file's constants, and this scope is not that file's.
+                if !self.foreign {
+                    if let Some(known) = (self.known)(&name) {
+                        return Ok(known);
+                    }
+                }
+                // …and otherwise the **item**, read from the file that wrote
+                // it. A constant is an item, so it is visible wherever its file
+                // is — which is what makes a forward reference a program, and
+                // what lets a body in another file name its own constants
+                // without this one guessing from the wrong scope.
+                self.constant_item(&name)
             }
             Expr::Unary { op, expr } => {
                 let inner = self.expr(expr, frame)?;
@@ -582,6 +584,46 @@ impl<'a> BuildTime<'a> {
         }
         flush(&mut chunk, &mut out)?;
         Ok(Value::Text(out))
+    }
+
+    /// **A constant of this file, worked out on demand.**
+    ///
+    /// The one lookup that makes a constant behave like the item it is. A
+    /// function declared below its caller has always been callable — items are
+    /// order-independent — and a constant was not, because the walk that binds
+    /// them goes down the file. So `comptime A = B * 2` above `comptime B = 21`
+    /// was *nothing declares `B`*, which was a **correct program refused** with
+    /// a sentence that was not true: the next line declares it.
+    ///
+    /// **And the ring is refused by name.** `comptime A = B` beside
+    /// `comptime B = A` has no base case to reach, so it is not the call depth
+    /// that catches it — the stack of names being worked out is, and it can say
+    /// which ones.
+    fn constant_item(&mut self, name: &str) -> Result<Value, Refusal> {
+        if self.resolving.iter().any(|held| held == name) {
+            let mut ring = self.resolving.clone();
+            ring.push(name.to_string());
+            return Err(Refusal::Circular { ring });
+        }
+        let value = self
+            .parsed
+            .program
+            .items
+            .iter()
+            .find_map(|item| match &item.node {
+                Item::Comptime {
+                    name: declared,
+                    value,
+                    ..
+                } if self.parsed.text(*declared) == name => Some(value.clone()),
+                _ => None,
+            })
+            .ok_or(Refusal::Unevaluable)?;
+
+        self.resolving.push(name.to_string());
+        let out = self.expr(&value, &BTreeMap::new());
+        self.resolving.pop();
+        out
     }
 
     /// **A method this evaluator has no receiver for.**

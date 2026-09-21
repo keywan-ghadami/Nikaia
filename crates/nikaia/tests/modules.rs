@@ -743,16 +743,17 @@ fn a_comptime_calls_across_a_file_boundary() {
     assert_eq!(run(&entry, Build::default()).trim(), "14 [nikaia] 51");
 }
 
-/// **And a free name in a foreign body is not answered from the wrong scope.**
+/// **And a constant a foreign body reads is answered from *its own* file**
+/// (0.0.116).
 ///
-/// A body read from another file names *that* file's constants, and the
-/// checker's scope is the file being checked. Answering from it would be a
-/// **wrong value** rather than a missing one, which is the direction
-/// [ADR-010](../../../docs/specification/adr/adr-010.md) D1 calls a
-/// vulnerability generator — so it is not answered at all, and the refusal says
-/// which limit it met.
+/// 0.0.115 refused it, on the grounds that the checker's scope is the file
+/// being checked and answering from it would be a **wrong value** rather than a
+/// missing one — [ADR-010](../../../docs/specification/adr/adr-010.md) D1's
+/// direction. The premise was right and the conclusion was one step short: the
+/// scope to read is the one the **body** came from, and while a foreign body is
+/// being run that file is exactly what the evaluator is holding.
 #[test]
-fn a_constant_a_foreign_body_reads_is_not_guessed_at() {
+fn a_constant_a_foreign_body_reads_comes_from_its_own_file() {
     // **A real project**, because `--input` outside one is a single file
     // (ADR-047 D1) and would meet a different wall: nothing declares `scaled`
     // at all there.
@@ -782,11 +783,8 @@ fn a_constant_a_foreign_body_reads_is_not_guessed_at() {
         .output()
         .expect("the compiler runs");
     let said = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{said}");
-    assert!(said.contains("NK1127"), "{said}");
-    assert!(
-        said.contains("`SCALE`") && said.contains("resolved in the file being checked"),
-        "it names the constant and the limit:\n{said}"
-    );
+    assert!(out.status.success(), "{said}");
+    let rust = std::fs::read_to_string(dir.join("src/main.rs")).expect("the lowering");
+    assert!(rust.contains("const X: i64 = 14;"), "{rust}");
     let _ = std::fs::remove_dir_all(&dir);
 }

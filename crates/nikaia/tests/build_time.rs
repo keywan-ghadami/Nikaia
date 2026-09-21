@@ -850,3 +850,52 @@ fn a_field_a_const_cannot_hold_is_named_and_the_way_out_works() {
     assert!(findings(taken).is_empty(), "{:#?}", findings(taken));
     assert_eq!(ran("a struct that crosses", taken).trim(), "bag 6");
 }
+
+/// **A constant is an item, so it is visible wherever its file is** (0.0.116).
+///
+/// A function declared below its caller has always been callable — items are
+/// order-independent — and a constant was not, because the walk that binds them
+/// goes down the file. `comptime A = B * 2` above `comptime B = 21` was
+/// `NK1117`, *nothing declares `B`*: a **correct program refused**
+/// ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)) with a
+/// sentence that was not true, since the next line declares it.
+#[test]
+fn a_constant_may_stand_above_the_one_it_reads() {
+    let source = "comptime A: i64 = B * 2\n\
+                  comptime B: i64 = 21\n\
+                  fn main() { println(f\"{A}\") }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    let rust = lowered(source);
+    assert!(rust.contains("const A: i64 = 42;"), "{rust}");
+    assert!(rust.contains("const B: i64 = 21;"), "{rust}");
+}
+
+/// **`NK1168`: and the ring that buys**, refused by name.
+///
+/// Once a constant may read one declared later, `comptime A = B` beside
+/// `comptime B = A` becomes writable — and it has no base case to reach, so it
+/// is not the call depth that catches it ([ADR-075](../../../docs/specification/adr/adr-075.md)
+/// D4's neighbour, which is about a recursion that *would* end if the stack
+/// were deeper). The stack of names being worked out is, and it can say which.
+#[test]
+fn a_ring_of_constants_is_refused_once_and_named() {
+    let found = findings(
+        "comptime A: i64 = B\n\
+         comptime B: i64 = A\n\
+         fn main() { println(f\"{A}\") }\n",
+    );
+    let rings: Vec<&nikaia::check::Finding> = found.iter().filter(|f| f.code == "NK1168").collect();
+    // **One ring, one error.** Both constants are circular and each would
+    // report the same loop from a different corner.
+    assert_eq!(rings.len(), 1, "{found:#?}");
+    assert!(
+        rings[0].message.contains("`A` is worked out from itself"),
+        "the constant on this line: {}",
+        rings[0].message
+    );
+    assert!(
+        rings[0].notes[0].contains("`B` → `A` → `B`"),
+        "and the ring it goes round: {:#?}",
+        rings[0].notes
+    );
+}
