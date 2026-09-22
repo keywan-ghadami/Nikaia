@@ -17,6 +17,7 @@ pub struct Part<'a> {
 pub struct Fun<'a> {
     pub name: &'a str,
     pub generics: &'a str,
+    pub wheres: &'a str,
     pub pauses: bool,
     pub parts: Vec<Part<'a>>,
     pub result: &'a str,
@@ -132,8 +133,8 @@ grammar! {
             -> { f }
 
         rule method -> Fun<'a> =
-            pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result where_clause tail
-            -> { Fun { name, generics: g, pauses, parts, result } }
+            pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result w:where_clause tail
+            -> { Fun { name, generics: g, wheres: w, pauses, parts, result } }
 
         rule qualifiers -> bool =
             qs:qualifier*
@@ -296,11 +297,11 @@ grammar! {
           | empty
             -> { "" }
 
-        rule where_clause =
-            WHERE WHERE_RUN
-            -> { }
+        rule where_clause -> &'a str =
+            WHERE w:text(WHERE_RUN)
+            -> { w.trim() }
           | empty
-            -> { }
+            -> { "" }
 
         rule PARAM_TYPE -> &'a str =
             s:text(PARAM_RUN)

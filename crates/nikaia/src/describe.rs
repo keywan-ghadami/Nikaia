@@ -69,7 +69,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use crate::contracts::{ty::Ty, FnContract, Ledger, Signature, Sync, TypeContract};
+use crate::contracts::{ty::Ty, FnContract, Ledger, Notes, Signature, Sync, TypeContract};
 
 /// What a run of the command did, for the line it prints.
 #[derive(Debug)]
@@ -85,6 +85,10 @@ pub struct Described {
     /// The names the program writes that no `pub` signature answered — D5's
     /// `?`, named so a reviewer knows what to fill rather than what to find.
     pub unanswered: Vec<String>,
+    /// What the describer **saw and did not claim**
+    /// ([ADR-193](../../docs/specification/adr/adr-193.md) D3, D5), written
+    /// into the file as comments.
+    pub notes: Notes,
 }
 
 /// Write `contracts/<crate>.contracts` for the crate the program calls.
@@ -95,7 +99,7 @@ pub fn describe(root: &Path, crate_word: &str) -> Result<Described> {
     let path = directory.join(format!("{crate_word}.contracts"));
     std::fs::write(
         &path,
-        ledger.render_description(crate_word, &written.version),
+        ledger.render_description(crate_word, &written.version, &written.notes),
     )
     .with_context(|| format!("{}", path.display()))?;
     written.path = path;
@@ -175,12 +179,63 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
         );
     }
 
+    // **What the describer saw and did not claim**
+    // ([ADR-193](../../docs/specification/adr/adr-193.md) D3, D5), gathered
+    // after the entries because a proposal is written above the one it is
+    // about.
+    let mut notes = Notes::default();
+    if !surface.promises.is_empty() {
+        notes.about_the_crate.push(
+            "**This crate makes promises the toolchain cannot check** (ADR-193 D5). A tool"
+                .to_string(),
+        );
+        notes.about_the_crate.push(
+            "can see that the promise was made; it cannot see whether it is true - which is"
+                .to_string(),
+        );
+        notes.about_the_crate.push(
+            "the line between a rule the toolchain enforces and one it inherits:".to_string(),
+        );
+        for promise in &surface.promises {
+            notes.about_the_crate.push(format!("  {promise}"));
+        }
+    }
+    for name in &wanted {
+        let Some(function) = surface
+            .reachable
+            .get(name)
+            .and_then(|at| surface.functions.get(at))
+        else {
+            continue;
+        };
+        let bound: Vec<String> = function.sent_across().collect();
+        if bound.is_empty() {
+            continue;
+        }
+        let key = format!("{crate_word}::{name}");
+        notes.about_a_function.insert(
+            key,
+            vec![
+                format!(
+                    "`{name}`: {} is bound `Send`.",
+                    a_list(&bound, "the parameter", "the parameters")
+                ),
+                "  Does this put it on a thread?  -> threads = true | false".to_string(),
+                "  Seen and not claimed (ADR-193 D3): a `Send` bound says the callee **may**"
+                    .to_string(),
+                "  send it, which is usually `spawn` and is sometimes an API keeping a door open."
+                    .to_string(),
+            ],
+        );
+    }
+
     let described = Described {
         path: PathBuf::new(),
         version: sources.version,
         functions: ledger.functions.len(),
         types: ledger.types.len(),
         unanswered,
+        notes,
     };
     Ok((ledger, described))
 }
@@ -479,6 +534,13 @@ struct Surface {
     /// `pub use` items, kept until every file has been read: one may name
     /// something another file declares.
     exports: Vec<Export>,
+    /// Every `unsafe impl Trait for Type` the crate writes, as the sentence a
+    /// reader wants ([ADR-193](../../docs/specification/adr/adr-193.md) D5).
+    ///
+    /// **Whatever the type's visibility.** The promise is the crate's, and the
+    /// hole `examples/foreign-runtime/shim` opens on purpose is a `Smuggled<T>`
+    /// nothing else can see.
+    promises: Vec<String>,
 }
 
 /// One name a `pub use` offers, or a whole module where it is a glob.
@@ -535,9 +597,19 @@ impl Surface {
                     self.modules.insert(path.clone(), g.visible);
                     self.walk(&g.items, &path);
                 }
-                // An `impl` and a `trait` are not described yet: what a method
-                // is at a foreign boundary is [ADR-104](../../docs/specification/adr/adr-104.md)
-                // D4's own question and nothing here asks it.
+                // **An `unsafe impl` is a promise the toolchain cannot check**
+                // ([ADR-193](../../docs/specification/adr/adr-193.md) D5), and
+                // one syntactic pattern is all it takes to see that it was
+                // made. Sound in the only sense that matters here: the item is
+                // in the text or it is not.
+                Item::Group(g) if g.what == "unsafe impl" && !g.via.is_empty() => {
+                    self.promises
+                        .push(format!("unsafe impl {} for {}", g.via, g.name));
+                }
+                // Every other `impl` and every `trait`: not described yet. What
+                // a method is at a foreign boundary is
+                // [ADR-104](../../docs/specification/adr/adr-104.md) D4's own
+                // question and nothing here asks it.
                 Item::Group(_) => {}
             }
         }
@@ -770,6 +842,30 @@ fn named(one: &str) -> Option<(String, String)> {
     }
 }
 
+/// Whether a bound list names `Send` as a **word**.
+///
+/// `not(WORD)` in prose: `Sender` and `Resend` contain the letters and are not
+/// the bound, and a reader that matched the text alone would propose a note
+/// about a parameter nothing sends.
+fn bounds_send(text: &str) -> bool {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|word| word == "Send")
+}
+
+/// `a` / `a and b` / `a, b and c`, with the right article in front.
+fn a_list(names: &[String], one: &str, many: &str) -> String {
+    let quoted: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+    let word = match quoted.len() {
+        1 => one,
+        _ => many,
+    };
+    match quoted.split_last() {
+        None => String::new(),
+        Some((last, [])) => format!("{word} {last}"),
+        Some((last, rest)) => format!("{word} {} and {last}", rest.join(", ")),
+    }
+}
+
 /// The type constructors that make a value **not sendable** in the language
 /// below ([ADR-123](../../docs/specification/adr/adr-123.md) D2).
 ///
@@ -797,6 +893,15 @@ struct Function {
     args: Vec<(String, String)>,
     /// The text after `->`, where there is one.
     result: Option<String>,
+    /// The type parameters' bounds, as they were written: the `<…>` list and
+    /// the `where` clause, joined.
+    ///
+    /// Read for one thing only — whether a parameter is bound `Send`
+    /// ([ADR-193](../../docs/specification/adr/adr-193.md) D4). Every safe way
+    /// of reaching another thread carries that bound, so a crate that takes a
+    /// value across a thread boundary in safe Rust demands it of its caller and
+    /// says so here.
+    bounds: String,
     /// `async fn` — a plain `fn` is `sync` (D3).
     pauses: bool,
 }
@@ -829,8 +934,42 @@ impl Function {
                 true => None,
                 false => Some(f.result.to_string()),
             },
+            bounds: format!("{}, {}", f.generics, f.wheres),
             pauses: f.pauses,
         }
+    }
+
+    /// **The parameters a `Send` bound reaches**, in declaration order
+    /// ([ADR-193](../../docs/specification/adr/adr-193.md) D4).
+    ///
+    /// Two shapes, and both are the same evidence: a parameter whose type is a
+    /// type variable the bounds send, and one written `impl … Send …` at the
+    /// parameter itself. Rust's own type system does the propagation, and the
+    /// answer surfaces in the signature — which is why this is not a heuristic
+    /// and why the shim's `across_a_thread_unchecked` is correctly silent: an
+    /// `unsafe impl Send` took its bound away, and only following the calls
+    /// reaches the `spawn`.
+    fn sent_across(&self) -> impl Iterator<Item = String> + '_ {
+        let sent = self.sends();
+        self.args.iter().filter_map(move |(name, ty)| {
+            let ty = ty.trim();
+            let named = ty.trim_start_matches(['&', ' ']).trim();
+            let named = named.strip_prefix("mut ").unwrap_or(named);
+            let reached = sent.iter().any(|p| p == named) || bounds_send(ty);
+            reached.then(|| name.clone())
+        })
+    }
+
+    /// The type parameters this signature binds `Send`.
+    fn sends(&self) -> BTreeSet<String> {
+        split_top_level(&self.bounds)
+            .into_iter()
+            .filter_map(|one| {
+                let (name, bound) = one.split_once(':')?;
+                bounds_send(bound).then(|| name.trim().to_string())
+            })
+            .filter(|name| !name.is_empty() && !name.starts_with('\''))
+            .collect()
     }
 
     /// The entry, and the crate types its signature named.

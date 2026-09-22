@@ -93,6 +93,16 @@ pub struct Fun {
     // and empty where there are none. Not split here, for the reason
     // `Item::Export` gives: splitting a list is string work.
     pub generics: ref String,
+    // The `where` clause's text, without the word, and empty where there is
+    // none.
+    //
+    // **Kept because a bound is evidence.** Every safe way of reaching another
+    // thread carries `Send`, so a foreign function that takes a value across a
+    // thread boundary in safe Rust demands it of its caller - and says so here
+    // or in `generics` above
+    // ([ADR-193](../../../../docs/specification/adr/adr-193.md) D4). A reader
+    // that dropped this would see half the bounds a crate writes.
+    pub wheres: ref String,
     // `async fn` - a plain `fn` is `sync` (ADR-104 D3).
     pub pauses: bool,
     pub parts: Vec[Part],
@@ -216,8 +226,8 @@ grammar Rust {
     rule function -> Fun = PUB f:method -> { f }
 
     rule method -> Fun =
-        pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result where_clause tail -> {
-            Fun { name, generics: g, pauses, parts, result }
+        pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result w:where_clause tail -> {
+            Fun { name, generics: g, wheres: w, pauses, parts, result }
         }
 
     // `const`, `unsafe` and `extern "C"` may stand between `pub` and `fn`, and
@@ -360,7 +370,9 @@ grammar Rust {
           "<" g:text(ANGLE_INNER) ">" -> { g.trim() }
         | empty -> { "" }
 
-    rule where_clause = WHERE WHERE_RUN -> { } | empty -> { }
+    rule where_clause -> ref String =
+          WHERE w:text(WHERE_RUN) -> { w.trim() }
+        | empty -> { "" }
 
     // ---- what a type looks like, where it stops ------------------------
     //

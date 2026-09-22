@@ -443,6 +443,22 @@ pub enum Crosses {
     Undecided,
 }
 
+/// **What a describer saw and did not claim**
+/// ([ADR-193](../../../../docs/specification/adr/adr-193.md) D3, D5).
+///
+/// Rendered as comments into `contracts/<crate>.contracts` and never parsed
+/// back. The distinction the record rests on: [ADR-123](../../../../docs/specification/adr/adr-123.md)
+/// D2 lets the describer *fill* `crosses` because a field holding an `Rc`
+/// **entails** not sendable; nothing a signature can show entails *threads*, so
+/// what it saw is a sentence and the column stays a person's.
+#[derive(Debug, Clone, Default)]
+pub struct Notes {
+    /// About the crate: the `unsafe impl Send`/`Sync` items it contains (D5).
+    pub about_the_crate: Vec<String>,
+    /// About one entry, by the key it is written under (D3).
+    pub about_a_function: BTreeMap<String, Vec<String>>,
+}
+
 /// Whether a **function** starts a thread of its own
 /// ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1).
 ///
@@ -1718,7 +1734,7 @@ impl Ledger {
     /// not say what a field does — D5 expects the edit rather than tolerating
     /// it, and a file that told its reader not to make one would be telling
     /// them not to do the thing the record asks of them.
-    pub fn render_description(&self, crate_name: &str, version: &str) -> String {
+    pub fn render_description(&self, crate_name: &str, version: &str, notes: &Notes) -> String {
         let mut out = String::new();
         out.push_str(&format!(
             "# The boundary of `{crate_name}`, described before it is called\n"
@@ -1743,12 +1759,34 @@ impl Ledger {
         out.push_str("# silence as nothing at all is the polarity ADR-010 D1 forbids.\n");
         out.push_str("#\n");
         out.push_str(&format!("# crate: {crate_name} {version}\n"));
-        self.render_from(&mut out);
+        // **What the describer saw and did not claim**
+        // ([ADR-193](../../../../docs/specification/adr/adr-193.md) D3, D5),
+        // before the entries because it is about the crate rather than about
+        // one of them.
+        if !notes.about_the_crate.is_empty() {
+            out.push_str("#\n");
+            for line in &notes.about_the_crate {
+                out.push_str(&format!("# {line}\n"));
+            }
+        }
+        self.render_from_with(&mut out, notes);
         out
     }
 
     /// The header line and everything after it, shared by both renderings.
     fn render_from(&self, out: &mut String) {
+        self.render_from_with(out, &Notes::default());
+    }
+
+    /// The same, with the describer's notes spliced above the entries they are
+    /// about.
+    ///
+    /// **A comment and not a column** ([ADR-193](../../../../docs/specification/adr/adr-193.md)
+    /// D3): what the describer saw does not *entail* an answer, so writing it
+    /// as a claim could refuse a correct program. It is never parsed back —
+    /// this is a sentence for the person who reviews the file, and the whole
+    /// point is that they write the column or do not.
+    fn render_from_with(&self, out: &mut String, notes: &Notes) {
         out.push_str(&format!("version = {}\n", self.version));
         out.push_str(&format!("toolchain = \"{}\"\n", self.toolchain));
         out.push_str(&format!("inference = \"{}\"\n", self.inference));
@@ -1765,7 +1803,13 @@ impl Ledger {
         }
 
         for (name, contract) in &self.functions {
-            out.push_str(&format!("\n[fn.\"{name}\"]\n"));
+            out.push('\n');
+            if let Some(lines) = notes.about_a_function.get(name) {
+                for line in lines {
+                    out.push_str(&format!("# {line}\n"));
+                }
+            }
+            out.push_str(&format!("[fn.\"{name}\"]\n"));
             if contract.public {
                 out.push_str("pub = true\n");
             }

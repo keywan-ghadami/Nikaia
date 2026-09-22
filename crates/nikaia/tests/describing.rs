@@ -78,7 +78,7 @@ fn project_of_files(name: &str, crate_files: &[(&str, &str)], program: &str) -> 
 /// The entries of a draft, as the file would read them.
 fn entries(root: &Path) -> String {
     let (ledger, described) = draft(root, "fremd").expect("the draft is written");
-    let text = ledger.render_description("fremd", &described.version);
+    let text = ledger.render_description("fremd", &described.version, &described.notes);
     let _ = std::fs::remove_dir_all(root);
     text
 }
@@ -203,6 +203,108 @@ fn a_module_is_a_file_as_often_as_it_is_a_block() {
     assert!(text.contains("[fn.\"fremd::rescued\"]"), "{text}");
     // Declared nowhere: fail-closed, at either path a caller might guess.
     assert!(!text.contains("adrift"), "{text}");
+}
+
+/// **The describer proposes and never claims**
+/// ([ADR-193](../../../docs/specification/adr/adr-193.md) D3), and **flags the
+/// promise a toolchain cannot check** (D5) — both on the repository's own shim,
+/// which has all three of D4's shapes in it on purpose.
+///
+/// * `across_a_thread<T: Describe + Send + 'static>` — the bound is there, so
+///   the note is. Every **safe** way of reaching another thread carries it and
+///   Rust's own type system does the propagation, which is why this is not a
+///   heuristic.
+/// * `across_a_thread_unchecked<T: Describe + 'static>` — the bound is gone,
+///   because an `unsafe impl Send` took it away, and only a call graph reaches
+///   the `spawn`. **Correctly silent.**
+/// * `unsafe impl<T> Send for Smuggled<T>` — one syntactic pattern, and sound
+///   in the only sense that matters: the item is in the text or it is not. It
+///   is the hole every other step in D4 is blind to, and `Smuggled` is a
+///   **private** type nothing else here can see.
+///
+/// And what none of it can do, which the note has to say: a tool can see that
+/// the promise was made and not whether it is true.
+#[test]
+fn what_the_describer_saw_is_a_note_and_never_a_column() {
+    let described = |project: &str| {
+        let root = repo_root().join("examples/foreign-runtime").join(project);
+        let (ledger, described) = draft(&root, "hyper_shim").expect("the draft is written");
+        ledger.render_description("hyper_shim", &described.version, &described.notes)
+    };
+
+    // **D5 is about the crate**, so every draft of it carries the flag - the
+    // program that calls the lying function and the one that does not.
+    for project in ["crossing", "smuggled"] {
+        let text = described(project);
+        assert!(
+            text.contains("unsafe impl Send for Smuggled<T>"),
+            "{project}: the promise is named:\n{text}"
+        );
+        assert!(
+            text.contains("cannot see whether it is true"),
+            "{project}: and what the tool cannot do is said:\n{text}"
+        );
+        assert!(
+            !text.contains("\nthreads ="),
+            "{project}: and nothing is claimed - the column stays a person's:\n{text}"
+        );
+    }
+
+    // **D3 is about one entry**, and stands above it.
+    let text = described("crossing");
+    let above = text
+        .split("[fn.\"hyper_shim::across_a_thread\"]")
+        .next()
+        .expect("the text before the entry");
+    assert!(
+        above.contains("the parameter `value` is bound `Send`"),
+        "the evidence is named:\n{text}"
+    );
+    assert!(
+        above.contains("threads = true | false"),
+        "and the question is asked:\n{text}"
+    );
+
+    // And the row the bound does not reach: `across_a_thread_unchecked` takes
+    // the same value and says nothing about sending it.
+    let text = described("smuggled");
+    let above = text
+        .split("[fn.\"hyper_shim::across_a_thread_unchecked\"]")
+        .next()
+        .expect("the text before the entry");
+    let immediately = above.rsplit("\n\n").next().unwrap_or("");
+    assert!(
+        !immediately.contains("is bound `Send`"),
+        "the bound is gone, so the note is:\n{text}"
+    );
+}
+
+/// **`Send` is a word**, and a bound that merely contains the letters is not it.
+///
+/// The same rule the grammar's keywords are written under, one layer up: a
+/// scanner that matched the text alone would propose a note about `Sender`,
+/// `Resend` and `NoSendMarker`, and a note about a parameter nothing sends is
+/// worse than no note — it asks a reviewer a question with no answer.
+#[test]
+fn a_bound_that_only_contains_the_letters_is_not_a_send_bound() {
+    let root = project(
+        "lookalikes",
+        "pub fn tarnung<T: Into<Sender>, U: Resend + 'static, V: Send>(a: T, b: U, c: V) {}\n",
+        "fn main() {\n    fremd::tarnung(1, 2, 3)\n}",
+    );
+    let text = entries(&root);
+    let above = text
+        .split("[fn.\"fremd::tarnung\"]")
+        .next()
+        .expect("the text before the entry");
+    assert!(
+        above.contains("the parameter `c` is bound `Send`"),
+        "the real one is found:\n{text}"
+    );
+    assert!(
+        !above.contains("`a`") && !above.contains("`b`"),
+        "and the lookalikes are not:\n{text}"
+    );
 }
 
 /// **D3's table, row by row**, on signatures written to exercise each one.
@@ -479,7 +581,7 @@ fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
         let root = repo_root().join("examples/foreign-runtime").join(project);
         let (ledger, described) = draft(&root, "hyper_shim").expect("the draft is written");
         assert_eq!(described.version, "0.1.0", "{project}");
-        let text = ledger.render_description("hyper_shim", &described.version);
+        let text = ledger.render_description("hyper_shim", &described.version, &described.notes);
         for entry in expected {
             assert!(text.contains(entry), "{project}:\n{text}");
         }
@@ -526,7 +628,7 @@ fn a_crate_a_description_and_a_refusal() {
     let (ledger, described) = draft(&root, "fremd").expect("the draft is written");
     assert!(
         ledger
-            .render_description("fremd", &described.version)
+            .render_description("fremd", &described.version, &described.notes)
             .contains("[type.\"fremd::Held\"]\npub = true\ncrosses = false"),
         "the `Rc` field is what says so"
     );
@@ -536,7 +638,7 @@ fn a_crate_a_description_and_a_refusal() {
     std::fs::create_dir_all(root.join("contracts")).expect("a place for it");
     std::fs::write(
         root.join("contracts/fremd.contracts"),
-        ledger.render_description("fremd", &described.version),
+        ledger.render_description("fremd", &described.version, &described.notes),
     )
     .expect("write the description");
 

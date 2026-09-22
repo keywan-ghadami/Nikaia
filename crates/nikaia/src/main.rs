@@ -421,6 +421,38 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
             println!("    {name}");
         }
     }
+    // **The two things the describer saw and did not claim**
+    // ([ADR-193](../../docs/specification/adr/adr-193.md) D3, D5). They are in
+    // the file as comments, where the reviewer meets them; they are said here
+    // too, because a person who runs a command reads what it printed and may
+    // not open the file at all.
+    if !written.notes.about_the_crate.is_empty() {
+        println!(
+            "\nThis crate makes a promise the toolchain cannot check, and the file says \n\
+             where (ADR-193 D5). A tool can see that the promise was made; whether it is \n\
+             true is the line between a rule enforced and a rule inherited."
+        );
+    }
+    let proposed = written.notes.about_a_function.len();
+    if proposed > 0 {
+        println!(
+            "\n{proposed} signature{} carr{} a `Send` bound, and the file asks about {} \n\
+             beside the entry: does the call put what it is given on a thread? The \n\
+             describer proposes and never claims (ADR-193 D3).",
+            match proposed {
+                1 => "",
+                _ => "s",
+            },
+            match proposed {
+                1 => "ies",
+                _ => "y",
+            },
+            match proposed {
+                1 => "it",
+                _ => "each",
+            },
+        );
+    }
     println!(
         "\nRead it before you believe it: what a signature cannot say is written \n\
          fail-closed, and what it says wrongly is caught here or by nobody (ADR-104 D5)."

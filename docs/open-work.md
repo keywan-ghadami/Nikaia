@@ -1371,9 +1371,15 @@ next:*
    [`foreign-runtime.md`](foreign-runtime.md) §3.5 did not expect: an
    `unsafe impl Send` defeats `rustc`'s bound and cannot touch a line a person
    wrote in a committed description. §8 of that note is the measurement.
-2. **the signature scan and the note it writes**, on the scraper as it stands
-   (D3). This already carries the safe half on its own, and not as a heuristic:
-   in safe Rust the `Send` bound is forced and surfaces in the signature.
+2. **the signature scan and the note it writes** — **built** at 0.0.162 (D3).
+   It carries the safe half on its own, and not as a heuristic: in safe Rust
+   the `Send` bound is forced and surfaces in the signature, and Rust's own type
+   system does the propagation. A parameter the bounds send gets a comment above
+   its entry naming the evidence and asking the question; the column stays a
+   person's, because a `Send` bound says the callee **may** send it and written
+   as a claim it could refuse a correct program. `across_a_thread` gets the note
+   and `across_a_thread_unchecked` correctly does not — an `unsafe impl Send`
+   took its bound away, and that row is step 5's.
 3. **A real parser and cargo metadata under it** (D4), which is what makes step
    2 reliable rather than lucky. **The parser is a grammar, because the command
    is a Nikaia program** ([ADR-195](specification/adr/adr-195.md) D1, D3): a
@@ -1431,8 +1437,13 @@ next:*
       text — and names what that buys and what it risks: the split is a staging
       with a written end, and the sign that it has stalled is `fs` having a
       directory walk while the Rust half is still doing the walking.
-4. **`unsafe impl Send`/`Sync` flagged** (D5) — cheap, sound, and independent of
-   3.
+4. **`unsafe impl Send`/`Sync` flagged** — **built** at 0.0.162 (D5), and it
+   arrived with the grammar rather than needing work of its own: the word is
+   part of the item header, so reading the header reads it. One syntactic
+   pattern and sound in the only sense that matters — the item is in the text
+   or it is not — and it sees a promise made about a **private** type, which is
+   what every other step in D4 is blind to. The note says what it cannot do: a
+   tool can see that the promise was made and not whether it is true.
 5. **the intra-crate call graph and the `use` table** (D4), for the row where an
    `unsafe impl Send` took the bound away.
 

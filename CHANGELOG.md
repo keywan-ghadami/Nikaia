@@ -4,6 +4,41 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.162] — 2026-09-22
+
+**The describer proposes and never claims** —
+[ADR-193](docs/specification/adr/adr-193.md) D3 and D5 built, which is the half
+of that record a person reads rather than the compiler.
+
+### D5 — the promise a toolchain cannot check
+
+- **`unsafe impl Send for Smuggled<T>`**, at the top of the file, before the entries, because it is about the crate. One syntactic pattern and **sound** in the only sense that matters here: the item is in the text or it is not.
+- **It sees a promise made about a `private` type**, which is what every other step in D4 is blind to — `Smuggled` is not `pub`, has no signature anywhere, and is the hole `examples/foreign-runtime/shim` opens on purpose.
+- **And it arrived with the grammar rather than needing work of its own**: the word is part of the item header, so reading the header reads it.
+- **What it cannot do is in the note**: *a tool can see that the promise was made; it cannot see whether it is true* — the line between a rule the toolchain enforces and one it inherits.
+
+### D3 — a `Send` bound is evidence, and evidence is a sentence
+
+```toml
+# `across_a_thread`: the parameter `value` is bound `Send`.
+#   Does this put it on a thread?  -> threads = true | false
+#   Seen and not claimed (ADR-193 D3): a `Send` bound says the callee **may**
+#   send it, which is usually `spawn` and is sometimes an API keeping a door open.
+[fn."hyper_shim::across_a_thread"]
+```
+
+- **A comment and never a column.** [ADR-123](docs/specification/adr/adr-123.md) D2 lets the describer *fill* `crosses` because a field holding an `Rc` **entails** not sendable. A `Send` bound entails nothing: it says the callee *may* send, which is usually `spawn` and is sometimes an API keeping a door open. Written as a claim it could refuse a correct program ([Part III C.4](docs/specification/30-nikaia-tooling.md)); written as a note it is the most actionable sentence the tool can produce.
+- **Not a heuristic.** Every safe way of reaching another thread carries the bound, so a crate that takes a value across a thread boundary in safe Rust demands it of its caller — and Rust's own type system does the propagation, so the answer surfaces in the signature.
+- **`across_a_thread_unchecked` is correctly silent**, which is the finding rather than a gap: an `unsafe impl Send` took its bound away, and only following the calls reaches the `spawn`. That row is [ADR-193](docs/specification/adr/adr-193.md) D4's call graph and is not built.
+- **`Send` is a word.** `Into<Sender>` and `Resend + 'static` are not the bound, and a note about a parameter nothing sends is worse than no note: it asks a reviewer a question with no answer.
+
+### What it needed
+
+- **The grammar keeps the `where` clause** (`Fun.wheres`). Half the bounds a Rust crate writes are there rather than in the `<…>` list, and a reader that dropped it would see half the evidence.
+- **`Notes` is how a description carries a sentence** — crate-level and per-entry, rendered as comments and never parsed back. A derived ledger has none, so `render()` is byte-for-byte what it was.
+- **And the command says both on standard output**, because a person who runs a command reads what it printed and may not open the file at all.
+- **The unanswered-method-call ceiling goes 50 → 51**, and the one that arrived is the sentence that ceiling already carries: `w.trim()` on what a grammar pattern bound is a method call on an untyped receiver, like the ten before it.
+
 ## [0.0.161] — 2026-09-22
 
 **A `path` is relative to the file it is written in**
