@@ -52,11 +52,55 @@ about how much a description is trusted to say.
 * **B — no column.** The answer stays `rustc`'s `Send` bound on the right line,
   and [C.2](specification/30-nikaia-tooling.md)'s *in the compiler's own words*
   is knowingly not met for this one case. This is today.
-* **C — the describer derives it.** Out of reach and worth saying so:
-  `nikaia describe` reads rustdoc JSON, which carries signatures and not bodies,
-  and threading is a fact about a body.
+* **C — the describer derives it.** ~~Out of reach~~ — **the reason this option
+  gave was false**, and finding that out is what added D below. It read:
+  *`nikaia describe` reads rustdoc JSON, which carries signatures and not
+  bodies*. It does not. [ADR-104](specification/adr/adr-104.md) D4 makes
+  rustdoc-JSON the **future** better half and says so outright — *a stable-only
+  toolchain ([ADR-001](specification/adr/adr-001.md) D1) is not given up for it,
+  so the source parser is what runs today*. `nikaia describe` reads the crate's
+  own `.rs` **text**. What is out of reach is narrower and different: it is a
+  **signature scraper and not a Rust parser**, by its own module header.
+* **D — A, and the describer *proposes*.** The column stays hand-written and the
+  tool stops making the author hunt for the answer. Where the scraper sees
+  evidence, it writes it as a reviewable note beside the absent column —
+  *`spawn_worker`: the parameter `f` is bound `Send + 'static`; does this put it
+  on a thread?* — and the person writes `threads`, or does not.
 
-**What this page recommends: A, with the third value.** The precedent is exact —
+**Why D is the shape rather than a fourth answer.** It is
+[ADR-123](specification/adr/adr-123.md) D2's own pattern one column over, and
+that one is **built**: `nikaia describe` already writes `crosses = false` for a
+type whose fields hold an `Rc` or a raw pointer, `true` where every field is
+sendable, and **nothing** where it cannot tell.
+
+**But the license for D2 is soundness, not a good hit rate**, and that is the
+line D has to stay on the right side of. A field holding an `Rc` *entails* not
+sendable — it is a structural read, not a guess. The indicators here do not
+entail:
+
+* **`F: FnOnce() + Send + 'static` on a parameter** is a very good sign and not a
+  fact: the bound says the callee *may* send it, which is usually `spawn` and is
+  sometimes an API keeping a door open. Written as a **claim** it can refuse a
+  correct program ([C.4](specification/30-nikaia-tooling.md)); written as a
+  **note** it is the most actionable sentence the tool could produce.
+* **`std::thread::spawn`, `tokio::spawn`, `rayon::spawn`, `Sender::send` in the
+  body** are the same kind of sign one layer deeper, and they cost more to see:
+  the text is in the file the scraper already opens, but knowing *which
+  function's body* a line sits in is brace tracking — more than a signature
+  scraper does and less than a Rust parser. A step, not a rewrite.
+* **A leaf function is the one indicator that must not be built as proposed.**
+  *Pure computation, no external calls* would be the ground for `threads =
+  false`, and that is the dangerous direction: a false silence, which
+  [ADR-010](specification/adr/adr-010.md) D1 calls a vulnerability generator.
+  Worse, a signature scraper cannot establish leafness at all — it would need
+  the body **and** every callee. **Nothing a signature can show entails
+  `false`**, because a function may spawn something it built itself.
+
+**So the asymmetry is the design.** The describer may propose `true`, must
+propose `false` never, and stays silent wherever it cannot see — which is the
+same *absence is nobody said* the column already rests on.
+
+**What this page recommends: A with D, and the third value.** The precedent is exact —
 `crosses = false` is already a hand-written claim about something a signature
 cannot show — and the description is reviewed like code
 ([ADR-104](specification/adr/adr-104.md)). But it must have **three** values and
@@ -66,7 +110,16 @@ false **silence**, which is the polarity
 [ADR-010](specification/adr/adr-010.md) D1 calls a vulnerability generator, and
 the refusal must fire on the claim rather than on its absence.
 
-**What it costs if wrong**: one more line a describer has to get right, on a
-surface where getting it wrong is silent. That is the argument for B, and it is
-a real one — which is why the recommendation carries the three-value shape
-rather than the column alone.
+**And D is what answers the cost of A**, rather than a second thing to build:
+the objection to A is that it is *one more line a describer has to get right, on
+a surface where getting it wrong is silent*. A note that says **where to look**
+does not make the claim safer to get wrong — it makes it less likely to be
+skipped, which is the failure mode a hand-written column actually has. The
+describer proposes; the person disposes; `NK2502` fires on the claim.
+
+**What it costs if wrong**: A's cost is the line above, unchanged. D's own cost
+is a note that cries wolf — a `Send + 'static` bound on an API that never
+spawns, read by a reader who then stops reading the notes. That is a reason to
+keep the note **specific** (name the parameter and the bound, never *this might
+thread*) and to write none at all where the evidence is weaker than a bound; it
+is not a reason to skip D, because the alternative is that nobody looks.

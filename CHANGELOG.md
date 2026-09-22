@@ -4,6 +4,36 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.146] — 2026-09-22
+
+**The `threads` question gains an option that helps the describer instead of
+interrogating them** — the owner's, and it caught a false premise in the
+question's own option C. No code changes.
+
+### Option C said the describer could not see it, and that was wrong
+
+- **It read:** *`nikaia describe` reads rustdoc JSON, which carries signatures and not bodies.* **It does not.** [ADR-104](docs/specification/adr/adr-104.md) D4 makes rustdoc-JSON the **future** better half and says so outright — *a stable-only toolchain ([ADR-001](docs/specification/adr/adr-001.md) D1) is not given up for it, so the source parser is what runs today*. The command reads the crate's own `.rs` **text**.
+- **What is out of reach is narrower and different**: it is a **signature scraper and not a Rust parser**, by its own module header. That is the true limit, and it is the one that shapes what the new option can promise.
+- **Third time this week** that a stated reason, not a stated conclusion, was the thing that was false ([ADR-187](docs/specification/adr/adr-187.md), [ADR-190](docs/specification/adr/adr-190.md), and now this).
+
+### Option D — A, and the describer *proposes*
+
+- **The column stays hand-written and the tool stops making the author hunt.** Where the scraper sees evidence it writes a reviewable note beside the absent column — *`spawn_worker`: the parameter `f` is bound `Send + 'static`; does this put it on a thread?* — and the person writes `threads`, or does not.
+- **It is [ADR-123](docs/specification/adr/adr-123.md) D2's own pattern one column over, and that one is built**: `nikaia describe` already writes `crosses = false` for a type whose fields hold an `Rc` or a raw pointer, `true` where every field is sendable, and **nothing** where it cannot tell.
+
+### But D2's license is soundness, not a good hit rate
+
+- **A field holding an `Rc` *entails* not sendable** — a structural read, not a guess. The indicators here do not entail, so they may be **notes** and never claims.
+- **`F: FnOnce() + Send + 'static` on a parameter** is a very good sign and not a fact: the bound says the callee *may* send it, which is usually `spawn` and is sometimes an API keeping a door open. As a claim it can refuse a correct program (C.4); as a note it is the most actionable sentence the tool could produce.
+- **`std::thread::spawn`, `tokio::spawn`, `Sender::send` in a body** cost more to see: the text is in the file the scraper already opens, but knowing *which function's body* a line sits in is brace tracking — more than a signature scraper does, less than a Rust parser. A step, not a rewrite.
+- **The leaf-function indicator must not be built as proposed.** *Pure computation, no external calls* would be ground for `threads = false`, which is the dangerous direction — a false silence, [ADR-010](docs/specification/adr/adr-010.md) D1's vulnerability generator — and a signature scraper cannot establish leafness anyway. **Nothing a signature can show entails `false`**, because a function may spawn something it built itself.
+- **So the asymmetry is the design**: the describer may propose `true`, must propose `false` never, and stays silent where it cannot see — the same *absence is nobody said* the column already rests on.
+
+### And D is what answers A's cost rather than a second thing to build
+
+- **The objection to A** is that it is one more line a describer has to get right on a surface where getting it wrong is silent. A note saying **where to look** does not make the claim safer to get wrong; it makes it less likely to be **skipped**, which is the failure mode a hand-written column actually has.
+- **D's own cost is a note that cries wolf** — a `Send + 'static` bound on an API that never spawns, read by someone who then stops reading the notes. That is a reason to keep the note specific (name the parameter and the bound, never *this might thread*), not a reason to skip it: the alternative is that nobody looks.
+
 ## [0.0.145] — 2026-09-22
 
 **An idea recorded, and five notes that were not in the index** — no code
