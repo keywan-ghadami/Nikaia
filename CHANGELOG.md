@@ -4,6 +4,50 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.164] — 2026-09-22
+
+**A socket in `std`** — [ADR-198](docs/specification/adr/adr-198.md), building
+[ADR-194](docs/specification/adr/adr-194.md) D1, and with it the step
+[`open-work.md`](docs/open-work.md) §2.6 calls the blocker.
+
+### A `.nika` program binds a socket and both ends talk
+
+```nika
+use std::net
+
+fn main() throws {
+    let listener = net::listen("127.0.0.1:0")
+    let mut connection = listener.accept()
+    let asked = connection.read()
+    connection.write("pong")
+}
+```
+
+- **Four verbs and two types**: `listen`, `connect`, `accept`, `read`, `write`, with `address`, `peer` and `close` beside them. `read` hands back [ADR-156](docs/specification/adr/adr-156.md) D1's one shared buffer, as `fs::read` does; `write` takes **all** of it, because the loop that would follow a partial write is inside it; and an empty read is the peer closing, which is what a zero-length read has meant on every socket there has ever been.
+- **At both settings of `user_parallelism`, with the same output from each.** That is the claim the switch rests on and the one a socket could quietly break: `accept` gives the thread up rather than holding it, so a program that waits for a connection and then makes one is a program that deadlocks the moment the wait is a block. At `no` there is one thread and it is the same answer.
+- **And nothing in the program says how it waits** — no `async`, no `await`, no `epoll`, no `io_uring`, no `poll`. [ADR-038](docs/specification/adr/adr-038.md) D3 held where it is hardest to hold: every other language makes a reader choose a runtime before they can bind one.
+
+### The column that had nothing to fire on
+
+- **What comes off a socket is `untrusted`** ([ADR-010](docs/specification/adr/adr-010.md) D2), and it is the **first** source in `std` that is. Every other one is the operator's own — a file they named, a pipe they connected, the arguments they typed. `std.contracts`' own header predicted this one by name: *the untrusted ones — `http`, `net`, `db` — arrive with the modules that have them.*
+- The analysis that reads it was built long before anything wrote it, and nothing had to change to make it live.
+
+### `touches` gains `socket`
+
+- [ADR-033](docs/specification/adr/adr-033.md) D3 named it in the same breath as a file — *a file, a socket, `stdout` and a `Locked` value are not in the set of things that can be pointed at* — and the kind waited under the rule `lock` waited under: **a word waits until a program can ask for it.**
+- **It names no socket**, for `lock`'s reason rather than for want of a name: a listener could be named by its address and a *connection* is what a program touches, and telling two of those apart is the alias analysis [ADR-039](docs/specification/adr/adr-039.md) D4 refuses to make a program's compilation depend on.
+
+### And a block of the specification started compiling
+
+- **`10-nikaia-light.md` #62** — the example that introduces `throws` — wrote `net::send(file)`, a function that did not exist because the module did not. It now uses `fs::read_to_string` and `net::connect`, which is the same lesson (*two things that can fail*) written in an API that is there.
+- It goes from **refused** to **lowered and compiled**, which is the direction those two baselines exist to show: `tests/specification/EXPECTED.txt` and `COMPILES.txt` both move one line.
+
+### What is stated rather than hidden
+
+- **`bind` and `connect` block.** Binding is a syscall that answers immediately; connecting is not, and this one blocks on it — what the MVP connects to is a listener on the same machine, and a non-blocking connect is a second readiness shape for a case nothing here has yet.
+- **One allocation per read**, which is what `Bytes` costs: what comes back is a value a program may **keep**, so it cannot be a window into what the next read overwrites. A reusable buffer is a second function beside `read` the day a measurement asks for one.
+- **Closing is the drop**, which is the language below's own answer. [ADR-006](docs/specification/adr/adr-006.md)'s `Cleanup` is unbuilt and a socket is not the thing to build it for.
+
 ## [0.0.163] — 2026-09-22
 
 **The row a bound cannot answer** —

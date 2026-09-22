@@ -32,7 +32,7 @@
 10-nikaia-light.md #56 refused
 10-nikaia-light.md #59 compiles
 10-nikaia-light.md #61 refused
-10-nikaia-light.md #62 refused
+10-nikaia-light.md #62 compiles
 10-nikaia-light.md #67 refused
 10-nikaia-light.md #72 compiles
 10-nikaia-light.md #73 compiles

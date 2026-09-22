@@ -439,13 +439,21 @@ readiness question at a time, which is what `worker::poll_one` does today — an
 then the server on top of it. That is work in this section and not a question
 for anybody.
 
+*And the socket is in `std` since 0.0.164* ([ADR-198](specification/adr/adr-198.md)),
+so what is left of the order below is steps 2, 3 and 4.
+
 **And the MVP is decided** ([ADR-194](specification/adr/adr-194.md)), so what is
 left here is an order rather than a design:
 
-1. **A socket in `std`** — D1. [ADR-069](specification/adr/adr-069.md) D2's
-   subtraction carried one item further: a socket is an operating-system
-   resource of the kind `fs` and `io` already own, and the `http` package is
-   Nikaia and cannot syscall.
+1. **A socket in `std`** — D1, **built** at 0.0.164
+   ([ADR-198](specification/adr/adr-198.md)). `net::listen`, `connect`,
+   `accept`, `read`, `write`, `address`, `peer`, `close`: a `.nika` program
+   binds a socket and both ends talk, at both settings of `user_parallelism`,
+   with the same output from each. Everything that waits gives the thread up on
+   [ADR-121](specification/adr/adr-121.md) D4's readiness, and nothing in the
+   program says `async`, `await`, `epoll` or `poll`. **And it is the first
+   untrusted source `std` has** — [ADR-010](specification/adr/adr-010.md) D2's
+   column had nothing to fire on until a socket existed.
 2. **The socket layer that keeps registrations**, on
    [ADR-121](specification/adr/adr-121.md)'s awaitable readiness.
 3. **A minimal HTTP/1.1 server in the `http` package** — D5: `GET` and `POST`,

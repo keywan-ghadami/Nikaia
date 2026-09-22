@@ -88,7 +88,26 @@ use anyhow::{anyhow, Result};
 /// compiles depend on whether that proof happened to succeed. Two `access`
 /// calls are two **reads** and do not conflict; two doors that write do, whether
 /// or not they are the same lock.
-pub const KINDS: &[&str] = &["file", "stdout", "stderr", "args", "lock"];
+/// | `socket` | **a** socket, never which one | `net::listen`, `accept`, `read`, `write`, `close` |
+///
+/// **`socket` joined the list the day `std` had one**
+/// ([ADR-194](../../../../docs/specification/adr/adr-194.md) D1), under the same
+/// rule `lock` joined it under: a word waits until a program can ask for it.
+/// [ADR-033](../../../../docs/specification/adr/adr-033.md) D3 named it in the
+/// same breath as a file - *a file, a socket, `stdout` and a `Locked` value are
+/// not in the set of things that can be pointed at* - and it waited until one
+/// existed.
+///
+/// **It names no parameter**, for `lock`'s reason rather than for want of a
+/// name: a *listener* could be named by the address it is bound to, and a
+/// **connection** is what a program actually touches, and telling two of those
+/// apart is the alias analysis
+/// [ADR-039](../../../../docs/specification/adr/adr-039.md) D4 refuses to make
+/// a program's compilation depend on. So two reads of two different sockets do
+/// not conflict - reads never do - and a write orders against every socket
+/// touch, which is the safe direction and the one a server's two writes want
+/// anyway.
+pub const KINDS: &[&str] = &["file", "stdout", "stderr", "args", "lock", "socket"];
 
 /// Which kinds may turn out to be **one** resource however differently they are
 /// named.

@@ -35,6 +35,7 @@ pub mod index;
 pub mod io;
 pub mod list;
 pub mod lock;
+pub mod net;
 pub mod num;
 pub mod rt;
 pub mod task;
@@ -131,6 +132,10 @@ pub mod prelude {
     // decides what the prelude is, this is how a name reaches a program.
     pub use crate::foreign::CStr;
     pub use crate::fs;
+    // **The socket `std` lends** (ADR-194 D1). Here for `fs`'s reason: a module
+    // a program reaches through its prefix has to be in scope in the generated
+    // file, and nothing a program writes says where it comes from.
+    pub use crate::net;
     // **What a parse fails with**
     // ([ADR-173](../../../docs/specification/adr/adr-173.md) D1): written bare,
     // like `Overtaken`, because a program never writes a path to it — it

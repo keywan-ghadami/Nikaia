@@ -1562,3 +1562,100 @@ doc = "A table from keys to values, kept in the keys' order.\n\nIt is reached th
 [type."collections::BTreeSet"]
 pub = true
 doc = "A set of values, kept in their order.\n\nIt is reached through its module, as every name outside the prelude is."
+
+# --- `net`: the socket `std` lends (ADR-194 D1) ------------------------------
+#
+# [ADR-069](../../docs/specification/adr/adr-069.md) D2's subtraction carried one
+# item further: what was pushed out of `std` is the *protocol and the framework*,
+# and a socket is neither - it is an operating-system resource of exactly the kind
+# `fs` and `io` already own. The `http` package is Nikaia and cannot syscall, so
+# the line falls here.
+#
+# **`touches` says `socket` and never which socket**, for the reason `lock` says
+# `lock`: a listener could be named by its address and a *connection* is what a
+# program actually touches, and telling two of those apart is the alias analysis
+# ADR-039 D4 refuses to make a program's compilation depend on. Two reads do not
+# conflict - reads never do - and a write orders against every socket touch.
+#
+# **Nothing here is `sync`**, and that is the point: `accept`, `read` and `write`
+# give the thread up rather than holding it, on ADR-121 D4's awaitable readiness.
+# The same park `fs` uses, so one thread serves many connections at
+# `user_parallelism = no` exactly as at `yes`.
+
+[type."net::Listener"]
+pub = true
+# A listener may be handed to a task: it is a file descriptor and an address,
+# and nothing in it is tied to the thread it was made on.
+crosses = true
+doc = "A bound socket, waiting for connections.\n\n`net::listen(\"127.0.0.1:8080\")` makes one. Which address a *server* binds when\nnobody says is the server's own question and not this one's."
+
+[type."net::Connection"]
+pub = true
+crosses = true
+doc = "One connection, open until it is dropped.\n\nReading hands back what the peer sent, and **empty means the peer closed** -\nwhich is the one thing a caller has to know to write a loop. `close` is for a\nprogram that wants the close at a named moment."
+
+[fn."net::listen"]
+pub = true
+touches = ["socket write"]
+throws = ["io::IoError"]
+signature = "(address: ref String) -> net::Listener"
+doc = "Bind an address and start listening.\n\nIt fails where the address cannot be bound - which is usually somebody else\nalready listening there."
+
+[fn."net::connect"]
+pub = true
+touches = ["socket write"]
+throws = ["io::IoError"]
+signature = "(address: ref String) -> net::Connection"
+doc = "Connect to an address.\n\nIt fails where nothing is listening there."
+
+[fn."net::Listener::accept"]
+pub = true
+touches = ["socket read"]
+throws = ["io::IoError"]
+signature = "(ref Listener) -> net::Connection"
+doc = "The next connection, waiting for one where there is none yet.\n\nIt gives the thread up while it waits, so one thread serves many connections."
+
+# The address it is **bound** to, which is what a caller that asked for port `0`
+# needs to know. Memory, so it touches nothing and cannot pause.
+[fn."net::Listener::address"]
+pub = true
+sync = true
+touches = []
+signature = "(ref Listener) -> String"
+doc = "The address this listener is bound to.\n\nA program that asked for port `0` finds out here which port it got."
+
+# **The first untrusted source `std` has** (ADR-010 D2), which this file's own
+# header predicted by name: *the untrusted ones - `http`, `net`, `db` - arrive
+# with the modules that have them*. Somebody else chose these bytes.
+[fn."net::Connection::read"]
+pub = true
+mutates = true
+touches = ["socket read"]
+throws = ["io::IoError"]
+provenance = "untrusted"
+signature = "(ref Connection) -> Bytes"
+doc = "The next bytes the peer sent, waiting for them where there are none yet.\n\n**Empty means the peer closed.** What comes back is **untrusted**: somebody\nelse chose these bytes."
+
+# `?` for the bytes, for `fs::write`'s reason: it takes a `Bytes`, a `ref String`\
+# and a buffer, and writing one of them here would refuse a correct program.
+[fn."net::Connection::write"]
+pub = true
+mutates = true
+touches = ["socket write"]
+throws = ["io::IoError"]
+signature = "(ref Connection, bytes: ?)"
+doc = "All of the bytes, waiting for room where there is none yet.\n\nAll of them, because a partial write is not something a caller can do anything\nuseful with: the loop that would follow one is inside this."
+
+[fn."net::Connection::peer"]
+pub = true
+sync = true
+touches = []
+signature = "(ref Connection) -> String"
+doc = "Who is on the other end."
+
+[fn."net::Connection::close"]
+pub = true
+sync = true
+touches = ["socket write"]
+signature = "(Connection)"
+doc = "Close it now rather than when it is dropped.\n\nDropping one closes it, which is the language below's answer; a program that\nwants the close at a named moment writes this."

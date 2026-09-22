@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.163 (Draft)
+**Version:** 0.0.164 (Draft)
 **Date:** 2026-09-22
 
 ---
@@ -1238,7 +1238,15 @@ An untrusted map is seeded randomly, so **its iteration order is not stable betw
 **Other key modules:**
 * **`std::json`**: serialization using compile-time code generation, with zero-allocation parsing where possible.
 * **`std::cli`**: parsers for command-line arguments, environment variables and ANSI terminal colours.
-* **`std::net`**: low-level TCP/UDP sockets for building custom protocols.
+* **`std::net`**: low-level TCP sockets for building custom protocols — `listen`,
+  `connect`, `accept`, `read`, `write`. Everything that waits gives the thread up,
+  so one thread serves many connections at either setting of `user_parallelism`,
+  and **what comes off a socket is `untrusted`** ([ADR-010](adr/adr-010.md) D2):
+  somebody else chose those bytes.
+
+> **Implementation status:** Implemented for TCP ([ADR-198](adr/adr-198.md)).
+> UDP is not, and nothing asks for it; TLS is [ADR-038](adr/adr-038.md) D2's
+> `rustls` and its own step.
 
 ### 17.2. Availability by Target and by `user_parallelism`
 Some modules are available, or behave restrictively, depending on the target and on whether user code may run concurrently.

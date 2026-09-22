@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.163 (Draft)
+**Version:** 0.0.164 (Draft)
 **Date:** 2026-09-22
 
 ---
@@ -2247,10 +2247,13 @@ drops, an input does not fit the format. A function that can fail says so with
 
 ```nika
 use std::fs
+use std::net
 
 fn fetch_config() -> String throws {
-    let file = fs::read("config.txt")   // can fail
-    return net::send(file)              // can fail too
+    let text = fs::read_to_string("config.txt")     // can fail
+    let mut peer = net::connect("127.0.0.1:9000")   // can fail too
+    peer.write(ref text)
+    return text
 }
 ```
 
