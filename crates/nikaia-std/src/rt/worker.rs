@@ -32,29 +32,19 @@ use std::sync::{Arc, Mutex};
 /// Not `pub`: see the module comment. This enum *is* the user-code boundary,
 /// and it stays a closed list of operations `std` performs on the program's
 /// behalf.
+///
+/// **Readiness used to be one of these and is not any more** (0.0.165): a
+/// worker **blocked** in the poller for the whole of a wait, and `io-workers`
+/// is `1` by default, so a wait that had not answered blocked every other wait
+/// in the process. It is a registration on one shared poller now
+/// ([`super::readiness`]), and nothing here occupies a thread while it waits
+/// for something that has not happened.
 pub(super) enum Op {
     /// A whole file, read on the worker thread with ordinary blocking calls -
     /// D3's fallback, for the machine that has no completion queue.
     Read {
         path: PathBuf,
         reply: Sender<io::Result<Vec<u8>>>,
-    },
-    /// Wait until a socket can be read or written without blocking - D3's
-    /// readiness half. The worker owns the poller *and the descriptor it polls*.
-    ///
-    /// **A duplicate and not the caller's own**
-    /// ([ADR-121](../../../../docs/specification/adr/adr-121.md) D4). While the
-    /// only surface was `io::wait`, the caller was blocked for the whole of the
-    /// wait and its borrow was the guarantee - `poll_one`'s safety comment said
-    /// so. `io::waiting` is the same wait as a **future**, and a future may be
-    /// dropped while the operation is still in flight, so the borrow is not
-    /// there to be had. A `dup` shares the file description, which is what
-    /// readiness is about, and costs one syscall.
-    Readiness {
-        fd: std::os::fd::OwnedFd,
-        interest: Interest,
-        timeout: Option<std::time::Duration>,
-        reply: Sender<io::Result<bool>>,
     },
     /// All of standard input, read on the worker thread
     /// ([ADR-121](../../../../docs/specification/adr/adr-121.md) D4).
@@ -247,14 +237,6 @@ fn perform(op: Op) {
         Op::Read { path, reply } => {
             let _ = reply.send(std::fs::read(&path));
         }
-        Op::Readiness {
-            fd,
-            interest,
-            timeout,
-            reply,
-        } => {
-            let _ = reply.send(poll_one(fd, interest, timeout));
-        }
         Op::Stdin { reply } => {
             use std::io::Read;
 
@@ -312,47 +294,6 @@ pub(super) fn blocking_write(
     file.write_all(bytes)
 }
 
-/// Wait for one descriptor to be ready.
-///
-/// `polling` is the readiness half of D3: a small crate over `epoll`,
-/// `kqueue` and IOCP with no runtime, no executor and no opinion about what
-/// the program does when the socket is ready. `false` is a timeout rather
-/// than a failure, which is what a deadline needs to be able to tell apart.
-///
-/// The event is one-shot and the poller is built per wait rather than kept:
-/// this is the shape a *readiness* answer has, and the socket layer the HTTP
-/// server will need (D1, D6) is what turns it into a kept registration. What
-/// is here is the mechanism behind one `std` surface, so that change is a
-/// `std` change.
-fn poll_one(
-    fd: std::os::fd::OwnedFd,
-    interest: Interest,
-    timeout: Option<std::time::Duration>,
-) -> io::Result<bool> {
-    use polling::{Event, Events, Poller};
-    use std::os::fd::AsRawFd;
-
-    let fd = fd.as_raw_fd();
-    let poller = Poller::new()?;
-    let key = 0usize;
-    let event = match interest {
-        Interest::Readable => Event::readable(key),
-        Interest::Writable => Event::writable(key),
-    };
-    // SAFETY: the descriptor is the `OwnedFd` this call holds, so it is open
-    // for the whole of the wait whatever the caller does - which is what
-    // [`Op::Readiness`] is a duplicate for. It is deleted again below, and
-    // closed when this function returns.
-    unsafe { poller.add(fd, event)? };
-
-    let mut events = Events::new();
-    let waited = poller.wait(&mut events, timeout);
-    let deleted = poller.delete(unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) });
-    waited?;
-    deleted?;
-    Ok(!events.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,19 +323,28 @@ mod tests {
 
     /// The drain is bounded by the clock and not by the work, which is the
     /// half of ADR-006 D5 that cannot hang.
+    ///
+    /// **A read of a FIFO nobody writes to**, which used to be a readiness wait
+    /// on a socket nobody writes to. Readiness is not a worker operation any
+    /// more ([`super::readiness`]) and this test is about the **drain**, so
+    /// what it needs is any operation that does not finish — and opening a FIFO
+    /// blocks until a writer appears, which is a property of the thing rather
+    /// than a sleep this had to choose a length for.
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_drain_is_bounded_by_its_deadline() {
-        use std::os::fd::AsFd;
+        use std::ffi::CString;
 
         let workers = Workers::start(1);
         let (reply, answer) = channel();
-        // A socket nobody writes to: readable never comes, so this operation
-        // outlives any deadline.
-        let (quiet, _peer) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
-        assert!(workers.send(Op::Readiness {
-            fd: quiet.as_fd().try_clone_to_owned().expect("a duplicate"),
-            interest: Interest::Readable,
-            timeout: None,
+        let path = std::env::temp_dir().join(format!("nikaia-drain-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let name = CString::new(path.to_string_lossy().as_bytes()).expect("a path with no zero");
+        // SAFETY: `name` is a zero-terminated path this test owns, and the
+        // call only creates a filesystem entry.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0, "mkfifo");
+        assert!(workers.send(Op::Read {
+            path: path.clone(),
             reply,
         }));
 
@@ -403,36 +353,9 @@ mod tests {
         assert!(began.elapsed() < std::time::Duration::from_secs(2), "hung");
         assert_eq!(left, 1, "the deadline expired with the operation pending");
         drop(answer);
-    }
-
-    /// Readiness says "ready" when there is something, and "not yet" when the
-    /// timeout runs out first - and the two are told apart rather than both
-    /// being a failure.
-    #[test]
-    fn readiness_tells_ready_from_timed_out() {
-        use std::io::Write;
-        use std::os::fd::AsFd;
-
-        let (here, there) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
-        assert!(
-            !poll_one(
-                here.as_fd().try_clone_to_owned().expect("a duplicate"),
-                Interest::Readable,
-                Some(std::time::Duration::from_millis(20))
-            )
-            .expect("polled"),
-            "a socket nobody wrote to is not readable"
-        );
-
-        (&there).write_all(b"x").expect("the peer writes");
-        assert!(
-            poll_one(
-                here.as_fd().try_clone_to_owned().expect("a duplicate"),
-                Interest::Readable,
-                Some(std::time::Duration::from_secs(5))
-            )
-            .expect("polled"),
-            "a socket with a byte waiting is readable"
-        );
+        // The worker is still blocked in `open`; a writer lets it go, and the
+        // entry is this test's to remove.
+        let _ = std::fs::OpenOptions::new().write(true).open(&path);
+        let _ = std::fs::remove_file(&path);
     }
 }

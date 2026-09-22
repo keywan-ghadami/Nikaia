@@ -4,6 +4,46 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.165] — 2026-09-22
+
+**A readiness wait is a registration, not a worker** —
+[ADR-199](docs/specification/adr/adr-199.md), which is
+[`open-work.md`](docs/open-work.md) §2.6's second step and **not what that line
+said it was**.
+
+### What was wrong, and it was not speed
+
+- **A readiness wait occupied an I/O worker for its whole duration.** The descriptor was duplicated, handed over a channel, and the worker **blocked in the poller** until the kernel answered. `io-workers` is **1** by default ([ADR-038](docs/specification/adr/adr-038.md) D4, *one I/O thread always runs*), so a wait that had not answered blocked **every other wait in the process**.
+- **Measured before anything was written**: two waits at once, the second on a pipe that already had a byte in it. The second did not get a turn in two seconds. A server waiting on `accept` while a connection waits on `read` is that shape exactly, so the HTTP server could not have been built on it.
+- That is a **ceiling on the default configuration**, and it is now a test — `a_wait_that_never_answers_does_not_block_one_that_would` — so it cannot come back.
+
+### The measurement moved the design
+
+[ADR-009](docs/specification/adr/adr-009.md) D4 asks for a number before a shape is chosen. §2.6 called this step *keep registrations*:
+
+| | per wait |
+| :--- | ---: |
+| a poller built per wait, which is what the worker did | 7.4 µs |
+| one poller, `add` and `delete` around each wait | 2.5 µs |
+| a registration kept and re-armed | 1.2 µs |
+| **the whole round trip through a worker** | **35 µs** |
+
+- **Keeping the registration is worth 6.2 µs of 35. The hop was worth 28.** The line was written before anything had been measured, which is the case that rule exists for.
+- **After**: `rt::io::waiting`, which is what a server uses, goes **35.4 → 6.6 µs**. The blocking `rt::io::wait` goes 35.3 → 29.2 and stays a condvar round trip, which nothing hot uses.
+
+### The shape
+
+- **One poller for the process, one thread inside its `wait`, and arming on the calling thread** — registering is an `epoll_ctl` and does not block, so there is nothing to hand to anybody.
+- **The promises the worker path made are kept**: a registration is *outstanding*, so `Runtime::pending` counts it and [ADR-006](docs/specification/adr/adr-006.md) D5's drain waits it out. The park still asks *is anything outstanding* before it sleeps.
+- **The bell stays**, because a `Waker` does not reach a thread asleep in `io_uring_enter` or on a condvar ([ADR-121](docs/specification/adr/adr-121.md) D1).
+- **Dropping the future deletes the registration**, which for a socket is a connection the program stopped caring about.
+- **`Op::Readiness` and `poll_one` are gone.** The worker enum is back to what it is for: operations that *do* something, where blocking a thread is the work rather than the waiting.
+
+### Two things met on the way
+
+- **A test that needed an operation which never finishes** used a readiness wait on a quiet socket. It uses a **FIFO nobody writes to** now: opening one blocks until a writer appears, which is a property of the thing rather than a sleep somebody had to choose a length for.
+- **A registration that leaves has to wake the drain**, and not noticing that cost 30 seconds: a drain asleep on *has the set emptied?* is woken by an answer arriving and was **not** woken by a slot going away. Three socket tests took 30 seconds together and no time at all apart, which is what said so.
+
 ## [0.0.164] — 2026-09-22
 
 **A socket in `std`** — [ADR-198](docs/specification/adr/adr-198.md), building

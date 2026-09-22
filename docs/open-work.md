@@ -433,14 +433,15 @@ server's socket layer awaits*; and §3 names this entry's own need outright:
 ***`rt::io::wait` is awaitable, which is the first thing the HTTP server's
 socket layer needs.*** `rt::io::waiting` is the future beside it.
 
-*So the head of §2's order is not blocked on the runtime.* What it is short of
-is the socket layer itself — one that keeps registrations rather than asking one
-readiness question at a time, which is what `worker::poll_one` does today — and
-then the server on top of it. That is work in this section and not a question
-for anybody.
+*So the head of §2's order is not blocked on the runtime.* What it was short of
+was the socket layer itself — and `worker::poll_one`, which this sentence named,
+is gone ([ADR-199](specification/adr/adr-199.md)). What is left is the server on
+top of it, which is work in this section and not a question for anybody.
 
 *And the socket is in `std` since 0.0.164* ([ADR-198](specification/adr/adr-198.md)),
-so what is left of the order below is steps 2, 3 and 4.
+with the layer under it since 0.0.165
+([ADR-199](specification/adr/adr-199.md)) — so what is left of the order below
+is steps 3 and 4: the server and `nikaia serve`.
 
 **And the MVP is decided** ([ADR-194](specification/adr/adr-194.md)), so what is
 left here is an order rather than a design:
@@ -454,8 +455,21 @@ left here is an order rather than a design:
    program says `async`, `await`, `epoll` or `poll`. **And it is the first
    untrusted source `std` has** — [ADR-010](specification/adr/adr-010.md) D2's
    column had nothing to fire on until a socket existed.
-2. **The socket layer that keeps registrations**, on
-   [ADR-121](specification/adr/adr-121.md)'s awaitable readiness.
+2. **The socket layer** — **built** at 0.0.165
+   ([ADR-199](specification/adr/adr-199.md)), and **this line was wrong about
+   what it was for**. A readiness wait was a worker operation and the worker
+   *blocked* in the poller for the whole of it; `io-workers` is **1** by
+   default, so a wait that had not answered blocked every other wait in the
+   process — a ceiling on the default configuration and not a slowness, and the
+   shape a server has exactly. Measured: two waits at once, the second on a pipe
+   that already had a byte in it, and the second did not get a turn in two
+   seconds.
+
+   *And what this line asked for is the smaller half.* Keeping a registration is
+   worth **6.2 µs of 35**; the **hop** was worth 28
+   ([ADR-009](specification/adr/adr-009.md) D4, doing its job on a line written
+   before anything had been measured). One poller for the process, arming on the
+   calling thread, and `rt::io::waiting` goes 35.4 → **6.6 µs**.
 3. **A minimal HTTP/1.1 server in the `http` package** — D5: `GET` and `POST`,
    bodies by `Content-Length`, `Connection: close`, no chunked and no TLS, with
    a body cap and a connection cap from the first commit. **The parser is Rust

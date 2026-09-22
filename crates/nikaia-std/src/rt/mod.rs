@@ -62,6 +62,8 @@ mod uring;
 pub use config::{Config, Method};
 pub use worker::Interest;
 
+pub(crate) mod readiness;
+
 use std::path::Path;
 use std::sync::{Condvar, Mutex, OnceLock};
 
@@ -240,6 +242,13 @@ impl Started {
             return;
         }
         let left = runtime.workers.drain(deadline);
+        // **And the readiness registrations**, which the worker drain used to
+        // cover because a readiness wait *was* a worker operation. What is
+        // waited for here is a wait that may never answer — a socket nobody
+        // writes to — and the deadline is exactly what bounds it (ADR-006 D5).
+        // Counted, not waited for a second deadline's worth: what is left of
+        // the first one is what is left.
+        let left = left + readiness::registry().drain(deadline);
         if left > 0 {
             expired(left, deadline);
         }
@@ -373,7 +382,12 @@ impl Runtime {
 
     /// How many I/O operations are queued and unanswered.
     pub fn pending(&self) -> usize {
-        self.workers.pending()
+        // **And the readiness registrations**, which used to be worker
+        // operations and are counted here for the reason they were counted
+        // there: the park asks *is anything outstanding* before it sleeps, and
+        // ADR-006 D5's drain asks it before it lets a program go. What changed
+        // in 0.0.165 is the mechanism and not the answer ([`readiness`]).
+        self.workers.pending() + readiness::registry().outstanding()
     }
 
     /// One line naming what started and how, for `--runtime` and for a bug
@@ -907,10 +921,7 @@ pub mod io {
         timeout: Option<std::time::Duration>,
     ) -> Result<bool> {
         off_the_io_thread();
-        let answer = queue_readiness(socket, interest, timeout)?;
-        answer
-            .recv()
-            .unwrap_or_else(|_| Err(Error::other("the runtime's I/O worker went away")))
+        super::readiness::arm(socket, interest, timeout).blocking()
     }
 
     /// **The same wait, as something that can be awaited**
@@ -938,9 +949,7 @@ pub mod io {
         timeout: Option<std::time::Duration>,
     ) -> Waiting {
         off_the_io_thread();
-        Replied {
-            answer: queue_readiness(socket, interest, timeout),
-        }
+        super::readiness::arm(socket, interest, timeout)
     }
 
     /// **All of standard input, as a future**
@@ -984,7 +993,12 @@ pub mod io {
     }
 
     /// What [`waiting`] hands back.
-    pub type Waiting = Replied<bool>;
+    ///
+    /// **A registration and not a worker's reply since 0.0.165**
+    /// ([`super::readiness`]): a readiness wait used to occupy an I/O worker
+    /// for its whole duration, and `io-workers` is `1` by default — so a wait
+    /// that had not answered blocked every other wait in the process.
+    pub type Waiting = super::readiness::Armed;
 
     /// **A worker's reply, as something that can be awaited**
     /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D4).
@@ -1024,29 +1038,6 @@ pub mod io {
                 }
             }
         }
-    }
-
-    /// Hand one readiness wait to a worker, and keep the reply channel.
-    ///
-    /// The half [`wait`] and [`waiting`] share: the difference between them is
-    /// only who does the receiving, which is the whole of what D4 changes.
-    fn queue_readiness(
-        socket: &impl std::os::fd::AsFd,
-        interest: Interest,
-        timeout: Option<std::time::Duration>,
-    ) -> Result<std::sync::mpsc::Receiver<Result<bool>>> {
-        let runtime = handle();
-        let (reply, answer) = std::sync::mpsc::channel();
-        let queued = runtime.workers.send(worker::Op::Readiness {
-            fd: socket.as_fd().try_clone_to_owned()?,
-            interest,
-            timeout,
-            reply,
-        });
-        if !queued {
-            return Err(Error::other("the runtime has already been drained"));
-        }
-        Ok(answer)
     }
 }
 
@@ -1325,7 +1316,13 @@ mod tests {
     fn a_sequential_build_starts_no_pool_for_user_code() {
         let runtime = Runtime::build(UserCode::Sequential, Config::default());
         assert!(runtime.user_pool().is_none());
-        assert_eq!(runtime.pending(), 0);
+        // **The workers' count and not `pending()`**, which since 0.0.165 also
+        // carries the *process's* readiness registrations — and the harness
+        // runs these tests side by side, so another test's socket may be armed
+        // at this instant. The same sentence
+        // `a_worker_operation_wakes_the_park_on_either_path` writes about its
+        // own count, one question over.
+        assert_eq!(runtime.workers.pending(), 0);
 
         // …and the I/O worker started anyway, because it is the compiler's
         // thread and was never bounded by that switch.
