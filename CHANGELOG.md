@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.145] — 2026-09-22
+
+**An idea recorded, and five notes that were not in the index** — no code
+changes.
+
+### `unique-ownership.md`: a door with no lock in it
+
+- **The owner's idea, written down and deliberately not measured or built.** Extend the ledger with **isolation**: where the compiler can prove a mutable value is handed between tasks but reachable from exactly **one** at any moment, no lock is needed even at `user_parallelism = "yes"`, and the doors over it could lower to plain moves.
+- **Why it is in character rather than exotic.** [ADR-037](docs/specification/adr/adr-037.md) D7 already decides `Rc` against `Arc` **per value**, from an analysis that proves a reachability property — one written type, two machine representations, chosen by a proof. This is that sentence with *never crosses* weakened to *never reachable from two at once*, and the prize one step larger. And [`lock-free.md`](docs/lock-free.md) §6 found by looking that the pattern the language steers towards already **is** unique ownership: `examples/1brc.nika` shares nothing at all.
+- **Five things the first afternoon would run into**, written down so nobody rediscovers them: every ledger column today is a per-entry summary and this is a property of a *point in execution*; a hull is a **handle** and handing one on duplicates it by design ([ADR-040](docs/specification/adr/adr-040.md) D1), so *handed between tasks* is not a move in this language; the polarity is the worst in the tree, because a wrong *isolated* is a data race rather than a slow or refused program, so [ADR-010](docs/specification/adr/adr-010.md) D1 demands **soundness** and no existing column has had to clear that bar; the ledger is per package and this is whole-program; and the two doors may not have the same answer.
+- **What would decide it is the gate [`lock-free.md`](docs/lock-free.md) §6 already set** — not *how much would it save* but *does a real program share a mutable value across threads?* No `.nika` file here uses `spawn`, `Locked`, `Shared` or `SharedMut`. **What would kill it** is finding the claim cannot be made entry-shaped and sound at once, which is found by trying to state the rule rather than by measuring.
+- **And it is filed as a note rather than as work or a question**: [`open-work.md`](docs/open-work.md) is for what a record decided and the compiler does not do yet, and no record decided this; [`open-decisions.md`](docs/open-decisions.md) is for questions that are *answerable*, with options and a recommendation, and this one has neither yet.
+
+### The notes index had five holes in it
+
+- **`lock-free.md`, `fixed-map-lookup.md`, `zero-copy-send.md` and `foreign-runtime.md` were not listed in [`docs/README.md`](docs/README.md) §3** — four measured notes a reader could only find by listing the directory. Found while looking for where the new one belongs, which is the second time this week that reading a page against the tree turned up more than the thing being looked for.
+
 ## [0.0.144] — 2026-09-22
 
 **The body's run-or-kept answer decides a code parameter's shape** —

@@ -125,6 +125,23 @@ is normative and nothing may depend on it to know what a program means.
   `Locked` would cost against Part II 12.2's no-pausing rule: why blocking is
   not pausing in this language, the one ledger line the answer turns on, and
   the 11 ns an uncontended acquisition costs where it can never be contended.
+* [`lock-free.md`](lock-free.md) — whether ADR-039 §3's open door is worth
+  walking through: what a compare-and-swap loop would buy over the shipped
+  crossing door, the **3.7×** defect the measurement uncovered on the way, and
+  §6's finding that what decides it is not the saving but whether a real program
+  shares a word-sized value across threads at all.
+* [`unique-ownership.md`](unique-ownership.md) — **an idea, not a measurement**:
+  extending the ledger with a proof that a mutable value is reachable from
+  exactly one task at a time, so a door over it would need no lock. Why it is in
+  character (ADR-037 D7 already picks `Rc` against `Arc` per value by proving a
+  reachability property), the five things the first afternoon would run into,
+  and the one that would kill it.
+* [`fixed-map-lookup.md`](fixed-map-lookup.md) — a fixed map's lookup, `match`
+  against a perfect hash, and the crossover ADR-079 D3 left unnamed.
+* [`zero-copy-send.md`](zero-copy-send.md) — what it costs to answer a request
+  with a file, and the trap in the obvious reading of *map it, don't read it*.
+* [`foreign-runtime.md`](foreign-runtime.md) — a Nikaia program that starts
+  `hyper`, and what ADR-038 D7's two rules cost today.
 * [`automatic-clone.md`](automatic-clone.md) — why having the compiler insert the
   `.clone()` a detached task makes necessary is not a convenience: it adds an
   owner and so moves a cleanup point, which is the observable change ADR-037 D3
