@@ -384,37 +384,6 @@ points as roots seeded at the floor, the way it already seeds crossing roots. Th
 checks need nothing — [ADR-045](specification/adr/adr-045.md) D1 kept every verdict
 off the switch, so a library is already checked for the world it would enter.
 
-### 2.43. The escape set is Rust's, and no page says so
-
-*Measured at 0.0.113*, while building a decoder for build-time text. The
-parser's `STR_CHAR` takes `\` and **any** character and keeps both; the emitter
-writes a `.nika` string literal into the generated Rust verbatim. So what a
-`\` means is decided by `rustc`, and this language's escape set is that one's —
-`\n \r \t \0 \\ \' \" \xNN \u{…}` — with no page of the specification
-saying it.
-
-*Two things follow, and only the second is a defect.*
-
-**The set itself is fine.** Borrowing the backend's escapes is the same choice
-Part I 2.2 makes about numbers, and writing them down is describing rather than
-deciding. It is [`build_time::decoded`](../crates/nikaia/src/build_time.rs)'s
-whole justification, and a test runs a program to hold the two readings
-together.
-
-**What an unknown escape is told is not.** `println("a\qb")` is refused on the
-right line — [ADR-012](specification/adr/adr-012.md)'s source map — in `rustc`'s
-vocabulary, ending *for more information, visit
-doc.rust-lang.org/reference/tokens.html#literals*. A Nikaia program is sent to
-the Rust reference to find out what it may write, which is
-[Part III C.2](specification/30-nikaia-tooling.md)'s *in the compiler's own
-words* not met. A parser-level refusal naming the set is what it wants, and
-that needs the set written down first.
-
-*What it needs:* the set in Part I 2.5 beside the literal it belongs to, then a
-refusal in this compiler's words. The first half is the owner's sentence, since
-*which escapes this language has* is a decision even where the answer is
-*Rust's*.
-
 ### 2.10. The cleanup point the ledger should narrate
 
 [ADR-094](specification/adr/adr-094.md) D5, and the only part of that record

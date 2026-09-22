@@ -4941,6 +4941,7 @@ impl<'a> Checker<'a> {
             // rather than worked out from whether somebody happened to type a
             // brace somewhere in it.
             Expr::LitStr(text) => {
+                self.an_escape_nothing_names(text, span);
                 self.unmarked_hole(text, span);
                 Ty::view("str")
             }
@@ -4948,11 +4949,21 @@ impl<'a> Checker<'a> {
             // Nikaia source written inside a literal, and until that walk
             // existed it was source no analysis could see - the same mistake
             // was caught outside a hole and silently passed inside one.
-            Expr::LitInterpolated(_) => {
+            Expr::LitInterpolated(text) => {
+                // **The whole literal, holes and all**, because an escape
+                // belongs to the *literal* and not to the hole: `f"{f(\"a\")}"`
+                // writes `\"` twice inside a hole and the outer quotes are what
+                // they escape.
+                self.an_escape_nothing_names(text, span);
                 self.holes(expr, span);
                 Ty::named("String")
             }
-            Expr::LitChar(_) => Ty::named("char"),
+            // A character literal is kept as written too, so `'\q'` is the
+            // same refusal one literal over.
+            Expr::LitChar(text) => {
+                self.an_escape_nothing_names(text, span);
+                Ty::named("char")
+            }
             Expr::LitBool(_) => Ty::named("bool"),
             // **A nullable of it-does-not-say.** `null` names the absence of a
             // value without naming what value, so the inside is `Unknown` and
@@ -6419,6 +6430,57 @@ impl<'a> Checker<'a> {
             )),
         });
         true
+    }
+
+    /// **An escape this language's set does not name** (`NK1184`,
+    /// [ADR-188](../../docs/specification/adr/adr-188.md) D3).
+    ///
+    /// A `.nika` literal is written into the generated file verbatim, so what a
+    /// `\` means is the language below's answer and always has been. What a
+    /// program that writes `"a\qb"` *heard* about it was `rustc`'s, ending
+    /// *for more information, visit doc.rust-lang.org/reference/tokens.html*:
+    /// a Nikaia program sent to the Rust reference to find out what it may
+    /// write, which is [Part III C.2](../../docs/specification/30-nikaia-tooling.md)'s
+    /// *in the compiler's own words* not met and
+    /// [C.1](../../docs/specification/30-nikaia-tooling.md)'s class besides.
+    ///
+    /// **It refuses nothing that was accepted**, and that is what
+    /// [`build_time::an_escape_nothing_names`] sharing one table with
+    /// [`build_time::decoded`] is for: everything this refuses is something
+    /// `rustc` refuses one file later, so the only thing that moves is who says
+    /// it and in whose vocabulary ([C.4](../../docs/specification/30-nikaia-tooling.md)).
+    fn an_escape_nothing_names(&mut self, text: &str, span: &Span) {
+        let Some(refused) = crate::build_time::an_escape_nothing_names(text) else {
+            return;
+        };
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1184",
+            message: format!("`{}` is not an escape this language has", refused.written),
+            notes: vec![
+                format!("{} (Part I, 2.5)", refused.why),
+                format!("the set is: {}", crate::build_time::ESCAPES),
+            ],
+            // **Two ways out, and which one is offered is read off the
+            // escape** ([Part III C.2](../../docs/specification/30-nikaia-tooling.md):
+            // a way out that cannot be taken is not one). A `\\x` or a `\\u`
+            // that is malformed was *meant* as a character, so the help names
+            // the form it should have had; anything else is a backslash that
+            // was meant literally, and the way out is to double it.
+            help: Some(match refused.written.chars().nth(1) {
+                Some('x') | Some('u') => {
+                    "a character above `\\x7F` is written `\\u{…}`, with up to \
+                     six hexadecimal digits: `\\u{80}`, `\\u{1F600}`"
+                        .to_string()
+                }
+                _ => format!(
+                    "write the backslash as `\\\\` where it is meant literally - `\"{}\"` - \
+                     or use one of the escapes above",
+                    text.replace('\\', "\\\\")
+                ),
+            }),
+        });
     }
 
     /// **The one thing this checker warns about rather than refusing** - a

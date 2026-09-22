@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.138 (Draft)
+**Version:** 0.0.139 (Draft)
 **Date:** 2026-09-22
 
 ---
@@ -654,6 +654,26 @@ means.
 **A newline is an ordinary character in a literal.** Nothing ends a literal but
 the closing `"`. A literal left unterminated runs on to the next `"` in the file
 or, if there is none, to the end of the file.
+
+**A `\` introduces an escape, and the set is closed:**
+
+| written | what it is |
+| :--- | :--- |
+| `\n` `\r` `\t` | newline, carriage return, tab |
+| `\0` | the zero character |
+| `\\` `\'` `\"` | the backslash and the two quotes, standing for themselves |
+| `\xNN` | two hexadecimal digits, naming a byte below `\x80` |
+| `\u{…}` | up to six hexadecimal digits, naming any character: `\u{1F600}` |
+
+The same set in a `'…'`, in an `f"…"` and in a template. A `\` in front of
+anything else is refused (`NK1184`), naming the set — and a backslash that was
+meant literally is written `\\`. A character above `\x7F` is `\u{…}`, because
+`\xNN` names a byte and a byte is not a character.
+
+**The set is the language below's, and that is describing rather than
+deciding** — the same bargain 2.2 makes about numbers. A literal is written into
+the generated file as it stands, so borrowing the escapes costs one sentence
+here and keeps the two readings of a literal from ever parting company.
 
 **The type follows the syntax, not the contents.** `"…"` is a view of static
 text and `f"…"` builds a `String`, whether or not it has a hole in it. Adding a

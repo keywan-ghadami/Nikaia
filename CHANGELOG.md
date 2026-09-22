@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.139] — 2026-09-22
+
+**The escape set is the language below's, written down once and refused here** —
+[ADR-188](docs/specification/adr/adr-188.md), closing
+[`open-work.md`](docs/open-work.md) §2.43.
+
+### What a `\` means was never written down, and what an unknown one was told was `rustc`'s
+
+- **The parser takes `\` and any character and keeps both**, and the emitter writes a `.nika` literal into the generated file verbatim — so what a `\` means has always been the backend's answer, and no page of the specification said so.
+- **`println("a\qb")`** was refused on the right line ([ADR-012](docs/specification/adr/adr-012.md)'s source map holds) in `rustc`'s vocabulary, ending *for more information, visit doc.rust-lang.org/reference/tokens.html#literals*. A Nikaia program sent to the Rust reference to find out what it may write, which is [Part III C.2](docs/specification/30-nikaia-tooling.md)'s *in the compiler's own words* not met and [C.1](docs/specification/30-nikaia-tooling.md)'s class besides.
+- **The entry disagreed with itself about whose sentence this was**, and that is what held it open: *writing them down is describing rather than deciding*, and four paragraphs later *which escapes this language has is a decision even where the answer is Rust's*. The first is the better reading and is the one taken — the same bargain Part I 2.2 already makes about numbers.
+
+### One table, two readers
+
+- **`build_time::one_escape`** is the table; `decoded` reads it to turn a literal into a value while the program is built, and `an_escape_nothing_names` reads it to say which escape a literal has that the set does not name.
+- **Two walks would be two sets**, and the decoder already held its own copy. The one that drifted *open* would refuse a literal the other decodes, which is a correct program refused. The refusal is safe precisely because everything it refuses is something `rustc` refuses one file later: what moves is who says it.
+- **A test holds the two to one answer**, over the whole set and over six malformed escapes.
+
+### `NK1184`, in the checker, naming the set
+
+- **Part I 2.5 gains the set**: `\n \r \t \0 \\ \' \" \xNN \u{…}`, in a `"…"`, an `f"…"`, a `'…'` and a template alike. `\xNN` names a byte below `\x80`, because that is what the language below allows inside a string; a character above it is `\u{…}`.
+- **In the checker and not the parser.** A `fail` arm inside a lexical rule is not fatal in this parser — *an error that got further still wins, progress before priority* — so where the rest of the file parses, as it does here, the message would be discarded with the attempt. The literal reaches the checker with its body intact, which is all this question needs.
+- **The way out is read off the escape** ([C.2](docs/specification/30-nikaia-tooling.md): a way out that cannot be taken is not one). A malformed `\x` or `\u{…}` was meant as a **character**, so the help names the form it should have had — `\u{80}`, `\u{1F600}`; anything else is a backslash meant literally, and the help writes the literal back with its backslashes doubled.
+
+### And it refuses nothing that existed
+
+- **A sweep over every `.nika` in the tree passes**, which is what says this is a translation and not a new rule. Measured first, because a naive scan of the *source* found a `\/` that is not in the set — in a **comment** in `examples/json.nika`, about JSON's own escapes. The check reads the literal off the AST, where a comment is not.
+- The corpus writes seven escapes: `\n`, `\"`, `\r`, `\\`, `\t`, `\u{…}` and `\0`. All seven are in the set.
+
 ## [0.0.138] — 2026-09-22
 
 **Rust has a stable `async` closure, and a premise under twelve sentences is

@@ -293,3 +293,133 @@ fn a_position_that_infers_the_type_is_left_alone() {
     let counted = emit("fn main() { let s = \"ab\".repeat(2 + 1) }");
     assert!(!counted.contains("i64"), "{counted}");
 }
+
+// ---------------------------------------------------------------------------
+// The escape set is this language's, and a word that is not in it is refused
+// here ([ADR-188](../../../docs/specification/adr/adr-188.md))
+// ---------------------------------------------------------------------------
+
+/// Every finding the checker has about a source.
+fn findings(source: &str) -> Vec<nikaia::check::Finding> {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = nikaia::contracts::Ledger::infer(&parsed);
+    let library =
+        nikaia::contracts::Ledger::parse(nikaia::contracts::STD).expect("std ships a ledger");
+    nikaia::check::check_program(&parsed, &own, &library, &std::collections::BTreeSet::new())
+        .findings
+}
+
+/// The `NK1184` a source raises, where it raises one.
+fn refused(source: &str) -> Option<nikaia::check::Finding> {
+    findings(source).into_iter().find(|f| f.code == "NK1184")
+}
+
+/// **The line the entry was written for.** `println("a\qb")` used to be
+/// `rustc`'s, ending *for more information, visit
+/// doc.rust-lang.org/reference/tokens.html*: a Nikaia program sent to the Rust
+/// reference to find out what it may write
+/// ([Part III C.2](../../../docs/specification/30-nikaia-tooling.md)).
+#[test]
+fn an_escape_the_set_does_not_name_is_refused_here() {
+    let found = refused("fn main() { println(\"a\\qb\") }").expect("refused");
+    assert!(found.message.contains("`\\q`"), "{}", found.message);
+    // **The set is in the message**, because the page and the message print
+    // the same list and a set written twice is a set that disagrees with
+    // itself.
+    assert!(
+        found.notes.iter().any(|n| n.contains("\\u{…}")),
+        "{:?}",
+        found.notes
+    );
+    // A way out the program can take: the backslash was meant literally.
+    assert!(
+        found
+            .help
+            .as_deref()
+            .unwrap_or_default()
+            .contains("a\\\\qb"),
+        "{:?}",
+        found.help
+    );
+}
+
+/// **Every escape the set does name is accepted**, which is the half that keeps
+/// this from refusing a correct program
+/// ([C.4](../../../docs/specification/30-nikaia-tooling.md)).
+#[test]
+fn the_whole_set_is_accepted() {
+    let source = "fn main() { println(\"\\n \\r \\t \\0 \\\\ \\\" \\x41 \\u{1F600}\") }";
+    assert!(refused(source).is_none());
+    // And it lowers, because the language below reads the same bytes back.
+    assert!(emit(source).contains("\\u{1F600}"));
+}
+
+/// **A character literal and an `f"…"` are the same literal one shape over**,
+/// and each keeps its body as written — so each is asked the same question.
+#[test]
+fn a_character_and_an_interpolation_are_asked_too() {
+    assert!(refused("fn main() { let c = '\\q' }").is_some());
+    assert!(refused("fn main() { println(f\"x\\qy\") }").is_some());
+    // A `\"` inside a hole belongs to the **literal**, and it is in the set.
+    assert!(refused("fn main() { println(f\"{greet(\\\"a\\\")}\") }\nfn greet(s: ref String) -> String { return s.to_owned() }").is_none());
+}
+
+/// **A malformed `\x` or `\u{…}` is refused with the form it should have had**,
+/// which is the other way out and not the backslash: a program that wrote
+/// `\x80` meant a character rather than a backslash
+/// ([C.2](../../../docs/specification/30-nikaia-tooling.md) — a way out that
+/// cannot be taken is not one).
+#[test]
+fn a_malformed_numeric_escape_is_told_the_form() {
+    for source in [
+        "fn main() { println(\"a\\x80b\") }",
+        "fn main() { println(\"a\\u{ZZ}b\") }",
+        "fn main() { println(\"a\\u{\") }",
+    ] {
+        let found = refused(source).unwrap_or_else(|| panic!("refused: {source}"));
+        assert!(
+            found
+                .help
+                .as_deref()
+                .unwrap_or_default()
+                .contains("\\u{1F600}"),
+            "{source}: {:?}",
+            found.help
+        );
+    }
+}
+
+/// **One table, two readers** ([ADR-188](../../../docs/specification/adr/adr-188.md) D2).
+///
+/// The refusal and the build-time decoder walk the same escapes, so everything
+/// one refuses is something the other cannot decode — and nothing the decoder
+/// accepts is refused. Two copies of the set would drift, and the one that
+/// drifted open would refuse a literal the other reads.
+#[test]
+fn the_refusal_and_the_decoder_read_one_set() {
+    for literal in [
+        "\\n",
+        "\\r",
+        "\\t",
+        "\\0",
+        "\\\\",
+        "\\'",
+        "\\\"",
+        "\\x41",
+        "\\u{1F600}",
+        "plain",
+    ] {
+        assert!(
+            nikaia::build_time::an_escape_nothing_names(literal).is_none(),
+            "{literal}"
+        );
+        assert!(nikaia::build_time::decoded(literal).is_some(), "{literal}");
+    }
+    for literal in ["\\q", "\\x80", "\\xZZ", "\\u{ZZ}", "\\u41", "a\\"] {
+        assert!(
+            nikaia::build_time::an_escape_nothing_names(literal).is_some(),
+            "{literal}"
+        );
+        assert!(nikaia::build_time::decoded(literal).is_none(), "{literal}");
+    }
+}
