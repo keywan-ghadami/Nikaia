@@ -130,17 +130,24 @@ first, and `NK2501` fires end to end now: a Rust crate with an `Rc` field,
 ledger the analyses read ([ADR-104](specification/adr/adr-104.md) D1), and a
 `spawn` refused in **this compiler's** words on the `.nika` line —
 `crates/nikaia/tests/describing.rs` runs that chain from a program. What is left
-is the case this compiler **cannot decide**, where `rustc`'s own `Send` bound
-refuses against the right `.nika` line through
+is the case this compiler could not **ask** about, where `rustc`'s own `Send`
+bound refuses against the right `.nika` line through
 [ADR-005](specification/adr/adr-005.md) D7's translation: the position is kept
-and the words are `rustc`'s, which that record carries as its own open half and
-is not work in this section.
+and the words are `rustc`'s. That **is** work in this section since 0.0.149 —
+§2.44, [ADR-193](specification/adr/adr-193.md) — and what changed is not this
+compiler's reach but that the column it would read was decided.
 
 **And one that is out of the sequence because three entries rest on it**: the
 **tether** ([ADR-008](specification/adr/adr-008.md)), last below and first under
-*text is one type*, under §1's `keeps` column, and under
-[`open-decisions.md`](open-decisions.md)'s `Bytes`. It is not one change
-package, and the entry says what each of its four parts is.
+*text is one type* and under `Bytes`. It is not one change package, and the
+entry says what each of its four parts is.
+
+*That sentence used to name two more things and neither rested on it*, which the
+entry itself now records: §1's `keeps` column for a grammar entry closed at
+0.0.137 without the tether, and
+[`open-decisions.md`](open-decisions.md)'s `Bytes` question was answered by
+[ADR-179](specification/adr/adr-179.md) at 0.0.127 and has not been in that file
+since.
 
 ### 2.1. A lambda that pauses is refused where `std` takes it
 
@@ -908,10 +915,12 @@ description names, so the program is still refused by `rustc`'s `Send` bound
 against the `.nika` line. `a_described_foreign_call_is_not_asked_about_crossing`
 asserts the silence so nobody rediscovers it.
 
-***The question is asked.*** [`open-decisions.md`](open-decisions.md) carries
-it: whether a described foreign function says that it puts what it is given on
-a thread. The place is already right — C.1's rule is kept and the refusal names
-the `.nika` line — and what is open is the **words**, which
+***The question is answered, and it is §2.44 now.***
+[ADR-193](specification/adr/adr-193.md): a description gains a `threads` column
+with three values, `NK2502` asks a described call too and fires on the
+**claim**, and `nikaia describe` **proposes** the answer rather than demanding
+it. The place was already right — C.1's rule is kept and the refusal names the
+`.nika` line — and what was open is the **words**, which
 [ADR-005](specification/adr/adr-005.md) D7 recorded as its own half.
 
 ### 2.32. A library for other languages
@@ -1211,6 +1220,54 @@ the refusal is the honest answer for a program that would tether, and it names
 `.to_owned()`. What it costs is the programs D2 describes as free-and-escaping —
 a parser handing its rows past the buffer's scope — and no program in the tree
 writes one.
+
+### 2.44. A description says whether it threads, and the describer proposes the answer
+
+[ADR-193](specification/adr/adr-193.md), answering the last question
+[`open-decisions.md`](open-decisions.md) held. **Nothing of it is built**: a
+description has no `threads` column, `NK2502` asks its question only of a call
+**nothing** describes ([ADR-038](specification/adr/adr-038.md) D7's own
+wording), and `nikaia describe` writes no note about what it saw.
+
+*Evidence:* `examples/foreign-runtime/crossing` — a handle whose description
+says `crosses = false`, handed to `hyper_shim::across_a_thread`, which the
+description names. The build fails against the right `.nika` line, which is
+[Part III C.1](specification/30-nikaia-tooling.md)'s rule kept, in `rustc`'s
+words: `` `Rc<String>` cannot be sent between threads safely ``.
+`a_described_foreign_call_is_not_asked_about_crossing` in
+`crates/nikaia/tests/send.rs` asserts that silence, and it is the test that has
+to change first. [ADR-005](specification/adr/adr-005.md) D7 carries the **text**
+as its own open half.
+
+*What it needs, in the record's order (§5), and each step is usable without the
+next:*
+
+1. **the column** — its value, its parse, its render, and `NK2502` reading it
+   (D1, D2). Three values, and the refusal fires on the **claim** and never on
+   its absence.
+2. **the signature scan and the note it writes**, on the scraper as it stands
+   (D3). This already carries the safe half on its own, and not as a heuristic:
+   in safe Rust the `Send` bound is forced and surfaces in the signature.
+3. **`syn` and cargo metadata under it** (D4), which is what makes step 2
+   reliable rather than lucky.
+4. **`unsafe impl Send`/`Sync` flagged** (D5) — cheap, sound, and independent of
+   3.
+5. **the intra-crate call graph and the `use` table** (D4), for the row where an
+   `unsafe impl Send` took the bound away.
+
+*One rule of the record is worth repeating here, because it is the thing a first
+implementation gets wrong:* the describer **proposes and never claims**, and it
+may propose `true` and must never propose `false`. Nothing a signature can show
+entails *does not thread* — a function may spawn something it built itself — and
+[ADR-123](specification/adr/adr-123.md) D2's licence to fill `crosses` is
+**soundness**, which these indicators do not have.
+
+*And step 3 does not close everything a parser looks as though it would.* Of the
+scraper's three named limits the `mod`-path one closes and the
+signature-translation one narrows, but the **macro** one stays — expanding one
+needs `-Zunpretty=expanded`, which is nightly, and that is the same
+[ADR-001](specification/adr/adr-001.md) D1 wall that keeps rustdoc-JSON out.
+
 
 ## 3. Upkeep
 

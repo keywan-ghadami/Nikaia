@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.149] — 2026-09-22
+
+**A description says whether it threads, and the describer proposes the answer**
+— [ADR-193](docs/specification/adr/adr-193.md), the owner's **A with D**. The
+question leaves [`open-decisions.md`](docs/open-decisions.md) and the work
+arrives in [`open-work.md`](docs/open-work.md) §2.44. No code changes: this is
+the ruling and the task, not the build.
+
+### What it decides
+
+- **D1** — a description gains a `threads` column, hand-written like `crosses`, with **three** values. The absence is *nobody said*, never *it does not*: a `threads = false` written by a hopeful hand is a false silence, which is [ADR-010](docs/specification/adr/adr-010.md) D1's vulnerability generator.
+- **D2** — `NK2502` asks a described call too, and fires on the **claim** and never on its absence. So [ADR-005](docs/specification/adr/adr-005.md) D7's second half closes **only where somebody wrote the word**, and the position and the translation stay exactly where they are everywhere else.
+- **D3** — the describer **proposes** and never claims. It may propose `true`; it must never propose `false`. Nothing a signature can show entails *does not thread* — a function may spawn something it built itself — and [ADR-123](docs/specification/adr/adr-123.md) D2's licence to fill `crosses` is **soundness**, which a `Send + 'static` bound does not have: it says the callee *may* send, which is usually `spawn` and is sometimes an API keeping a door open.
+- **D4** — what it reads, checked against `examples/foreign-runtime/shim`'s two rows. In **safe** Rust the bound is forced by the type system and surfaces in the signature, so the scan carries that half alone; the intra-crate call graph is for the row where an `unsafe impl Send` took the bound away. A sink reached through a call says *this function threads something*, never *this function threads your argument*.
+- **D5** — flag `unsafe impl Send` and `unsafe impl Sync`: one syntactic pattern, **sound**, and the most useful sentence the tool can write about a foreign crate. What none of it can do is see whether the promise is **true** — the line between a rule the toolchain enforces and a rule it inherits.
+
+### The task, in five steps each usable without the next
+
+1. the column, its parse and render, and `NK2502` reading it;
+2. the signature scan and the note it writes, **on the scraper as it stands** — this already carries the safe half;
+3. `syn` and cargo metadata under it, which makes step 2 reliable rather than lucky;
+4. `unsafe impl Send`/`Sync` flagged — cheap, sound, independent of 3;
+5. the call graph and the `use` table, for the unchecked row.
+
+### And two pages got shorter
+
+- **[`open-decisions.md`](docs/open-decisions.md) has nothing open.** It says so as a statement about what has been **asked** rather than about what is settled: every entry it has held was put there because something was blocked and somebody noticed, so an empty page means nothing written down is blocked.
+- **§2.42's *what rests on it* lost its last stale name.** The head-of-list paragraph still cited `open-decisions.md`'s `Bytes` as resting on the tether; that question was answered by [ADR-179](docs/specification/adr/adr-179.md) at 0.0.127 and has not been in the file since — the third citation in that one sentence to turn out not to rest on the tether, after the grammar entry's `keeps` at 0.0.137 and the third of `?.` at 0.0.141.
+
 ## [0.0.148] — 2026-09-22
 
 **Step 2 said the right thing about two of three limits and named them in the
