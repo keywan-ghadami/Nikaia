@@ -1344,7 +1344,7 @@ impl Ledger {
                                         // owned string and a view all reach the
                                         // parser the same way and no one type is
                                         // the true one.
-                                        params: vec![("input".to_string(), ty::Ty::Unknown)],
+                                        params: vec![(INPUT.to_string(), ty::Ty::Unknown)],
                                         config: Vec::new(),
                                         result: rule
                                             .ret_type
@@ -2382,6 +2382,16 @@ pub const UNNAMED_ERROR: &str = "?";
 /// A `std` type with no module in front, which is `Overtaken`'s shape: a
 /// program never writes a path to it, because it arrives in a `catch`.
 pub const PARSE_ERROR: &str = "ParseError";
+
+/// The one parameter every grammar entry takes: the text to parse
+/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1).
+///
+/// A name rather than four spellings of it, because three analyses have to
+/// agree on it: the loop below writes the signature, [`tether::infer`] writes
+/// the state of the views a parse hands back, and [`keeps::infer`] says whether
+/// the entry keeps it. A column that names a position no signature has is a
+/// column nobody can read.
+pub const INPUT: &str = "input";
 
 /// The `throws` list exactly as the ledger writes it.
 ///

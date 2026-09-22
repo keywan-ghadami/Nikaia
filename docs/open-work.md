@@ -68,61 +68,13 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**One entry is open**, and it waits on a **decision** rather than on work. §1.2 closed at 0.0.132, §1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay where they were, because this file is cited by number.
+**No entry is open.** §1.1 closed at 0.0.137, §1.2 at 0.0.132, §1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay where they were, because this file is cited by number.
 
-### 1.1. A grammar's entry does not say what it keeps
-
-**Found by building [ADR-140](specification/adr/adr-140.md) D3**, which is the
-only reason it is visible: a grammar used to be entered through a **method**
-call, and the analyses answer *nothing* about a method whose receiver they
-cannot resolve. `::` makes it a call by name, so they read the entry's contract
-instead — and the entry's contract is `..Default::default()` with `throws` and a
-signature on it, because nothing derives its columns.
-
-*Reproduction:* `examples/inventory/nikaia.contracts`, in the diff of that
-change. `read`, whose body is one `Stock::file(data)`, went from
-`sync = "inferred"`, `keeps = ["data"]`, `touches = []` to none of the three and
-`locks = "?"` — and its lowering went from `pub fn` to `pub async fn`.
-
-**The direction was right and the answer was poor**, which is why this was an
-entry and not a revert. Withholding a promise on doubt is
-[ADR-010](specification/adr/adr-010.md) D1's polarity, and the *old* answer was
-the analysis failing open: a rule's action is arbitrary Nikaia and could pause,
-and the method shape let the caller keep a promise nobody had derived.
-
-**Three of the four columns are answered, and the fourth is a different
-question.** [ADR-142](specification/adr/adr-142.md) D1 says an action may not
-pause, so an entry is `sync` by construction and D2 writes the column.
-**`touches` and `locks` are now derived over the action blocks** and folded into
-the entry the way a function's are — `Stock::file` carries `touches = []`, and
-`read` carries it too and has lost its `locks = "?"`, which is this entry's own
-reproduction read backwards.
-
-*What that needed first* was a **key**: the checker filed a call's answers under
-the enclosing *function*, and an action has none, so a rule's answers landed
-nowhere. A `pub` rule is a ledger entry
-([ADR-082](specification/adr/adr-082.md) D1) and has its own key now. What the
-key must not do is make an action a *function*, and `NK2605` says that where it
-belongs instead: an action's failure leaves the parser rather than travelling to
-a caller.
-
-*The grammar is the unit rather than the rule*, which is the over-approximation
-[ADR-033](specification/adr/adr-033.md) D4 asks for in this column: a rule's
-pattern names other rules of the same grammar and their actions run with it, and
-which ones is the parser backend's question rather than this walk's.
-
-**`keeps` is what is left, and it is the tether's question rather than this
-one's.** A parse hands back views **into its input** — `Stock`'s `Entry` holds
-`ref String` — so the entry keeps its `input`, and that is
-[ADR-008](specification/adr/adr-008.md)'s tether rather than anything an action
-block says. Leaving the column absent is the safe reading today: absent means
-*nobody said*, so the caller does not lend, while a derived `keeps = []` would
-lend the input to a parser that tethers views into it. It is written down here
-rather than guessed at, and it waits on the same mechanism
-[`open-decisions.md`](open-decisions.md)'s `Bytes` entry waits on.
-
-*Every example still runs*, at both settings, which is what said this cost
-information rather than correctness.
+**What that means is that the list is empty, not that the compiler is right.**
+Every entry this section has ever held was found by *running* something — the
+specification's own programs, the corpus at both settings, a two-file project —
+and never by reading the code. So an empty §1 is a statement about what has been
+run, and the way to refill it is the method above.
 
 ## 2. Decided and unbuilt
 

@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.137] — 2026-09-22
+
+**A parse keeps the text its record views** —
+[ADR-186](docs/specification/adr/adr-186.md), closing
+[`open-work.md`](docs/open-work.md) §1.1. **§1 is empty**: every defect that
+file carried is closed.
+
+### The column was not being withheld — it was answering the wrong way
+
+- **`open-work.md` §1.1 said absence was the safe reading**: *absent means nobody said, so the caller does not lend*. The code says otherwise. `keeps_its` reads **an absent `keeps` on a present entry as *keeps nothing*** — `std.contracts`' own convention for `sync`, said once more for a second column — and a `pub` rule **is** a present entry ([ADR-082](docs/specification/adr/adr-082.md) D1).
+- **So every parse in the corpus was answering *lends***, for text it hands back views into. `Stock::file -> Vec[Entry]` where `Entry` holds a `ref String` is the corpus' own instance, and `read`, whose body is one `Stock::file(data)`, is §1.1's reproduction: it lost `keeps = ["data"]` the day [ADR-140](docs/specification/adr/adr-140.md) D3 made the entry a call by name, and nothing put it back.
+- **[ADR-010](docs/specification/adr/adr-010.md) D1's polarity, found backwards.** An entry that is *absent* is unknown and unknown keeps; an entry that is *there with the column empty* is a claim. The two are one line apart in `keeps.rs` and the note in `open-work.md` read the first where the ledger had the second.
+
+### And it needed no mechanism
+
+- **The entry cited one anyway** — [`open-decisions.md`](docs/open-decisions.md)'s `Bytes` question, which [ADR-179](docs/specification/adr/adr-179.md) answered at 0.0.127 and which has not been in that file since. A stale citation in a notes page is what `docs/README.md` §1 calls a defect in its own right, and this one had been holding an entry open.
+- **What was missing was an item kind.** `tether::infer` and `keeps::infer` walk `Item::Fn` and `Item::Impl` and never `Item::Grammar`, which is why `read` carries `views = ["data: borrowed", "<result>: borrowed"]` and `Stock::file` carried nothing at all.
+
+### One predicate, two columns
+
+- **D1**: a parse keeps its `input` exactly when its declared result may hold a view **into** it. `Stock::file -> Vec[Entry]` keeps the text; `Calc::expr -> i64` keeps nothing. An empty column now means *asked and no*, where before it meant *nobody derived it* — and the two are written the same way, which is what made the old state an answer rather than a silence.
+- **D2**: the rule's **declared result** decides it and not the action blocks. `touches` walks the actions because what a parse *does* is in them; what it can *hand back* is the declared type, and the input is not a name an action can reach. So no fixpoint over the grammar: one rule, one type, one answer.
+- **D3**: a result this walk did not read a declaration for **keeps** the text — [ADR-094](docs/specification/adr/adr-094.md)'s polarity, unchanged. It answers *no view* only where it can account for every name: a type this package declares that holds none, one [Part I 2.2](docs/specification/10-nikaia-light.md) offers, or a container whose arguments it has already read.
+- **D4**: the same fact writes `views`, as `input: borrowed` and `<result>: borrowed` ([ADR-008](docs/specification/adr/adr-008.md) D7). The buffer is the **caller's** text, which outlives the call — the sentence `tether::of` already reaches for a function with a view among its parameters, read off the shape of a grammar instead of off a signature.
+- **The package and not the unit.** A grammar is emitted into the file it stands in ([ADR-030](docs/specification/adr/adr-030.md) §7), and the record it yields is a declaration of the **package** — so `declared_in` unions the borrowing types over every unit, by name, the way `tether` already reads an `impl`'s target by name.
+
+### What it moves and what it does not
+
+- **Seven of the twelve `pub` rules in the corpus gain both columns**, and the five that hand back a number gain neither: `Stock::file`, `Config::file`, `Measurements::file`, `Log::file`, `Fasta::file`, `Json_::value` and `report.nika`'s `Stock::file` keep their text; `Calc::expr` and `tests/errors/E3.nika`'s `f` do not.
+- **No lowering changes**, which is [ADR-094](docs/specification/adr/adr-094.md) §5's first step on purpose: an entry's `input` is typed `?` and `lends` does not lend a type it cannot name, and `read`'s `data` is written `ref String`, which the declaration lends whatever the column says. The answer is in the file before a call site reads it.
+- **Nothing in the tree tethers**, which `tethers.rs`' sweep over every `.nika` still asserts — a parse that views the **caller's** text is Borrowed, so the state that is not built is still not reached.
+- **Six live citations to `open-work.md` §1.1 now name the record instead**, because the entry is deleted and that file's own head says to cite an entry by its subject: a citation to a number that no longer exists is the failure the head is about, met from the other side.
+
 ## [0.0.136] — 2026-09-21
 
 **A view meets two more constructs that were never told** —

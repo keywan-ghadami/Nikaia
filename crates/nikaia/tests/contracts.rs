@@ -1181,8 +1181,8 @@ fn a_fields_visibility_survives_the_ledger() {
 }
 
 /// **A grammar's entry earns its columns from its actions**
-/// (`docs/open-work.md` §1.1, [ADR-082](../../../docs/specification/adr/adr-082.md)
-/// D1).
+/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1,
+/// [ADR-186](../../../docs/specification/adr/adr-186.md)).
 ///
 /// A `pub` rule is a ledger entry, and it used to be written with
 /// `..Default::default()`: `throws`, a signature, and nothing else. The three

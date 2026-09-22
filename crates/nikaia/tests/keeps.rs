@@ -257,6 +257,73 @@ fn std_says_which_of_its_own_functions_keep() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// A grammar's entry ([ADR-186](../../../docs/specification/adr/adr-186.md))
+// ---------------------------------------------------------------------------
+
+/// The parse [ADR-186](../../../docs/specification/adr/adr-186.md) was written
+/// about, and the caller whose columns it took away.
+const STOCK: &str = "grammar Stock {\n\
+                     \x20   rule FIELD -> ref String = s:until(\";\" | frame_end) -> { s }\n\
+                     \x20   rule COUNT -> i64 = n:dec[i64](digit+) -> { n }\n\
+                     \x20   @frame(boundary: \"\\n\")\n\
+                     \x20   rule ENTRY -> Entry =\n\
+                     \x20       category:FIELD \";\" => count:COUNT frame_end\n\
+                     \x20       -> { Entry { category, count } }\n\
+                     \x20   pub rule file -> Vec[Entry] = entries:ENTRY* -> { entries }\n\
+                     }\n\
+                     \n\
+                     @borrowed\n\
+                     pub struct Entry { pub category: ref String, pub count: i64 }\n\
+                     \n\
+                     pub fn read(data: ref String) -> Vec[Entry] throws {\n\
+                     \x20   return Stock::file(data)\n\
+                     }\n";
+
+/// **A parse keeps the text it hands back views into**, which is the answer
+/// `keeps` never had for an entry
+/// ([ADR-186](../../../docs/specification/adr/adr-186.md) D1).
+#[test]
+fn a_parse_keeps_the_text_its_record_views() {
+    assert_eq!(keeps(STOCK, "Stock::file"), ["input"]);
+}
+
+/// **And the caller gets its column back.** This is
+/// [ADR-186](../../../docs/specification/adr/adr-186.md) §1's own reproduction
+/// read forwards: `read`'s body is one `Stock::file(data)`,
+/// and before the entry answered, an absent `keeps` on a present entry read as
+/// *keeps nothing* — so the one caller of the parse was told it could lend text
+/// the parse holds views into.
+#[test]
+fn a_caller_of_a_parse_keeps_what_it_hands_over() {
+    assert_eq!(keeps(STOCK, "read"), ["data"]);
+}
+
+/// **A parse that hands back a number keeps nothing.** The empty column means
+/// *asked and no* now, where before it meant *nobody derived it*, and the two
+/// were written the same way.
+#[test]
+fn a_parse_that_views_nothing_keeps_nothing() {
+    let source = "grammar Calc {\n\
+                  \x20   rule NUM -> i64 = n:dec[i64](digit+) -> { n }\n\
+                  \x20   pub rule expr -> i64 = n:NUM -> { n }\n\
+                  }\n";
+    assert!(keeps(source, "Calc::expr").is_empty());
+}
+
+/// **A result this walk did not read a declaration for keeps the text**, which
+/// is this file's polarity and not the tether's: a type it cannot see into is
+/// one it cannot rule a view out of, and the cost of being wrong that way is a
+/// caller that hands the text over where it could have lent it.
+#[test]
+fn a_parse_whose_record_this_walk_cannot_see_keeps_the_text() {
+    let source = "grammar Wire {\n\
+                  \x20   rule NUM -> i64 = n:dec[i64](digit+) -> { n }\n\
+                  \x20   pub rule frame -> Vec[Packet] = n:NUM -> { [] }\n\
+                  }\n";
+    assert_eq!(keeps(source, "Wire::frame"), ["input"]);
+}
+
 /// The column survives the round trip, which `--locked` needs: it compares
 /// bytes, so a column that rendered differently than it parsed would fail a
 /// build that changed nothing.

@@ -176,6 +176,62 @@ fn the_column_renders_and_parses_back() {
     assert_eq!(back.functions["read"].views, own.functions["read"].views);
 }
 
+// ---------------------------------------------------------------------------
+// A grammar's entry
+// ---------------------------------------------------------------------------
+
+/// A parse whose record holds a view, and one whose result is a number.
+///
+/// The two shapes the corpus splits into, written once for the four tests
+/// below: `Stock::file` hands back `Vec[Entry]` and `Entry` holds a
+/// `ref String`; `Calc::expr` hands back an `i64` and holds nothing.
+const VIEWING: &str = "grammar Stock {\n\
+                       \x20   rule FIELD -> ref String = s:until(\";\" | frame_end) -> { s }\n\
+                       \x20   rule COUNT -> i64 = n:dec[i64](digit+) -> { n }\n\
+                       \x20   @frame(boundary: \"\\n\")\n\
+                       \x20   rule ENTRY -> Entry =\n\
+                       \x20       category:FIELD \";\" => count:COUNT frame_end\n\
+                       \x20       -> { Entry { category, count } }\n\
+                       \x20   pub rule file -> Vec[Entry] = entries:ENTRY* -> { entries }\n\
+                       }\n\
+                       \n\
+                       @borrowed\n\
+                       pub struct Entry { pub category: ref String, pub count: i64 }\n";
+
+const COUNTING: &str = "grammar Calc {\n\
+                        \x20   rule NUM -> i64 = n:dec[i64](digit+) -> { n }\n\
+                        \x20   pub rule expr -> i64 = n:NUM -> { n }\n\
+                        }\n";
+
+/// **A parse hands back views into the text it was given**
+/// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1,
+/// [ADR-186](../../../docs/specification/adr/adr-186.md) D1).
+///
+/// The buffer is the caller's `input`, which outlives the call — the same
+/// sentence `of` reaches for a function with a view among its parameters, read
+/// off the shape of a grammar instead of off a signature.
+#[test]
+fn a_grammar_entry_borrows_the_text_its_record_views() {
+    let own = ledger(VIEWING);
+    assert_eq!(state(&own, "Stock::file", "input"), Some(State::Borrowed));
+    assert_eq!(
+        state(&own, "Stock::file", "<result>"),
+        Some(State::Borrowed)
+    );
+}
+
+/// **And a parse that hands back a number holds nothing.** The column is a
+/// fact about what the result can point into, so a rule whose result cannot
+/// point anywhere writes no position at all.
+#[test]
+fn a_grammar_entry_that_hands_back_a_number_holds_nothing() {
+    let own = ledger(COUNTING);
+    assert!(
+        own.functions["Calc::expr"].views.is_empty(),
+        "an `i64` points into nothing"
+    );
+}
+
 /// **The whole corpus is the free case**, which is
 /// [ADR-008](../../../docs/specification/adr/adr-008.md) §3's worked check read
 /// off the analysis rather than asserted: *nothing is allocated per row and no

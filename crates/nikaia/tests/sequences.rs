@@ -207,7 +207,8 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// the enclosing *function* and an action has none — so six calls that were
 /// always unanswered were also uncounted. A `pub` rule is a ledger entry
 /// ([ADR-082](../../../docs/specification/adr/adr-082.md) D1), and it has its
-/// own key now (`docs/open-work.md` §1.1), which is what made them visible.
+/// own key now ([ADR-186](../../../docs/specification/adr/adr-186.md)), which
+/// is what made them visible.
 /// What a pattern binds has no type in this compiler — that is the parser
 /// backend's — so a method call on one is unanswerable by construction, and the
 /// entries derived from such an action say *undecided* rather than nothing.

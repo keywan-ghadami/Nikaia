@@ -513,7 +513,8 @@ pub fn infer(
                 }
                 // **A `pub` rule is an entry, so it gets the walk too**
                 // ([ADR-082](../../../docs/specification/adr/adr-082.md) D1,
-                // `docs/open-work.md` §1.1). Its body is every **action block**
+                // [ADR-186](../../../docs/specification/adr/adr-186.md)). Its
+                // body is every **action block**
                 // in the grammar: a rule's pattern names other rules of the same
                 // grammar and their actions run with it, and which ones is the
                 // parser backend's question rather than this walk's — so the

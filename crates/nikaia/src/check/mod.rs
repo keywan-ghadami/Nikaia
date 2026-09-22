@@ -2507,7 +2507,8 @@ impl<'a> Checker<'a> {
             // walks that derive `touches` and `locks` read the method answers
             // this checker files under the caller's key — which was `None` for
             // an action, so a grammar's entry inherited nothing and every
-            // caller inherited that (`docs/open-work.md` §1.1). What the key
+            // caller inherited that
+            // ([ADR-186](../../docs/specification/adr/adr-186.md)). What the key
             // must **not** do is make an action a *function*, and `NK2605` is
             // where that is said instead: an action's failure leaves the parser
             // rather than travelling to a caller.
@@ -7408,7 +7409,8 @@ impl<'a> Checker<'a> {
         //
         // **Said here rather than by `current` being `None`**, which is what
         // said it until a rule's answers needed a key of their own to land
-        // under (`docs/open-work.md` §1.1): the two facts are *this is not a
+        // under ([ADR-186](../../../../docs/specification/adr/adr-186.md)):
+        // the two facts are *this is not a
         // function* and *these calls belong to this entry*, and only the first
         // of them is this refusal's.
         if self.inside_an_action.is_some() {

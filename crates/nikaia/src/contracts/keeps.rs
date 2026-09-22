@@ -32,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::{Block, Expr, Item, Stmt};
 use crate::parser::Parsed;
 
-use super::Ledger;
+use super::{Ledger, INPUT};
 
 /// Whether a callee **lends** the parameter at `at`, so that the compiler
 /// writes the reference and the caller does not
@@ -193,6 +193,9 @@ pub fn infer(
     resolved: &BTreeMap<String, crate::check::MethodCalls>,
 ) {
     let mut graph: BTreeMap<String, Uses> = BTreeMap::new();
+    // What the package's declarations say about the types a parse hands back,
+    // read once for the grammar arm below.
+    let package = super::tether::declared_in(units);
 
     for parsed in units.iter().copied() {
         for item in &parsed.program.items {
@@ -219,6 +222,36 @@ pub fn infer(
                         ) {
                             graph.insert(name, uses);
                         }
+                    }
+                }
+                // **A `pub` rule is an entry, and its one parameter is the
+                // text** ([ADR-082](../../../docs/specification/adr/adr-082.md)
+                // D1). Whether it keeps that text is not a question about an
+                // action block at all: a parse keeps its input exactly when
+                // what it hands back holds a view **into** the input, which is
+                // [ADR-008](../../../docs/specification/adr/adr-008.md)'s
+                // tether read off the rule's declared result.
+                //
+                // **Before this the entry was in the ledger with the column
+                // empty**, and `keeps_its` reads an absent `keeps` on a present
+                // entry as *keeps nothing* — so every caller of a parse was
+                // told it could lend text a parse holds views into. That is
+                // this file's own polarity inverted, and it is what
+                // [ADR-186](../../../docs/specification/adr/adr-186.md) D1 is
+                // about: the answer is
+                // derived now, so an empty column means *asked and no*.
+                Item::Grammar(def) => {
+                    let named = parsed.text(def.name).to_string();
+                    for rule in def.rules.iter().filter(|r| r.is_public) {
+                        let mut uses = Uses::default();
+                        if super::tether::a_parse_that_views(
+                            parsed,
+                            rule.ret_type.as_ref(),
+                            &package,
+                        ) {
+                            uses.kept.insert(INPUT.to_string());
+                        }
+                        graph.insert(format!("{named}::{}", parsed.text(rule.name)), uses);
                     }
                 }
                 _ => {}
