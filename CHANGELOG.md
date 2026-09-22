@@ -4,6 +4,44 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.158] — 2026-09-22
+
+**The scanner is out**, and `nikaia describe` reads a crate with a parser
+written in Nikaia — [ADR-195](docs/specification/adr/adr-195.md) D3 built, on
+[ADR-196](docs/specification/adr/adr-196.md) D1's route.
+
+### What changed at the boundary
+
+- **`crates/nikaia/src/describe.rs` loses `items_of`, `signature_at`, `fields_at`, `line_starts` and `matching`** — the hand-written character scanner its own module header apologised for — and calls `nikaia_std::tools::rust::file` instead. `translate` is untouched, because the grammar hands it the same text; `split_top_level` stays for the three things that are lists and not syntax (a type-parameter list, a `use` list, a `Result`'s two arguments).
+- **`nikaia-std` is a real dependency of the compiler** ([ADR-196](docs/specification/adr/adr-196.md) D3). Measured before the edge was drawn: **four** packages the compiler did not already resolve — `nikaia-std`, `memmap2`, `polling`, `io-uring`; `rayon` and `libc` were already in the tree — and it was a dev-dependency here already. No cycle: `nikaia-std` may not depend on the compiler ([ADR-002](docs/specification/adr/adr-002.md) D4), and its own manifest says so.
+
+### The measurement, as an assertion
+
+`an_item_that_is_only_text_is_not_described_and_a_re_export_is` in `crates/nikaia/tests/describing.rs`. On one crate the scanner wrote entries for **four functions that do not exist**:
+
+| what it is | where | the scanner | the grammar |
+| :--- | :--- | :--- | :--- |
+| `spectre` | inside a block comment | an entry | nothing |
+| `phantom` | second line of a string literal | an entry | nothing |
+| `hidden` | inside a private `mod` | an entry | nothing at that name |
+| `buried` | private `mod` inside a `pub mod` | an entry | nothing |
+| `seen` | inside `pub mod shown` | `fremd::seen` | `fremd::shown::seen` |
+| `rescued` | `pub use private::hidden as rescued` | **nothing** | an entry |
+
+- **The last row is the direction that matters more.** `rescued` is a call the crate really answers, and refusing one is [Part III C.4](docs/specification/30-nikaia-tooling.md). The scanner refused every re-export there has ever been; the grammar reads `pub use`, keeps a private `mod`'s items instead of throwing the body away, and resolves the two against each other to a fixed point — because a re-export may name a re-export.
+- **`the_draft_for_the_experiment_is_the_file_a_reviewer_wrote` is unchanged and still passes**, entry for entry, against the hand-written ledger for `examples/foreign-runtime/shim`. The new reader had to agree with the old one everywhere the old one was right.
+
+### What the grammar grew for it
+
+- **`pub use` is an item**, reported with the text it was written with. Splitting a path is string work rather than parsing work, so `describe.rs` takes the pieces — brace lists, `as`, `::*`, and `crate`/`self`/`super` heads, with Rust 2018's uniform paths tried both ways and the first that names something taken.
+- **A private `mod` is reported and marked** (`Group.visible`) rather than skipped. Throwing the body away would have been the cheaper answer and the wrong one: a `pub use` may reach through it.
+- **A `pub fn` carries its type parameters** (`Fun.generics`), which is what the ledger spells `$T`.
+
+### What is left of the third limit
+
+- **A `pub` item in another file is still read as the crate's own.** The half inside one file is closed — an inline `pub mod` gives its items a path, an inline private `mod` stops offering them — and the other half needs the `mod foo;` in a parent to say what module a *file* is, which is a second pass. [`open-work.md`](docs/open-work.md) §2.44 step 3.3 carries it.
+- **The macro limit stays and is not the parser's**: expanding one needs nightly, the same [ADR-001](docs/specification/adr/adr-001.md) D1 wall that keeps rustdoc-JSON out.
+
 ## [0.0.157] — 2026-09-22
 
 **The grammar moves into the toolchain, and the route is running** —

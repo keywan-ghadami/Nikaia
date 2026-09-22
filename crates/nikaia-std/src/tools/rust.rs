@@ -16,6 +16,7 @@ pub struct Part<'a> {
 #[derive(Debug, Clone)]
 pub struct Fun<'a> {
     pub name: &'a str,
+    pub generics: &'a str,
     pub pauses: bool,
     pub parts: Vec<Part<'a>>,
     pub result: &'a str,
@@ -37,6 +38,7 @@ pub struct Group<'a> {
     pub what: &'a str,
     pub name: &'a str,
     pub via: &'a str,
+    pub visible: bool,
     pub items: Vec<Item<'a>>,
 }
 
@@ -130,8 +132,8 @@ grammar! {
             -> { f }
 
         rule method -> Fun<'a> =
-            pauses:qualifiers FN name:IDENT generics parts:parameters result:result where_clause tail
-            -> { Fun { name, pauses, parts, result } }
+            pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result where_clause tail
+            -> { Fun { name, generics: g, pauses, parts, result } }
 
         rule qualifiers -> bool =
             qs:qualifier*
@@ -270,25 +272,29 @@ grammar! {
 
         rule group -> Group<'a> =
             UNSAFE IMPL generics v:IMPL_TYPE FOR t:IMPL_TYPE where_clause "{" items:exposed "}"
-            -> { Group { what: "unsafe impl", name: t, via: v, items } }
+            -> { Group { what: "unsafe impl", name: t, via: v, visible: true, items } }
           | UNSAFE IMPL generics t:IMPL_TYPE where_clause "{" items:public "}"
-            -> { Group { what: "unsafe impl", name: t, via: "", items } }
+            -> { Group { what: "unsafe impl", name: t, via: "", visible: true, items } }
           | IMPL generics v:IMPL_TYPE FOR t:IMPL_TYPE where_clause "{" items:exposed "}"
-            -> { Group { what: "impl", name: t, via: v, items } }
+            -> { Group { what: "impl", name: t, via: v, visible: true, items } }
           | IMPL generics t:IMPL_TYPE where_clause "{" items:public "}"
-            -> { Group { what: "impl", name: t, via: "", items } }
+            -> { Group { what: "impl", name: t, via: "", visible: true, items } }
           | PUB TRAIT name:IDENT generics where_clause "{" items:exposed "}"
-            -> { Group { what: "trait", name, via: "", items } }
+            -> { Group { what: "trait", name, via: "", visible: true, items } }
           | PUB MOD name:IDENT "{" items:public "}"
-            -> { Group { what: "mod", name, via: "", items } }
+            -> { Group { what: "mod", name, via: "", visible: true, items } }
           | PUB MOD name:IDENT ";"
-            -> { Group { what: "mod", name, via: "", items: Vec::new() } }
+            -> { Group { what: "mod", name, via: "", visible: true, items: Vec::new() } }
+          | MOD name:IDENT "{" items:public "}"
+            -> { Group { what: "mod", name, via: "", visible: false, items } }
+          | MOD name:IDENT ";"
+            -> { Group { what: "mod", name, via: "", visible: false, items: Vec::new() } }
 
-        rule generics =
-            ANGLES
-            -> { }
+        rule generics -> &'a str =
+            "<" g:text(ANGLE_INNER) ">"
+            -> { g.trim() }
           | empty
-            -> { }
+            -> { "" }
 
         rule where_clause =
             WHERE WHERE_RUN

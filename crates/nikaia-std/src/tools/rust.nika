@@ -89,6 +89,10 @@ pub struct Part {
 @borrowed
 pub struct Fun {
     pub name: ref String,
+    // The crate's own type parameters, as the text between the angle brackets
+    // and empty where there are none. Not split here, for the reason
+    // `Item::Export` gives: splitting a list is string work.
+    pub generics: ref String,
     // `async fn` - a plain `fn` is `sync` (ADR-104 D3).
     pub pauses: bool,
     pub parts: Vec[Part],
@@ -117,6 +121,19 @@ pub struct Group {
     pub what: ref String,
     pub name: ref String,
     pub via: ref String,
+    // Whether the scope itself is reachable from outside the crate. False for
+    // a `mod` that is not `pub`.
+    //
+    // **A private `mod` is reported rather than skipped**, and what is in it is
+    // reported under it. That is not a contradiction of *this crate does not
+    // offer it*: a `pub use` may reach through a private `mod` and make one of
+    // its items reachable at another path, so a reader that threw the body
+    // away could not answer a call that is correct
+    // ([Part III C.4](../../../../docs/specification/30-nikaia-tooling.md)).
+    // What is a question about reachability is answered by whoever walks this,
+    // from `visible` and from the re-exports - not by the grammar deciding not
+    // to look.
+    pub visible: bool,
     pub items: Vec[Item],
 }
 
@@ -199,8 +216,8 @@ grammar Rust {
     rule function -> Fun = PUB f:method -> { f }
 
     rule method -> Fun =
-        pauses:qualifiers FN name:IDENT generics parts:parameters result:result where_clause tail -> {
-            Fun { name, pauses, parts, result }
+        pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result where_clause tail -> {
+            Fun { name, generics: g, pauses, parts, result }
         }
 
     // `const`, `unsafe` and `extern "C"` may stand between `pub` and `fn`, and
@@ -310,28 +327,38 @@ grammar Rust {
 
     rule group -> Group =
           UNSAFE IMPL generics v:IMPL_TYPE FOR t:IMPL_TYPE where_clause "{" items:exposed "}" -> {
-              Group { what: "unsafe impl", name: t, via: v, items }
+              Group { what: "unsafe impl", name: t, via: v, visible: true, items }
           }
         | UNSAFE IMPL generics t:IMPL_TYPE where_clause "{" items:public "}" -> {
-              Group { what: "unsafe impl", name: t, via: "", items }
+              Group { what: "unsafe impl", name: t, via: "", visible: true, items }
           }
         | IMPL generics v:IMPL_TYPE FOR t:IMPL_TYPE where_clause "{" items:exposed "}" -> {
-              Group { what: "impl", name: t, via: v, items }
+              Group { what: "impl", name: t, via: v, visible: true, items }
           }
         | IMPL generics t:IMPL_TYPE where_clause "{" items:public "}" -> {
-              Group { what: "impl", name: t, via: "", items }
+              Group { what: "impl", name: t, via: "", visible: true, items }
           }
         | PUB TRAIT name:IDENT generics where_clause "{" items:exposed "}" -> {
-              Group { what: "trait", name, via: "", items }
+              Group { what: "trait", name, via: "", visible: true, items }
           }
         | PUB MOD name:IDENT "{" items:public "}" -> {
-              Group { what: "mod", name, via: "", items }
+              Group { what: "mod", name, via: "", visible: true, items }
           }
         | PUB MOD name:IDENT ";" -> {
-              Group { what: "mod", name, via: "", items: Vec() }
+              Group { what: "mod", name, via: "", visible: true, items: Vec() }
+          }
+        // A `mod` that is not `pub`. Read for what a `pub use` may reach
+        // through it, and marked so that nobody mistakes it for an offer.
+        | MOD name:IDENT "{" items:public "}" -> {
+              Group { what: "mod", name, via: "", visible: false, items }
+          }
+        | MOD name:IDENT ";" -> {
+              Group { what: "mod", name, via: "", visible: false, items: Vec() }
           }
 
-    rule generics = ANGLES -> { } | empty -> { }
+    rule generics -> ref String =
+          "<" g:text(ANGLE_INNER) ">" -> { g.trim() }
+        | empty -> { "" }
 
     rule where_clause = WHERE WHERE_RUN -> { } | empty -> { }
 

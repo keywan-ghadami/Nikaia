@@ -14,20 +14,42 @@
 //
 // **The crate's sources**, because D4's better half is not available: rustdoc's
 // JSON is unstable, and [ADR-001](../../docs/specification/adr/adr-001.md) D1
-// does not give up a stable-only toolchain for it. So this reads `pub fn` and
-// `pub struct` items out of `.rs` text — a **signature scraper** and not a Rust
-// parser, and the difference is the whole of what it cannot do:
+// does not give up a stable-only toolchain for it.
 //
-//   * an item a macro generates is not in the text and is not found;
+// **They are read by a grammar written in Nikaia**
+// ([ADR-195](../../docs/specification/adr/adr-195.md) D3):
+// `crates/nikaia-std/src/tools/rust.nika`, lowered ahead of time and reached
+// from here as an ordinary Rust module — `nikaia_std::tools::rust`, a call and
+// nothing else ([ADR-196](../../docs/specification/adr/adr-196.md) D1). What
+// stood here before was a hand-written character scanner that matched `pub fn`
+// at the start of a line and counted braces without knowing what a brace is;
+// on one crate it wrote entries for **four functions that do not exist**
+// (`crates/nikaia/tests/describing.rs`).
+//
+// What is left that it cannot do:
+//
+//   * an item a **macro** generates is not in the text and is not found. That
+//     limit is [ADR-001](../../docs/specification/adr/adr-001.md) D1's and not
+//     the parser's: it survives `syn` too, for the reason rustdoc's JSON is out
+//     of reach;
 //   * a signature this cannot translate is written `?`, which is the absence of
 //     a claim and never a guess (D4's own sentence);
-//   * a `pub` item inside a `mod` block is read as the crate's own, because the
-//     module path a caller writes is a thing only a real parser knows.
+//   * a `pub` item in **another file** is read as the crate's own. The half
+//     inside one file is closed — an inline `pub mod` gives its items a path
+//     and an inline private `mod` stops offering them — and the other half
+//     needs the `mod foo;` in a parent to say what module a *file* is, which is
+//     a second pass and its own piece of work.
 //
 // Each of those is D5's case: the draft is **committed and reviewed like code**,
-// and a `?` in it is a person's to fill. A scraper that guessed would put a
+// and a `?` in it is a person's to fill. A describer that guessed would put a
 // claim in a file nobody wrote, which is the one thing a boundary description
 // may not do.
+//
+// **And the direction that matters more than dropping what is not there**: a
+// `pub use` is read, and what it carries out of a private `mod` is offered
+// under the name it gives. Refusing a call a crate really answers is
+// [Part III C.4](../../docs/specification/30-nikaia-tooling.md), and the
+// scanner refused every one of them.
 //
 // ## Which way it errs
 //
@@ -90,27 +112,18 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
     let sources = crate_sources(root, &value, crate_word, &declared)?;
 
     let wanted = names_the_program_writes(root, crate_word)?;
-    let mut scraped = BTreeMap::new();
-    let mut types = BTreeSet::new();
-    let mut fields: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut surface = Surface::default();
     let mut hashes = BTreeMap::new();
     for (relative, text) in &sources.files {
         hashes.insert(
             relative.clone(),
             orchestrator::cache::sha256_hex(text.as_bytes()),
         );
-        for item in items_of(text) {
-            match item {
-                Item::Fn(function) => {
-                    scraped.insert(function.name.clone(), function);
-                }
-                Item::Struct(declared) => {
-                    types.insert(declared.name.clone());
-                    fields.insert(declared.name.clone(), declared.fields);
-                }
-            }
-        }
+        surface.read(relative, text)?;
     }
+    surface.resolve();
+    let types = surface.types.clone();
+    let fields = surface.fields.clone();
 
     let mut ledger = Ledger::empty();
     ledger.inference = "described-from-signatures".to_string();
@@ -118,7 +131,16 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
     let mut unanswered = Vec::new();
     let mut named_types: BTreeSet<String> = BTreeSet::new();
     for name in &wanted {
-        let Some(function) = scraped.get(name) else {
+        // **The path a caller writes, resolved through the `pub use` items**
+        // ([ADR-196](../../docs/specification/adr/adr-196.md) D2's own reason
+        // for reading them): a `pub fn` inside a private `mod` is reachable
+        // after all when one says so, and refusing such a call would be
+        // [Part III C.4](../../docs/specification/30-nikaia-tooling.md).
+        let Some(function) = surface
+            .reachable
+            .get(name)
+            .and_then(|at| surface.functions.get(at))
+        else {
             unanswered.push(format!("{crate_word}::{name}"));
             continue;
         };
@@ -366,19 +388,276 @@ fn names_the_program_writes(root: &Path, crate_word: &str) -> Result<BTreeSet<St
     Ok(out)
 }
 
-/// A `pub` item a signature scraper found.
-enum Item {
-    Fn(Function),
-    Struct(Struct),
+/// What a crate's sources say, before anything is asked of them.
+///
+/// **Read by a grammar and not by a scanner**
+/// ([ADR-195](../../docs/specification/adr/adr-195.md) D3,
+/// [ADR-196](../../docs/specification/adr/adr-196.md) D1): the parser is
+/// `crates/nikaia-std/src/tools/rust.nika`, written in Nikaia, lowered ahead of
+/// time and reached from here as `nikaia_std::tools::rust` — an ordinary Rust
+/// module and an ordinary call.
+///
+/// What that buys, measured on one file: the scanner this replaced reported
+/// **four functions that do not exist** — one inside a block comment, one on
+/// the second line of a string literal, two inside a private `mod` — and put a
+/// fifth at the crate root rather than under its module.
+#[derive(Default)]
+struct Surface {
+    /// Every `pub fn`, by the path it is **defined** at. A private `mod`'s are
+    /// here too, because a `pub use` may reach one.
+    functions: BTreeMap<String, Function>,
+    /// Every `pub struct`'s field types, by the path the type is defined at.
+    /// A `pub enum` is a type without an entry here, which is *nobody looked*
+    /// and not *it holds nothing* — the difference [`crosses`] rests on.
+    fields: BTreeMap<String, Vec<String>>,
+    /// Every `pub struct` and `pub enum`, by the path it is defined at.
+    types: BTreeSet<String>,
+    /// A path a **caller** may write, and the path it resolves to. An item in a
+    /// public module is here under its own path; a re-exported one is here
+    /// under the name the re-export gives it.
+    reachable: BTreeMap<String, String>,
+    /// `pub use` items, kept until every file has been read: one may name
+    /// something another file declares.
+    exports: Vec<Export>,
 }
 
-/// One `pub struct`, with the field types a reader can see.
-struct Struct {
-    name: String,
-    /// The text of each field's type, or **empty** where this could not read
-    /// the body — a tuple struct, a `{` it could not match. Empty is *nobody
-    /// looked*, which is a different answer from *it holds nothing*.
-    fields: Vec<String>,
+/// One name a `pub use` offers, or a whole module where it is a glob.
+struct Export {
+    /// The module the `use` was written in.
+    at: String,
+    /// What stands before the name, as it was written.
+    prefix: String,
+    /// The name and what it is offered as, or `None` for `::*`.
+    name: Option<(String, String)>,
+}
+
+impl Surface {
+    /// Read one file's items into this.
+    ///
+    /// **The path inside the file only.** A `pub fn` in `src/foo.rs` is read as
+    /// the crate's own here, as it was before, because the module a *file* is
+    /// takes the `mod foo;` in its parent to know — which is a second pass and
+    /// its own piece of work. What this closes is the half inside one file: an
+    /// inline `pub mod` gives its items a path, and an inline private `mod`
+    /// stops offering them.
+    fn read(&mut self, relative: &str, text: &str) -> Result<()> {
+        let items = nikaia_std::tools::rust::file(text)
+            .map_err(|error| anyhow::anyhow!("{relative}: {error}"))?;
+        self.walk(&items, "", true);
+        Ok(())
+    }
+
+    fn walk(&mut self, items: &[nikaia_std::tools::rust::Item<'_>], at: &str, visible: bool) {
+        use nikaia_std::tools::rust::Item;
+        for item in items {
+            match item {
+                Item::Fun(f) => {
+                    let path = joined(at, f.name);
+                    self.functions.insert(path.clone(), Function::of(f));
+                    if visible {
+                        self.reachable.insert(path.clone(), path);
+                    }
+                }
+                Item::Rec(r) => {
+                    let path = joined(at, r.name);
+                    if r.what == "struct" {
+                        self.fields.insert(
+                            path.clone(),
+                            r.parts.iter().map(|p| p.ty.to_string()).collect(),
+                        );
+                    }
+                    self.types.insert(path.clone());
+                    if visible {
+                        self.reachable.insert(path.clone(), path);
+                    }
+                }
+                // A `pub use` inside a private `mod` offers nothing to anybody
+                // outside, so only a visible one is kept.
+                Item::Export(text) if visible => self.exports.extend(exported(at, text)),
+                Item::Export(_) => {}
+                Item::Group(g) if g.what == "mod" => {
+                    self.walk(&g.items, &joined(at, g.name), visible && g.visible)
+                }
+                // An `impl` and a `trait` are not described yet: what a method
+                // is at a foreign boundary is [ADR-104](../../docs/specification/adr/adr-104.md)
+                // D4's own question and nothing here asks it.
+                Item::Group(_) => {}
+            }
+        }
+    }
+
+    /// Follow the `pub use` items until nothing new becomes reachable.
+    ///
+    /// **A re-export may name a re-export**, so this runs to a fixed point
+    /// rather than once — bounded, because a crate that re-exports in a cycle
+    /// does not compile and this is not the place to say so.
+    fn resolve(&mut self) {
+        for _ in 0..8 {
+            let mut added = false;
+            let exports = std::mem::take(&mut self.exports);
+            for export in &exports {
+                match &export.name {
+                    Some((name, alias)) => {
+                        let offered = joined(&export.at, alias);
+                        for candidate in self.candidates(export, name) {
+                            if !self.functions.contains_key(&candidate)
+                                && !self.types.contains(&candidate)
+                            {
+                                continue;
+                            }
+                            added |= self.reachable.insert(offered, candidate).is_none();
+                            break;
+                        }
+                    }
+                    // A glob offers everything **directly** under the prefix,
+                    // which is what `::*` means: a module's own items and not
+                    // its submodules'.
+                    None => {
+                        for base in self.bases(export) {
+                            let under = format!("{base}::");
+                            let names: Vec<String> = self
+                                .functions
+                                .keys()
+                                .chain(self.types.iter())
+                                .filter_map(|path| path.strip_prefix(&under))
+                                .filter(|rest| !rest.contains("::"))
+                                .map(str::to_string)
+                                .collect();
+                            for name in names {
+                                let offered = joined(&export.at, &name);
+                                let target = format!("{base}::{name}");
+                                added |= self.reachable.insert(offered, target).is_none();
+                            }
+                        }
+                    }
+                }
+            }
+            self.exports = exports;
+            if !added {
+                break;
+            }
+        }
+    }
+
+    /// Where a `use` path could resolve, most specific first.
+    ///
+    /// Rust 2018's uniform paths mean a bare first segment is a name in scope
+    /// where the `use` was written *or* at the crate root, and this cannot tell
+    /// which without a name table — so it tries both and takes the first that
+    /// names something. An item neither names is not resolved, which is the
+    /// absence of a claim ([ADR-104](../../docs/specification/adr/adr-104.md)
+    /// D4) and reaches the draft as a `?` for a reviewer.
+    fn candidates(&self, export: &Export, name: &str) -> Vec<String> {
+        self.bases(export)
+            .into_iter()
+            .map(|base| match base.is_empty() {
+                true => name.to_string(),
+                false => format!("{base}::{name}"),
+            })
+            .collect()
+    }
+
+    fn bases(&self, export: &Export) -> Vec<String> {
+        let prefix = export.prefix.trim();
+        // The three words a `use` path may start from, each answered from
+        // where the `use` was written.
+        if let Some(rest) = after(prefix, "crate") {
+            return vec![rest.to_string()];
+        }
+        if let Some(rest) = after(prefix, "self") {
+            return vec![joined(&export.at, rest)];
+        }
+        if let Some(rest) = after(prefix, "super") {
+            let parent = match export.at.rsplit_once("::") {
+                Some((up, _)) => up.to_string(),
+                None => String::new(),
+            };
+            return vec![joined(&parent, rest)];
+        }
+        // Uniform paths: relative to where it was written, or from the root.
+        let here = joined(&export.at, prefix);
+        let root = prefix.to_string();
+        match here == root {
+            true => vec![root],
+            false => vec![here, root],
+        }
+    }
+}
+
+/// What follows one of a `use` path's leading words, where it starts with it.
+///
+/// `"crate"` alone and `"crate::a"` are both that word; `"crated"` is not, and
+/// the `::` is what says so.
+fn after<'a>(path: &'a str, word: &str) -> Option<&'a str> {
+    if path == word {
+        return Some("");
+    }
+    path.strip_prefix(word)?.strip_prefix("::")
+}
+
+/// `a::b` from `a` and `b`, and either alone where the other is empty.
+fn joined(at: &str, name: &str) -> String {
+    match (at.is_empty(), name.is_empty()) {
+        (true, _) => name.to_string(),
+        (_, true) => at.to_string(),
+        _ => format!("{at}::{name}"),
+    }
+}
+
+/// What one `pub use` offers, from the text between the keyword and the `;`.
+///
+/// **The grammar hands the text over rather than splitting it**, because
+/// splitting a path is string work and not parsing work — its own header says
+/// so. This is where the pieces are taken.
+fn exported(at: &str, text: &str) -> Vec<Export> {
+    let text = text.trim();
+    // A brace group is the only place several names stand, and the `::` before
+    // it is the last one outside it.
+    if let Some(open) = text.find("::{") {
+        if text.ends_with('}') {
+            let prefix = text[..open].to_string();
+            let inside = &text[open + 3..text.len() - 1];
+            return split_top_level(inside)
+                .into_iter()
+                .filter(|one| !one.is_empty())
+                .map(|one| Export {
+                    at: at.to_string(),
+                    prefix: prefix.clone(),
+                    name: named(&one),
+                })
+                .collect();
+        }
+    }
+    if let Some(prefix) = text.strip_suffix("::*") {
+        return vec![Export {
+            at: at.to_string(),
+            prefix: prefix.to_string(),
+            name: None,
+        }];
+    }
+    let (path, alias) = match text.split_once(" as ") {
+        Some((path, alias)) => (path.trim(), Some(alias.trim().to_string())),
+        None => (text, None),
+    };
+    let (prefix, name) = match path.rsplit_once("::") {
+        Some((prefix, name)) => (prefix.to_string(), name.trim().to_string()),
+        None => (String::new(), path.to_string()),
+    };
+    let alias = alias.unwrap_or_else(|| name.clone());
+    vec![Export {
+        at: at.to_string(),
+        prefix,
+        name: Some((name, alias)),
+    }]
+}
+
+/// One entry of a `use` list: `name`, or `name as other`.
+fn named(one: &str) -> Option<(String, String)> {
+    let one = one.trim();
+    match one.split_once(" as ") {
+        Some((name, alias)) => Some((name.trim().to_string(), alias.trim().to_string())),
+        None => Some((one.to_string(), one.to_string())),
+    }
 }
 
 /// The type constructors that make a value **not sendable** in the language
@@ -398,8 +677,10 @@ const NOT_SENDABLE: &[&str] = &["Rc<", "rc::Rc<", "*const ", "*mut ", "NonNull<"
 const PASSES_THROUGH: &[&str] = &["Vec<", "Option<", "Box<", "VecDeque<"];
 
 /// One `pub fn`, as its signature reads.
+///
+/// **No name**: an entry is keyed by the path a caller writes, which
+/// [`Surface`] holds and a signature does not.
 struct Function {
-    name: String,
     /// The crate's own type parameters, which the ledger spells `$T`.
     parameters: Vec<String>,
     /// `name: Type` pairs, in order, as text.
@@ -411,6 +692,37 @@ struct Function {
 }
 
 impl Function {
+    /// One `pub fn` as the grammar read it.
+    ///
+    /// **The three text splits left here are lists and not syntax.** A type
+    /// parameter list, a `where` bound's head, a receiver — the grammar hands
+    /// over what was written and this takes the pieces, which is the same
+    /// division `Item::Export` is read under and for the same reason.
+    fn of(f: &nikaia_std::tools::rust::Fun<'_>) -> Function {
+        Function {
+            parameters: split_top_level(f.generics)
+                .into_iter()
+                // A lifetime is not a type parameter, and a bound written
+                // inline (`T: Send`) names the parameter before the colon.
+                .filter(|p| !p.starts_with('\''))
+                .map(|p| p.split(':').next().unwrap_or(&p).trim().to_string())
+                .filter(|p| !p.is_empty())
+                .collect(),
+            args: f
+                .parts
+                .iter()
+                // The receiver is not an argument a caller writes.
+                .filter(|p| p.name != "self")
+                .map(|p| (p.name.to_string(), p.ty.to_string()))
+                .collect(),
+            result: match f.result.is_empty() {
+                true => None,
+                false => Some(f.result.to_string()),
+            },
+            pauses: f.pauses,
+        }
+    }
+
     /// The entry, and the crate types its signature named.
     fn contract(
         &self,
@@ -656,188 +968,4 @@ fn split_top_level(text: &str) -> Vec<String> {
         out.push(current.trim().to_string());
     }
     out
-}
-
-/// Every `pub fn` and `pub struct` in a file's text.
-///
-/// **A scraper and not a parser**, which the module header says is the scope:
-/// the item has to be written `pub fn name(…)` in the source, at the start of a
-/// line after whatever indentation. An item a macro writes is not in the text,
-/// and one this cannot read is simply not found — which is D1's case again, and
-/// the same command.
-fn items_of(text: &str) -> Vec<Item> {
-    let mut out = Vec::new();
-    let bytes: Vec<char> = text.chars().collect();
-    for (at, line) in line_starts(text) {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("pub struct ") {
-            let name: String = rest
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .collect();
-            if !name.is_empty() {
-                let after =
-                    at + (line.len() - trimmed.len()) + (trimmed.len() - rest.len()) + name.len();
-                let fields = fields_at(&bytes, after);
-                out.push(Item::Struct(Struct { name, fields }));
-            }
-            continue;
-        }
-        let (pauses, rest) = match trimmed.strip_prefix("pub async fn ") {
-            Some(rest) => (true, rest),
-            None => match trimmed.strip_prefix("pub fn ") {
-                Some(rest) => (false, rest),
-                None => continue,
-            },
-        };
-        let name: String = rest
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
-        if name.is_empty() {
-            continue;
-        }
-        let after = at + (line.len() - trimmed.len()) + (trimmed.len() - rest.len()) + name.len();
-        if let Some(function) = signature_at(&bytes, after, name, pauses) {
-            out.push(Item::Fn(function));
-        }
-    }
-    out
-}
-
-/// The **types** of a struct's fields, where the body can be read.
-///
-/// Empty for a tuple struct and for a body this could not match — both of
-/// which are *nobody looked* rather than *it holds nothing*, which is the
-/// difference [`crosses`] rests on. A field's **name** is not wanted: what a
-/// value may do on another thread is a question about what it holds, and the
-/// names of the parts are the crate's own business.
-fn fields_at(text: &[char], from: usize) -> Vec<String> {
-    let mut at = from;
-    // A type parameter list, which this reads past: a `crosses` that depends on
-    // one is what ADR-123 §4 leaves undecided, and a field of type `T` is not
-    // plainly sendable anyway, so the answer falls to silence either way.
-    if text.get(at) == Some(&'<') {
-        let Some(close) = matching(text, at, '<', '>') else {
-            return Vec::new();
-        };
-        at = close + 1;
-    }
-    while text.get(at).is_some_and(|c| c.is_whitespace()) {
-        at += 1;
-    }
-    if text.get(at) != Some(&'{') {
-        return Vec::new();
-    }
-    let Some(close) = matching(text, at, '{', '}') else {
-        return Vec::new();
-    };
-    split_top_level(&text[at + 1..close].iter().collect::<String>())
-        .into_iter()
-        .filter_map(|field| {
-            // A comment line inside the body has no `:` and is skipped by the
-            // same rule that skips anything else this cannot read.
-            let (_, ty) = field.rsplit_once(':')?;
-            Some(ty.trim().to_string())
-        })
-        .filter(|ty| !ty.is_empty())
-        .collect()
-}
-
-/// Every line of a text with the character offset it starts at.
-fn line_starts(text: &str) -> Vec<(usize, &str)> {
-    let mut out = Vec::new();
-    let mut at = 0;
-    for line in text.split('\n') {
-        out.push((at, line));
-        at += line.chars().count() + 1;
-    }
-    out
-}
-
-/// The signature after a function's name: its type parameters, its arguments
-/// and its result.
-fn signature_at(text: &[char], from: usize, name: String, pauses: bool) -> Option<Function> {
-    let mut at = from;
-    let mut parameters = Vec::new();
-    if text.get(at) == Some(&'<') {
-        let close = matching(text, at, '<', '>')?;
-        parameters = split_top_level(&text[at + 1..close].iter().collect::<String>())
-            .into_iter()
-            // A lifetime is not a type parameter, and a bound written inline
-            // (`T: Send`) names the parameter before the colon.
-            .filter(|p| !p.starts_with('\''))
-            .map(|p| p.split(':').next().unwrap_or(&p).trim().to_string())
-            .filter(|p| !p.is_empty())
-            .collect();
-        at = close + 1;
-    }
-    while text.get(at).is_some_and(|c| c.is_whitespace()) {
-        at += 1;
-    }
-    if text.get(at) != Some(&'(') {
-        return None;
-    }
-    let close = matching(text, at, '(', ')')?;
-    let args = split_top_level(&text[at + 1..close].iter().collect::<String>())
-        .into_iter()
-        .filter_map(|arg| {
-            let (name, ty) = arg.split_once(':')?;
-            Some((name.trim().to_string(), ty.trim().to_string()))
-        })
-        .collect();
-    let mut at = close + 1;
-    while text.get(at).is_some_and(|c| c.is_whitespace()) {
-        at += 1;
-    }
-    let result = match text.get(at) == Some(&'-') && text.get(at + 1) == Some(&'>') {
-        false => None,
-        true => {
-            let mut end = at + 2;
-            let mut depth = 0_i32;
-            while let Some(c) = text.get(end) {
-                match c {
-                    '<' | '(' | '[' => depth += 1,
-                    '>' | ')' | ']' => depth -= 1,
-                    '{' | ';' if depth == 0 => break,
-                    _ => {}
-                }
-                // `where` ends the result as surely as a brace does.
-                if depth == 0 && text[end..].starts_with(&['w', 'h', 'e', 'r', 'e']) {
-                    break;
-                }
-                end += 1;
-            }
-            Some(
-                text[at + 2..end]
-                    .iter()
-                    .collect::<String>()
-                    .trim()
-                    .to_string(),
-            )
-        }
-    };
-    Some(Function {
-        name,
-        parameters,
-        args,
-        result,
-        pauses,
-    })
-}
-
-/// The index of the bracket that closes the one at `from`.
-fn matching(text: &[char], from: usize, open: char, close: char) -> Option<usize> {
-    let mut depth = 0_i32;
-    for (at, c) in text.iter().enumerate().skip(from) {
-        if *c == open {
-            depth += 1;
-        } else if *c == close {
-            depth -= 1;
-            if depth == 0 {
-                return Some(at);
-            }
-        }
-    }
-    None
 }

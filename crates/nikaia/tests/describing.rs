@@ -64,6 +64,81 @@ fn entries(root: &Path) -> String {
     text
 }
 
+/// **What the scanner reported that is not there**, and the one thing it could
+/// never report.
+///
+/// The reading half is a grammar written in Nikaia now
+/// ([ADR-195](../../../docs/specification/adr/adr-195.md) D3,
+/// [ADR-196](../../../docs/specification/adr/adr-196.md) D1), and this is the
+/// difference stated as an assertion. On the crate below the character scanner
+/// wrote entries for **four functions that do not exist** — `spectre` inside a
+/// block comment, `phantom` on the second line of a string literal, `hidden`
+/// and `buried` inside private modules — and put `seen` at the crate root
+/// rather than under `shown`.
+///
+/// **And `rescued` is the direction that matters more.** It is `hidden` again,
+/// carried out of a private `mod` by a `pub use`, so a program that calls it
+/// calls something this crate really offers. Nothing answered it before, and
+/// refusing a call a crate answers is
+/// [Part III C.4](../../../docs/specification/30-nikaia-tooling.md) — which is
+/// the whole reason the grammar reads `pub use` and keeps a private `mod`'s
+/// items instead of throwing the body away.
+#[test]
+fn an_item_that_is_only_text_is_not_described_and_a_re_export_is() {
+    let root = project(
+        "phantoms",
+        "/* A block comment that says\n\
+         pub fn spectre(a: i32) -> i32\n\
+         and means nothing by it. */\n\
+         \n\
+         pub fn real(a: i32) -> i32 {\n\
+         let template = \"fn main() {\n\
+         pub fn phantom(a: i32) -> i32 { a }\n\
+         }\";\n\
+         let _ = template;\n\
+         a\n\
+         }\n\
+         \n\
+         mod private {\n\
+         pub fn hidden(x: i32) -> i32 { x }\n\
+         }\n\
+         \n\
+         pub use private::hidden as rescued;\n\
+         \n\
+         pub mod shown {\n\
+         pub fn seen(x: i32) -> i32 { x }\n\
+         mod deeper {\n\
+         pub fn buried() {}\n\
+         }\n\
+         }\n",
+        "fn main() {\n\
+         let a = fremd::real(1)\n\
+         let b = fremd::spectre(2)\n\
+         let c = fremd::phantom(3)\n\
+         let d = fremd::hidden(4)\n\
+         let e = fremd::buried()\n\
+         let f = fremd::seen(5)\n\
+         let g = fremd::shown::seen(6)\n\
+         let h = fremd::rescued(7)\n\
+         println(f\"{a}{b}{c}{d}{e}{f}{g}{h}\")\n\
+         }\n",
+    );
+
+    let text = entries(&root);
+
+    for phantom in ["spectre", "phantom", "hidden", "buried"] {
+        assert!(
+            !text.contains(&format!("fremd::{phantom}")),
+            "`fremd::{phantom}` is not a function of this crate:\n{text}"
+        );
+    }
+    // At the crate root it is not reachable; under its module it is.
+    assert!(!text.contains("[fn.\"fremd::seen\"]"), "{text}");
+    assert!(text.contains("[fn.\"fremd::shown::seen\"]"), "{text}");
+    assert!(text.contains("[fn.\"fremd::real\"]"), "{text}");
+    assert!(text.contains("[fn.\"fremd::rescued\"]"), "{text}");
+}
+
 /// **D3's table, row by row**, on signatures written to exercise each one.
 #[test]
 fn a_signature_is_translated_by_the_table() {

@@ -1375,7 +1375,7 @@ next:*
       of a string literal, two inside a private `mod` — and puts a fifth at the
       crate root instead of under its module. The grammar reports none of them.
       It also writes `unsafe impl Send for …`, which is step 4's own flag.
-   2. **the wiring**, which is **half built**. The grammar is
+   2. **the wiring**, which is **built**. The grammar is
       `crates/nikaia-std/src/tools/rust.nika`, lowered by `nikaia lower-std` to
       the `rust.rs` beside it, `include!`d as `nikaia_std::tools::rust`, and driven from
       Rust by `crates/nikaia-std/tests/rust_signatures.rs` —
@@ -1387,18 +1387,23 @@ next:*
       `a_toolchain_module_is_not_part_of_std` holds the line. It is not
       *refused* either, and §1.7 is that — a defect this move found rather than
       made.
-      What is left is the compiler's own edge —
-      [ADR-196](specification/adr/adr-196.md) D3's promotion of `nikaia-std`
-      from a dev-dependency to a real one — and the scanner coming out of
-      `describe.rs`, with `translate` staying, because the grammar hands it the
-      same text. **That last step is where [Part III C.4](specification/30-nikaia-tooling.md)
-      has to be argued rather than assumed**: keying an entry by the path an
-      item is *reachable* at refuses `crate::seen` for a function that lives at
-      `crate::shown::seen`, which is right, and it must not refuse one a
-      `pub use` brings out of a private `mod`, which is why the grammar reads
-      `pub use` at all.
-   3. **`cargo metadata`, and the rest of the command following the parser
-      across.** `fs` gains a **directory walk** and `std` a **subprocess**
+      **The scanner is out of `describe.rs`** and `translate` stayed, because
+      the grammar hands it the same text; `nikaia-std` is a real dependency of
+      the compiler ([ADR-196](specification/adr/adr-196.md) D3), which cost
+      four packages the compiler did not already resolve. An entry is keyed by
+      the path an item is **reachable** at, so `crate::seen` is refused for a
+      function that lives at `crate::shown::seen` — which is right, it is not
+      valid Rust either — and a `pub use` is followed, so one carried out of a
+      private `mod` is answered where it is offered. That second half is
+      [Part III C.4](specification/30-nikaia-tooling.md) and the scanner
+      refused every one of them.
+
+      **What is left of the third limit** is the half that needs a second
+      pass: a `pub fn` in *another file* is still read as the crate's own,
+      because what module a *file* is takes the `mod foo;` in its parent to
+      say. The half inside one file is closed.
+   3. **The file-to-module pass, `cargo metadata`, and the rest of the command
+      following the parser across.** `fs` gains a **directory walk** and `std` a **subprocess**
       ([ADR-195](specification/adr/adr-195.md) D4), both of which are the kind
       of operating-system resource
       [ADR-194](specification/adr/adr-194.md) D1 put the socket in `std` for.

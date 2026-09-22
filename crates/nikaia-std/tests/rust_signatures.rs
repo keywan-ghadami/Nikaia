@@ -110,9 +110,13 @@ fn lines(items: &[Item<'_>], path: &str, out: &mut Vec<String>) {
             Item::Rec(r) => out.push(format!("{} {path}{}", r.what, r.name)),
             Item::Export(text) => out.push(format!("use {text}")),
             Item::Group(g) => {
+                let shut = match g.visible {
+                    true => "",
+                    false => " (private)",
+                };
                 match g.via.is_empty() {
-                    true => out.push(format!("{} {path}{}", g.what, g.name)),
-                    false => out.push(format!("{} {} for {path}{}", g.what, g.via, g.name)),
+                    true => out.push(format!("{} {path}{}{shut}", g.what, g.name)),
+                    false => out.push(format!("{} {} for {path}{}{shut}", g.what, g.via, g.name)),
                 }
                 lines(&g.items, &format!("{path}{}::", g.name), out);
             }
@@ -139,23 +143,34 @@ fn read(text: &str) -> Vec<String> {
 fn nothing_that_is_not_an_item_is_reported() {
     let found = read(HAZARDS);
 
-    for phantom in [
-        "ghost",
-        "spectre",
-        "phantom",
-        "buried",
-        "republish",
-        "secret",
-    ] {
+    for phantom in ["ghost", "spectre", "phantom", "republish", "secret"] {
         assert!(
             !found.iter().any(|line| line.contains(phantom)),
             "`{phantom}` is not an item of this crate, and `{found:?}` says it is"
         );
     }
 
-    // `hidden` is not reachable as `hidden`, and the **`pub use` is** - which
-    // is the difference between dropping a private `mod` and understanding one.
+    // **A private `mod` is reported and marked, not thrown away**, and what is
+    // in it is reported under it. Neither `hidden` nor `buried` is reachable
+    // where a program would write it, and both are findable where a `pub use`
+    // would name them — which is the difference between dropping a private
+    // `mod` and understanding one, and what
+    // [Part III C.4](../../../docs/specification/30-nikaia-tooling.md) needs:
+    // a call this crate really answers must not be refused for want of looking.
     assert!(!found.iter().any(|l| l.starts_with("hidden(")), "{found:?}");
+    assert!(!found.iter().any(|l| l.starts_with("buried(")), "{found:?}");
+    assert!(
+        found.contains(&"mod private (private)".to_string()),
+        "{found:?}"
+    );
+    assert!(
+        found.contains(&"private::hidden(x: i32) -> i32".to_string()),
+        "{found:?}"
+    );
+    assert!(
+        found.contains(&"mod shown::deeper (private)".to_string()),
+        "{found:?}"
+    );
     assert!(
         found.contains(&"use private::hidden as rescued".to_string()),
         "{found:?}"
