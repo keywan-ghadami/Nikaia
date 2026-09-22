@@ -438,6 +438,16 @@ fn a_manifest_cleanup_deadline_compiles_and_says_where_it_went() {
 /// (Part I 8.1, Part III 15.x). Comments are stripped first, because several
 /// examples *talk* about there being no `async` and no `await` - which is the
 /// claim, and the reason they may say the words.
+///
+/// **And so is the text of a string literal**, for the same reason one step
+/// further out: what this gate is about is what a program *does*, and a
+/// literal is data the program handles. `examples/rust-signatures.nika` is
+/// what forced the distinction - it parses **Rust**, which has the word, so
+/// `rule ASYNC = "async" not(WORD)` is a claim about its *input* and no more a
+/// mechanism than a comment is. What is **not** stripped is the inside of an
+/// `f"…"` interpolation, which is ordinary code: a plain `"…"` has no
+/// interpolation at all, because a brace is a brace
+/// ([ADR-035](../../../docs/specification/adr/adr-035.md)).
 #[test]
 fn no_nika_file_says_async_or_names_a_mechanism() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -452,7 +462,7 @@ fn no_nika_file_says_async_or_names_a_mechanism() {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("a .nika file");
-            let code: String = text
+            let without_comments: String = text
                 .lines()
                 .map(|line| match line.find("//") {
                     Some(at) => &line[..at],
@@ -460,6 +470,7 @@ fn no_nika_file_says_async_or_names_a_mechanism() {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            let code = outside_string_literals(&without_comments);
             checked += 1;
             for forbidden in [
                 "async",
@@ -479,4 +490,74 @@ fn no_nika_file_says_async_or_names_a_mechanism() {
         }
     }
     assert!(checked > 5, "only {checked} .nika files were read");
+}
+
+/// A program's text with the **body** of every string literal removed, and the
+/// inside of an `f"…"` interpolation kept.
+///
+/// Used by [`no_nika_file_says_async_or_names_a_mechanism`], whose doc comment
+/// says why. A backslash escapes the character after it, so a literal does not
+/// end at the quote in `"a \" b"`; a brace opens an interpolation only in an
+/// `f` string, because elsewhere a brace is a brace
+/// ([ADR-035](../../../docs/specification/adr/adr-035.md)).
+fn outside_string_literals(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '"' {
+            out.push(c);
+            // An `f` immediately before the quote is what makes the literal a
+            // template; the quote itself is read on the next turn.
+            continue;
+        }
+        let template = out.ends_with('f');
+        let mut depth = 0_i32;
+        while let Some(inner) = chars.next() {
+            match inner {
+                '\\' => {
+                    // Whatever follows is part of the escape and can be
+                    // neither the closing quote nor a brace.
+                    chars.next();
+                }
+                '"' if depth == 0 => break,
+                '{' if template => {
+                    depth += 1;
+                    out.push(' ');
+                }
+                '}' if template && depth > 0 => {
+                    depth -= 1;
+                    out.push(' ');
+                }
+                _ if depth > 0 => out.push(inner),
+                _ => {}
+            }
+        }
+        out.push(' ');
+    }
+    out
+}
+
+/// **The narrowing above does not hand the gate away**, which is worth a test
+/// of its own: what is dropped is a literal's body, and what survives is every
+/// other position - including the inside of an interpolation, which is where
+/// code that said `async` would actually stand.
+#[test]
+fn a_literals_body_is_dropped_and_an_interpolations_inside_is_not() {
+    let kept = outside_string_literals("let x = f\"{a.async_thing()}\"");
+    assert!(kept.contains("async_thing"), "{kept}");
+
+    let dropped = outside_string_literals("rule ASYNC = \"async\" not(WORD)");
+    assert!(!dropped.contains("async"), "{dropped}");
+    assert!(dropped.contains("ASYNC"), "{dropped}");
+
+    // A plain string has no interpolation at all (ADR-035), so its braces are
+    // part of the body and go with it.
+    let braces = outside_string_literals("print(\"{async}\")");
+    assert!(!braces.contains("async"), "{braces}");
+
+    // An escaped quote does not end the literal, so what follows it is still
+    // the body.
+    let escaped = outside_string_literals("let s = \"a \\\" async b\"\nlet t = 1");
+    assert!(!escaped.contains("async"), "{escaped}");
+    assert!(escaped.contains("let t = 1"), "{escaped}");
 }

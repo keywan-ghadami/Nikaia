@@ -405,7 +405,11 @@ left here is an order rather than a design:
    a body cap and a connection cap from the first commit. **The parser is Rust
    in `nikaia-std`**, and moving it into a Nikaia grammar is step 4 of
    [ADR-038](specification/adr/adr-038.md) §4.5 — self-hosting the protocol is
-   deferred and not forgotten.
+   deferred and not forgotten. **And the route it takes when it moves is
+   decided** ([ADR-196](specification/adr/adr-196.md) D2): the grammar is
+   lowered ahead of time and joins `nikaia-std` as an **ordinary Rust module**,
+   the way `std::text` already does — so the Nikaia parser is what a Nikaia
+   program *and* a Rust one call, and there is nothing between them to design.
 4. **`nikaia serve [dir]`** — D2's other product: a file server with no program
    behind it, where the directory, the port and the limits are the operator's.
    Localhost unless asked otherwise (D3).
@@ -1315,11 +1319,34 @@ next:*
    is a Nikaia program** ([ADR-195](specification/adr/adr-195.md) D1, D3): a
    separate command that nothing bootstraps through, shipped the way
    [ADR-002](specification/adr/adr-002.md) D4 already ships `std`'s Nikaia half
-   — the `.nika` kept beside the `.rs`, pre-lowered at release. This step
-   therefore carries two of its own first: `fs` gains a **directory walk** and
-   `std` a **subprocess** ([ADR-195](specification/adr/adr-195.md) D4), both of
-   which are the kind of operating-system resource
-   [ADR-194](specification/adr/adr-194.md) D1 put the socket in `std` for.
+   — the `.nika` kept beside the `.rs`, pre-lowered at release. It has three
+   parts of its own, and the first one is **written**:
+
+   1. **the grammar**, which is `examples/rust-signatures.nika` — it reads
+      `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub mod` and `impl`
+      headers with the module path each was found under, and is compiled and
+      run at both settings by `crates/nikaia/tests/examples.rs`. Measured
+      against the scanner on one file: the scanner reports **four functions
+      that do not exist** — one inside a block comment, one on the second line
+      of a string literal, two inside a private `mod` — and puts a fifth at the
+      crate root instead of under its module. The grammar reports none of them.
+      It also writes `unsafe impl Send for …`, which is step 4's own flag.
+   2. **the wiring** — the `.nika` in the compiler's tree, the release step that
+      lowers it, and `nikaia-std` promoted from a dev-dependency to a real one.
+      [ADR-196](specification/adr/adr-196.md) D1 and D3: the lowered `.rs` joins
+      the compiler as an **ordinary Cargo module** and the call across is a
+      plain Rust call — not a process and not the C ABI. Then the scanner comes
+      out and `translate` stays, because the grammar hands it the same text.
+   3. **`cargo metadata`, and the rest of the command following the parser
+      across.** `fs` gains a **directory walk** and `std` a **subprocess**
+      ([ADR-195](specification/adr/adr-195.md) D4), both of which are the kind
+      of operating-system resource
+      [ADR-194](specification/adr/adr-194.md) D1 put the socket in `std` for.
+      [ADR-196](specification/adr/adr-196.md) D4 takes these **off** step 3's
+      critical path — the Rust half keeps the I/O and hands the grammar the
+      text — and names what that buys and what it risks: the split is a staging
+      with a written end, and the sign that it has stalled is `fs` having a
+      directory walk while the Rust half is still doing the walking.
 4. **`unsafe impl Send`/`Sync` flagged** (D5) — cheap, sound, and independent of
    3.
 5. **the intra-crate call graph and the `use` table** (D4), for the row where an

@@ -4,6 +4,42 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.156] — 2026-09-22
+
+**The grammar, and the route it travels** — [ADR-195](docs/specification/adr/adr-195.md)
+§5 step 1 written, and [ADR-196](docs/specification/adr/adr-196.md) answering a
+question that record left open: *how does a Nikaia-written piece reach the Rust
+program that calls it?*
+
+### `examples/rust-signatures.nika` — a Rust file's public surface, read by a Nikaia grammar
+
+- **It reads** `pub fn` (with `async`, `const`, `unsafe`, `extern "C"`), `pub struct`, `pub enum`, `pub trait`, `pub mod` and `impl` headers, the type text under them, and the **module and `impl` path** each item was found at. Compiled and run at both settings of `user_parallelism` by `crates/nikaia/tests/examples.rs`.
+- **Measured against the scanner it replaces, on one file.** `nikaia describe` reports **four functions that do not exist**: `spectre` (inside a block comment), `phantom` (the second line of a string literal), `hidden` and `buried` (both inside a private `mod`) — and puts `seen` at the crate root rather than under `shown`. The grammar reports none of them, and puts `seen` where it is.
+- **Why:** `JUNK` crosses a string, a character literal, a comment and a balanced brace group as **single units**, so a private `mod`'s whole body is one skip. The scanner matches `pub fn` at the start of a line and counts braces without knowing what a brace is inside.
+- **Visibility is a rule of the language and not of the line.** An inherent `impl` reports its `pub fn`s; an `impl Trait for Type` reports all of them, because a trait method is as public as its trait. Two rules, where a scanner has one.
+- **It writes `unsafe impl Send for Smuggled<T>`**, which is [ADR-193](docs/specification/adr/adr-193.md) D4's own flag, arriving free with the parser.
+- **A character literal is not a lifetime.** `CHAR` requires the closing quote, so `Box<dyn Any + 'static>` falls through to one character at a time instead of swallowing everything to the next `'`. That one is written down in the file, because getting it wrong is silent.
+- **What it does not read, stated rather than guessed at** ([ADR-104](docs/specification/adr/adr-104.md) D4): a macro-generated item — which is [ADR-001](docs/specification/adr/adr-001.md) D1's wall and survives `syn` too — a raw string, a nested block comment, `pub use`, and a tuple struct's fields.
+
+### ADR-196 — a Nikaia piece joins a Rust program as an ordinary Cargo module
+
+- **The owner named the route, and the tree already runs it.** Of the three ways a piece written in one language reaches a program written in another — a **process**, the **C ABI**, the **same compilation** — `crates/nikaia-std/src/text.nika` has taken the third since [ADR-014](docs/specification/adr/adr-014.md): lowered ahead of time, committed, `include!`d, and reached with a plain call and plain types.
+- **D1 makes it the route.** No wire format, no serialisation, no `unsafe`, no second binary to build, find and install — and **no interface to design**, because a boundary whose types are Rust's own is one nothing has to agree about.
+- **D2 extends it past the instance it was found on**, which is what the owner asked for: `describe`'s parser, and [ADR-038](docs/specification/adr/adr-038.md) D6's HTTP/1.1 parser — [ADR-194](docs/specification/adr/adr-194.md) D5's *Rust until it is not*, with the *until* now having a shape. And the second half of the owner's point is kept: the lowered form is an ordinary Cargo module, so a thing written in Nikaia is available to Rust programs that have never heard of Nikaia. **One implementation, two ecosystems.**
+- **D3 — no cycle.** `crates/nikaia`'s `nikaia-std` dev-dependency becomes a real one; `nikaia-std` may not depend on the compiler ([ADR-002](docs/specification/adr/adr-002.md) D4), which is already written in its own module header.
+- **D4 narrows [ADR-195](docs/specification/adr/adr-195.md) D4 and names what that costs.** The Rust half keeps the I/O and hands the grammar the text, so the directory walk and the subprocess leave the critical path — both still wanted. The risk is that a route making a *partial* move cheap makes a *permanent* partial move cheap, so the split is written down as a **staging with an end**, and the sign of a stalled one is concrete: `fs` has a directory walk and the Rust half is still doing the walking.
+
+### Two gates the new example tripped, and both were right to
+
+- **`no_nika_file_says_async_or_names_a_mechanism`** ([ADR-038](docs/specification/adr/adr-038.md) D3) forbids the word `async` in any `.nika` file outside a comment. A grammar over **Rust** has to name Rust's keyword. The gate is narrowed to strip a string literal's **body** as well as a comment — what it is about is what a program *does*, and a literal is data it handles — while keeping the inside of an `f"…"` interpolation, which is ordinary code. `a_literals_body_is_dropped_and_an_interpolations_inside_is_not` is the test that the narrowing did not hand the gate away.
+- **The example also stopped printing the word**: a function that may suspend is reported as `pauses`, which is what the ledger records ([ADR-104](docs/specification/adr/adr-104.md) D3) and the only word this language has for it.
+- **`the_corpus_has_no_more_unanswered_method_calls_than_it_had`** rose from 39 to 50, and every one of the twelve is in the new file. **Ten are the ceiling's own sentence** — a method call on what a grammar pattern bound is unanswerable by construction. **Two are a finding**: `f.parts.drain()` and `r.parts.drain()` in `show`, where `f` is bound by a `match` arm `Item::Fun(f)` and the variant's payload type *is* written down. `Checker::pattern_bindings` gives every pattern binding `Ty::Unknown` without consulting the enum. Typing those takes the number **down**; it is not done here because giving a binding a type where it had none can refuse a program that compiles, which is [Part III C.4](docs/specification/30-nikaia-tooling.md)'s own piece of work with its own sweep.
+
+### What this leaves
+
+- **Not wired in.** The `.nika` in the compiler's own tree, the release step that lowers it, the Cargo edge, and the scanner coming out are step 3.2 of [`open-work.md`](docs/open-work.md) §2.44.
+- **One gap the dogfooding found already**, and it is the point of writing tools in the language: `line.push_str(f"…")` does not compile — an interpolated string is a `String` and `push_str` wants a view. The example builds its lines with `f"{line}…"` instead. Not filed as a defect yet; it wants a decision about whether a `String` argument may be read as a view at a call, which is a ledger question and not a bug.
+
 ## [0.0.155] — 2026-09-22
 
 **`nikaia describe` is a Nikaia program** —

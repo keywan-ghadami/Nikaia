@@ -212,6 +212,25 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// What a pattern binds has no type in this compiler — that is the parser
 /// backend's — so a method call on one is unanswerable by construction, and the
 /// entries derived from such an action say *undecided* rather than nothing.
+///
+/// **It rose to 50, and `examples/rust-signatures.nika` is all of it** — the
+/// first Nikaia program in this tree that parses another language
+/// ([ADR-196](../../../docs/specification/adr/adr-196.md)), and a grammar with
+/// twelve actions that call a method on what a pattern bound. Ten of the twelve
+/// are the sentence above, unchanged: `s.trim()` on a `text(…)` binding,
+/// `tail.drain()` on a repetition's.
+///
+/// **The other two are a finding, and they are not unanswerable by
+/// construction.** They are `f.parts.drain()` and `r.parts.drain()` in `show`,
+/// where `f` and `r` are bound by a `match` arm — `Item::Fun(f)` — and the
+/// variant's payload type is written down in the program. [`Checker`]'s
+/// `pattern_bindings` gives every name a pattern binds `Ty::Unknown`, so the
+/// enum the `match` is over is not consulted even where it answers plainly.
+/// Typing those would take this number **down**, which is the direction this
+/// ceiling is for; it is not done here because giving a binding a type where it
+/// had none can turn a program that compiles into one that is refused, and
+/// [Part III C.4](../../../docs/specification/30-nikaia-tooling.md) makes that
+/// its own piece of work with its own sweep.
 #[test]
 fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -248,8 +267,8 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     }
     assert!(files >= 18, "only {files} programs were read");
     assert!(
-        unanswered <= 39,
-        "{unanswered} unanswered method calls in {files} programs, and 39 is the \
+        unanswered <= 50,
+        "{unanswered} unanswered method calls in {files} programs, and 50 is the \
          ceiling this was last measured at - a rise means a receiver stopped \
          being typed, and a fall means this number goes down with a sentence \
          saying what answered them"
