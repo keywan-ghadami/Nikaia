@@ -4,6 +4,40 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.142] — 2026-09-22
+
+**`??` joins two views, and a `?.` takes one of a binding and not of a
+temporary** — [ADR-191](docs/specification/adr/adr-191.md), answering
+[`open-decisions.md`](docs/open-decisions.md)'s question with the owner's
+**option A** and closing all but one shape of
+[ADR-113](docs/specification/adr/adr-113.md).
+
+### Building A in its literal form opened a new hole
+
+- **A view of a *temporary* dies at the `;`.** `let name = find(1)?.name ?? "nobody"` is `rustc`'s *temporary value dropped while borrowed* about a file nobody wrote — the very class [ADR-113](docs/specification/adr/adr-113.md) exists to close, reopened one shape over. Measured before it was written, not after.
+- **And the obvious guard was the wrong one.** `emit::is_a_place` asks whether an expression can be **written to**, which a `?.` reach can: `find(1)?.home?.city` passes it at every link and roots in a call.
+
+### So the question is asked of the root
+
+- **`check::roots_in_a_binding`** follows the chain down — a name, a field of one, an index of one, a `?` or a cast over one — and answers on the root. Rooted in a **binding**: the member comes out as a view of it, **Borrowed**, which is [ADR-008](docs/specification/adr/adr-008.md) D2's free case. Rooted in a **call**: unchanged, the reach takes the value.
+- **Which keeps [ADR-113](docs/specification/adr/adr-113.md) D1's promise where it means anything.** D1's sentence is *`user` is usable on the line after `user?.name`* — a temporary has no line after and no name to be usable by.
+- **Two accessors, because the language below spells the two views differently**: a view of `String` is `&str` ([ADR-184](docs/specification/adr/adr-184.md) D2) and a view of anything else is `&T`, with `.as_deref()` and `.as_ref()` where the reach flattens. The checker says which, the way [ADR-028](docs/specification/adr/adr-028.md) hands over every answer this emitter has no types for.
+
+### `NK1185`: a fallback that owns what the left side views
+
+- **Three ways to hand back one value that is both, and two are ruled out**: an owned result copies the borrowed branch, which [ADR-008](docs/specification/adr/adr-008.md) D5 bans outright; a view result needs the fallback to be one, which a text literal already is. The third is this refusal, rather than `rustc`'s *expected `String`, found `&str`*.
+- **The help is the way out the program can take** — `?? "…"` reads the same and costs nothing — and a test holds the refusal **together with the way out being accepted**, which is the half that makes it one.
+- **`.to_owned()` and `.to_string()` are read by name**, the same fact `contracts::tether::makes_a_buffer` already reads that way: no ledger describes either, and the one spelling this whole question is about — `?? "nobody".to_owned()` — would otherwise type as `?` and walk past the refusal into `rustc`'s words.
+
+### The migration is the one line the recommendation predicted
+
+- **`u.home?.city ?? "nowhere".to_string()` becomes `?? "nowhere"`**, in `crates/nikaia/tests/nullable.rs`. Nothing in `examples/` or `benches/` writes the shape — the corpus' one `?.` reaches an `i64`. The `.to_string()` was only ever matching a left side that used to be owned.
+- **And `NK1185` is free today**, which is [`open-work.md`](docs/open-work.md) §2's own rule: before this record nothing produced a view on the left of a `??`, so no program could be written that it would reject.
+
+### What is left is a lowering, not a state
+
+- **A receiver that roots in a call.** `rustc`'s own help is *consider using a `let` binding to create a longer lived value*, and this emitter can write one — it is [ADR-185](docs/specification/adr/adr-185.md) D2's trick one construct over. **Not free**: a `??`'s right side is lazy, so hoisting a receiver out of `a ?? find(1)?.name` would run `find(1)` where today it does not.
+
 ## [0.0.141] — 2026-09-22
 
 **The tether is needed at an escape and nowhere else — `?.` has no escape in

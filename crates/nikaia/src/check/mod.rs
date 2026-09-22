@@ -148,6 +148,68 @@ pub struct CallsInATask {
     pub unresolved: bool,
 }
 
+/// Whether an expression names a **place that outlives the statement**
+/// ([ADR-191](../../docs/specification/adr/adr-191.md) D1).
+///
+/// Stricter than [`crate::emit::is_a_place`] on purpose, and the difference is
+/// the whole of what makes a view safe here. That one asks whether an
+/// expression *can be written to*, which a `?.` reach can; this one asks whose
+/// storage the value lives in, and follows the chain down to its **root**. A
+/// root that is a name is a binding the enclosing block owns; a root that is a
+/// call is a temporary that dies at the `;`, and a view of one bound past that
+/// is `rustc`'s *temporary value dropped while borrowed* about a file nobody
+/// wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+///
+/// Measured rather than reasoned: `find(1)?.home?.city` passes
+/// [`crate::emit::is_a_place`] at every link and roots in a call.
+fn roots_in_a_binding(expr: &Expr) -> bool {
+    match expr {
+        Expr::Variable(_) => true,
+        Expr::Field { base, .. } | Expr::SafeField { base, .. } | Expr::Index { base, .. } => {
+            roots_in_a_binding(base)
+        }
+        // A `?` and a cast hand the same place on; anything else - a call, a
+        // literal, a `catch`, an operator - makes a value of its own.
+        Expr::Try(inner) | Expr::Cast { expr: inner, .. } => roots_in_a_binding(inner),
+        _ => false,
+    }
+}
+
+/// Which of the two spellings a member's view is taken with.
+///
+/// The one place the distinction is made, so that the checker's answer and the
+/// emitter's two accessors cannot come apart.
+fn viewed_as(ty: &Ty) -> Viewed {
+    match ty {
+        Ty::Named { name, args, .. }
+            if crate::contracts::ty::base(name) == crate::contracts::ty::TEXT
+                && args.is_empty() =>
+        {
+            Viewed::Text
+        }
+        _ => Viewed::Plain,
+    }
+}
+
+/// How a `?.` takes a member out of the view it reaches through
+/// ([ADR-191](../../docs/specification/adr/adr-191.md) D1).
+///
+/// The emitter has no types ([ADR-011](../../docs/specification/adr/adr-011.md)
+/// D2), and the two views are spelled differently in the language below, so the
+/// answer travels the way [ADR-028](../../docs/specification/adr/adr-028.md)
+/// hands over every other answer this emitter has none of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Viewed {
+    /// Text. A view of `String` is `ref String`, which is `&str` below
+    /// ([ADR-184](../../docs/specification/adr/adr-184.md) D2), so the member
+    /// is taken with `.as_str()` — or `.as_deref()` where the field is itself a
+    /// `T?` and the reach flattens.
+    Text,
+    /// Everything else that does not copy: `&it.a`, or `it.a.as_ref()` where
+    /// the reach flattens.
+    Plain,
+}
+
 /// What one pass of the checker learned.
 #[derive(Debug, Clone, Default)]
 pub struct Checked {
@@ -363,6 +425,23 @@ pub struct Checked {
     /// `Unknown` is left where it was, and the reach lowers exactly as it did
     /// before this set existed.
     pub copied_reaches: BTreeSet<(usize, String)>,
+    /// Part I 3.5: the `?.` reaches over a field that does **not** copy and
+    /// whose receiver is a **place**, so the member comes out as a *view* of it
+    /// ([ADR-191](../../docs/specification/adr/adr-191.md) D1,
+    /// [ADR-113](../../docs/specification/adr/adr-113.md) D2).
+    ///
+    /// The value says how the view is taken, because the emitter has no types
+    /// and the two spellings differ: `ref String` is `&str` below
+    /// ([ADR-184](../../docs/specification/adr/adr-184.md) D2), and `ref T` is
+    /// `&T`.
+    ///
+    /// **A receiver that is not a place is left out**, and that is D2's own
+    /// line: the view would point into a temporary that dies at the `;`, and
+    /// binding it is `rustc`'s *temporary value dropped while borrowed* about a
+    /// file nobody wrote. A temporary has no next line to stay usable on, so
+    /// leaving it owned keeps [ADR-113](../../docs/specification/adr/adr-113.md)
+    /// D1's promise where it means anything.
+    pub viewed_reaches: BTreeMap<(usize, String), Viewed>,
     /// Part I 3.5: the `?.` reaches over a **method** that changes nothing, as
     /// the byte the statement starts at and the method's name
     /// ([ADR-189](../../docs/specification/adr/adr-189.md) D2).
@@ -1095,6 +1174,8 @@ pub struct Propagation {
     pub flattened: BTreeSet<(usize, String)>,
     /// [`Checked::copied_reaches`].
     pub copied: BTreeSet<(usize, String)>,
+    /// [`Checked::viewed_reaches`].
+    pub viewed: BTreeMap<(usize, String), Viewed>,
     /// [`Checked::lent_reaches`].
     pub lent_reaches: BTreeSet<(usize, String)>,
     /// [`Checked::nullable_fields`].
@@ -1260,6 +1341,7 @@ pub fn propagation_against(
         nullable: checked.nullable_sites,
         flattened: checked.flattened_reaches,
         copied: checked.copied_reaches,
+        viewed: checked.viewed_reaches,
         lent_reaches: checked.lent_reaches,
         nullable_in_fields: checked.nullable_fields,
         nullable_in_args: checked.nullable_args,
@@ -5680,7 +5762,28 @@ impl<'a> Checker<'a> {
                         // over one would make an `Option<Option<T>>`, and that
                         // is a question about the declared type, which this
                         // module answers and the emitter cannot (ADR-028).
+                        // **A view is taken of a place and never of a
+                        // temporary** ([ADR-191](../../docs/specification/adr/adr-191.md)
+                        // D1). Measured: the view of a temporary dies at the
+                        // `;`, and binding it is `rustc`'s *temporary value
+                        // dropped while borrowed* about a file nobody wrote
+                        // (Part III C.1). A temporary has no next line to stay
+                        // usable on, so leaving it owned keeps
+                        // [ADR-113](../../docs/specification/adr/adr-113.md)
+                        // D1's promise where it means anything.
+                        let place = roots_in_a_binding(base);
                         match &declared.ty {
+                            // A field that is itself a `T?` flattens, and a
+                            // view of one is taken the same way one shape down.
+                            Ty::Nullable(inner)
+                                if place && crate::contracts::keeps::moves(inner) =>
+                            {
+                                self.checked
+                                    .viewed_reaches
+                                    .insert((span.start, field.clone()), viewed_as(inner));
+                                self.checked.flattened_reaches.insert((span.start, field));
+                                Ty::Nullable(Box::new(inner.as_a_view()))
+                            }
                             Ty::Nullable(_) => {
                                 self.checked.flattened_reaches.insert((span.start, field));
                                 declared.ty
@@ -5708,6 +5811,22 @@ impl<'a> Checker<'a> {
                             plain if !crate::contracts::keeps::moves(plain) => {
                                 self.checked.copied_reaches.insert((span.start, field));
                                 Ty::Nullable(Box::new(plain.clone()))
+                            }
+                            // **And a member that does not copy comes out as a
+                            // view of the receiver**, which is
+                            // [ADR-113](../../docs/specification/adr/adr-113.md)
+                            // D2 and [ADR-191](../../docs/specification/adr/adr-191.md)
+                            // D1. Borrowed and not Tethered: the view points
+                            // into a place that outlives the statement, which
+                            // is what [ADR-008](../../docs/specification/adr/adr-008.md)
+                            // D2 calls the free case.
+                            plain if place => {
+                                let viewed = viewed_as(plain);
+                                self.checked
+                                    .viewed_reaches
+                                    .insert((span.start, field.clone()), viewed);
+                                self.checked.copied_reaches.insert((span.start, field));
+                                Ty::Nullable(Box::new(plain.as_a_view()))
                             }
                             plain => Ty::Nullable(Box::new(plain.clone())),
                         }
@@ -6126,7 +6245,12 @@ impl<'a> Checker<'a> {
             }
             Expr::Coalesce { value, fallback } => {
                 let left = self.expr(value, span);
-                self.expr(fallback, span);
+                let other = self.expr(fallback, span);
+                if let Ty::Nullable(inner) = &left {
+                    self.a_fallback_that_owns_what_the_left_side_views(
+                        inner, &other, fallback, span,
+                    );
+                }
                 // **`a ?? b` on a `T?` is a `T`** (Part I 3.5): that is what
                 // ending the chain means, and claiming nothing about it cost
                 // everything downstream — the day a map read became a `T?`
@@ -6512,6 +6636,82 @@ impl<'a> Checker<'a> {
             )),
         });
         true
+    }
+
+    /// **A `??` whose left side is a view and whose fallback owns** (`NK1185`,
+    /// [ADR-191](../../docs/specification/adr/adr-191.md) D2).
+    ///
+    /// `user?.name` is a view of `user` where `name` does not copy
+    /// ([ADR-113](../../docs/specification/adr/adr-113.md) D2), and
+    /// `?? "nobody".to_owned()` asks the operator to hand back one value that is
+    /// both. There are only three ways to do that and the language has ruled
+    /// two of them out:
+    ///
+    /// * an **owned** result copies the borrowed branch, and a
+    ///   compiler-inserted copy is what
+    ///   [ADR-008](../../docs/specification/adr/adr-008.md) D5 bans outright;
+    /// * a **view** result needs the fallback to be one — which `"nobody"`
+    ///   already is and `"nobody".to_owned()` is not;
+    /// * so the third is to say so here, in this language's words, rather than
+    ///   let `rustc` say *expected `String`, found `&String`* about a file
+    ///   nobody wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Both sides have to be known**, which is
+    /// [C.4](../../docs/specification/30-nikaia-tooling.md): a `??` over
+    /// something this checker could not type claims nothing, exactly as the
+    /// result type does one line down.
+    fn a_fallback_that_owns_what_the_left_side_views(
+        &mut self,
+        viewed: &Ty,
+        fallback: &Ty,
+        written: &Expr,
+        span: &Span,
+    ) {
+        if !viewed.is_a_view() || fallback.is_a_view() {
+            return;
+        }
+        // **`.to_owned()` and `.to_string()` by name**, which no ledger
+        // describes and which this compiler already reads this way one file
+        // over (`contracts::tether::makes_a_buffer`): *all four entries of
+        // either name hand back owned text*. Without it the one spelling the
+        // whole question is about - `?? "nobody".to_owned()` - types as `?` and
+        // walks past the refusal into `rustc`'s *expected `String`, found
+        // `&str`* about a file nobody wrote (Part III C.1).
+        let names_a_copy = matches!(
+            written,
+            Expr::MethodCall { method, .. }
+                if matches!(self.parsed.text(*method), "to_owned" | "to_string")
+        );
+        let owned = match names_a_copy {
+            true => Ty::named(crate::contracts::ty::TEXT),
+            false => fallback.clone(),
+        };
+        if !matches!(owned, Ty::Named { .. }) || !crate::contracts::keeps::moves(&owned) {
+            return;
+        }
+        let fallback = &owned;
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1185",
+            message: format!(
+                "this reach is a `{viewed}`, and the fallback beside it is a `{fallback}`"
+            ),
+            notes: vec![
+                "a view and a value it points into are two types (Part I, 6.6), and `??` hands \
+                 back one of them"
+                    .to_string(),
+                "a copy is written by the program and never inserted by the compiler \
+                 ([ADR-008](docs/specification/adr/adr-008.md) D5), so there is nothing here \
+                 that could make the two agree"
+                    .to_string(),
+            ],
+            help: Some(format!(
+                "give the fallback as a view too - a text literal already is one, so \
+                 `?? \"…\"` reads the same and costs nothing - or take the receiver's member \
+                 by a name of its own first, where a `{fallback}` is what is wanted"
+            )),
+        });
     }
 
     /// **An escape this language's set does not name** (`NK1184`,

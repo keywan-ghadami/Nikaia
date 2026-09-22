@@ -289,6 +289,33 @@ impl Ty {
         }
     }
 
+    /// The same type, read as a **view** of it
+    /// ([ADR-191](../../../docs/specification/adr/adr-191.md) D1).
+    ///
+    /// The normalisation both doors already do, in one place a third one can
+    /// call: a view of `String` is `str`
+    /// ([ADR-184](../../../docs/specification/adr/adr-184.md) D2, which is why
+    /// `parse` and `from_ast` each carry the same line), and a view of anything
+    /// else is that name with the word on it.
+    ///
+    /// **A type this compiler cannot name has no view**, and neither does one
+    /// that is already one: `Unknown` stays the absence of a claim, and a
+    /// second `ref` on a view would be a type nothing writes.
+    pub fn as_a_view(&self) -> Ty {
+        match self {
+            Ty::Named { view: true, .. } => self.clone(),
+            Ty::Named { name, args, .. } if base(name) == TEXT && args.is_empty() => {
+                Ty::view(TEXT_VIEW)
+            }
+            Ty::Named { name, args, .. } => Ty::Named {
+                name: name.clone(),
+                args: args.clone(),
+                view: true,
+            },
+            other => other.clone(),
+        }
+    }
+
     /// **What a lock handed out**
     /// ([ADR-111](../../../../docs/specification/adr/adr-111.md) D1).
     ///

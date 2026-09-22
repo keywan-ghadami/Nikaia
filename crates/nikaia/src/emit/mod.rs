@@ -1169,6 +1169,10 @@ struct Emitter<'p> {
     /// be taken by `as_ref()` and left where it was
     /// (`check::Checked::copied_reaches`).
     copied_reaches: std::collections::BTreeSet<(usize, String)>,
+    /// Part I 3.5: the `?.` reaches whose member comes out as a **view** of the
+    /// receiver, and which of the two spellings it is taken with
+    /// (`check::Checked::viewed_reaches`).
+    viewed_reaches: std::collections::BTreeMap<(usize, String), crate::check::Viewed>,
     /// Part I 3.5: the `?.` reaches over a method that changes nothing, so the
     /// scrutinee can be taken by `as_ref()` (`check::Checked::lent_reaches`).
     lent_reaches: std::collections::BTreeSet<(usize, String)>,
@@ -2065,6 +2069,7 @@ impl<'p> Emitter<'p> {
             at_field: std::cell::RefCell::new(None),
             flattened_reaches: propagation.flattened,
             copied_reaches: propagation.copied,
+            viewed_reaches: propagation.viewed,
             lent_reaches: propagation.lent_reaches,
             nullable_fields: propagation.nullable_in_fields,
             lent_args: propagation.lent_args,
@@ -5676,8 +5681,34 @@ impl<'p> Emitter<'p> {
                     true => ".as_ref()",
                     false => "",
                 };
+                // **And how the member is taken out of that view**
+                // ([ADR-191](../../docs/specification/adr/adr-191.md) D1). A
+                // member that copies is read; one that does not comes out as a
+                // view, and the two views are spelled differently below: a view
+                // of `String` is `&str`
+                // ([ADR-184](../../docs/specification/adr/adr-184.md) D2) and a
+                // view of anything else is `&T`. The checker says which,
+                // because this emitter has no types (ADR-011 D2).
+                let reach = match (
+                    self.viewed_reaches.get(&(flow.statement, field.clone())),
+                    flattens,
+                ) {
+                    (None, _) => format!("__nikaia_it.{field}"),
+                    (Some(crate::check::Viewed::Text), false) => {
+                        format!("__nikaia_it.{field}.as_str()")
+                    }
+                    (Some(crate::check::Viewed::Text), true) => {
+                        format!("__nikaia_it.{field}.as_deref()")
+                    }
+                    (Some(crate::check::Viewed::Plain), false) => {
+                        format!("&__nikaia_it.{field}")
+                    }
+                    (Some(crate::check::Viewed::Plain), true) => {
+                        format!("__nikaia_it.{field}.as_ref()")
+                    }
+                };
                 self.postfix_base(out, base, depth, flow)?;
-                out.push(&format!("{lent}.{how}(|__nikaia_it| __nikaia_it.{field})"));
+                out.push(&format!("{lent}.{how}(|__nikaia_it| {reach})"));
             }
             Expr::Index { base, index } => {
                 // **A length is an `i64`, so an index is one too**

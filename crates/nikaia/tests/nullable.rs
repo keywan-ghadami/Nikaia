@@ -332,12 +332,21 @@ struct User { name: String, home: Address? }
 fn main() {
     let home = Address { city: \"Bletchley\".to_string() }
     let u = User { name: \"Ada\".to_string(), home: home }
-    let city = u.home?.city ?? \"nowhere\".to_string()
+    let city = u.home?.city ?? \"nowhere\"
     println(f\"{city}\")
 }
 ",
     );
     assert!(rust.contains("home: Some(home)"), "{rust}");
+    // **The one line option A migrated** ([ADR-191](../../../docs/specification/adr/adr-191.md)
+    // D2). `u.home` roots in a binding, so `?.city` is a view of it, and the
+    // fallback is a text literal - which is already a view, reads the same and
+    // costs nothing. The `.to_string()` that stood here was only ever matching
+    // a left side that used to be owned.
+    assert!(
+        rust.contains("__nikaia_it.city.as_str()"),
+        "the reach is a view of `u`:\n{rust}"
+    );
 }
 
 /// **`?.` through something that cannot be absent is `NK1121`.**
@@ -1077,26 +1086,80 @@ fn main() {
     assert!(!rust.contains("whatever().as_ref()"), "{rust}");
 }
 
-/// **The third case is not built, and this test is what holds it open.**
+/// **And a member that does not copy is a view of the receiver**
+/// ([ADR-113](../../../docs/specification/adr/adr-113.md) D2,
+/// [ADR-191](../../../docs/specification/adr/adr-191.md) D1) — **Borrowed**,
+/// not Tethered: the view points into a binding that outlives the statement,
+/// which is what [ADR-008](../../../docs/specification/adr/adr-008.md) D2 calls
+/// the free case.
 ///
-/// A member that does **not** copy comes out of a view as a *view of the
-/// receiver* ([ADR-113](../../../docs/specification/adr/adr-113.md) D2) — which
-/// is **not** a state: three of the four shapes a `?.` has are Borrowed and the
-/// fourth is `NK2303`'s ([ADR-190](../../../docs/specification/adr/adr-190.md)
-/// D1). What it waits on is one question about `??` — a view on the left and an
-/// owned value on the right — which is on `docs/open-decisions.md`. So that
-/// reach lowers as it always did — it takes the receiver — and
-/// [ADR-052](../../../docs/specification/adr/adr-052.md) D8's translation stays
-/// for it alone.
-///
-/// Written as an assertion about the **lowering** and not as a refusal,
-/// because the program below is one that compiles and runs today: refusing it
-/// would refuse a correct program, which is the one thing this compiler may
-/// never do ([C.4](../../../docs/specification/30-nikaia-tooling.md)).
+/// It **runs**, with the receiver read on both sides of the view.
 #[test]
-fn a_reached_field_that_moves_still_takes_the_receiver() {
+fn a_reached_field_that_moves_over_a_place_is_a_view() {
+    let printed = ran(
+        "safe-field-view",
+        "\
+struct User { name: String, tags: Vec[i64] }
+
+fn main() {
+    let user: User? = User { name: \"Ada\".to_string(), tags: [1, 2, 3] }
+    let name = user?.name ?? \"nobody\"
+    let many = user?.tags?.len() ?? 0
+    println(f\"{name} {many}\")
+}
+",
+    );
+    assert_eq!(printed.trim(), "Ada 3");
+}
+
+/// **A receiver that is a temporary keeps its old lowering, and that is the
+/// remainder** ([ADR-191](../../../docs/specification/adr/adr-191.md) D1).
+///
+/// A view of `find(1)` would point into a value that dies at the `;`, and
+/// binding it is `rustc`'s *temporary value dropped while borrowed* about a
+/// file nobody wrote — so the reach takes the value, as it always did. A
+/// temporary has no next line to stay usable on, so
+/// [ADR-113](../../../docs/specification/adr/adr-113.md) D1's promise is kept
+/// where it means anything.
+///
+/// Written as an assertion about the **lowering**, so the day the remainder is
+/// built the test that has to change says so.
+#[test]
+fn a_reached_field_over_a_temporary_still_takes_it() {
     let rust = lowered(
         "\
+struct User { name: String }
+
+fn find(id: i64) -> User? {
+    if id > 0 { return User { name: \"Ada\".to_string() } }
+    return null
+}
+
+fn main() {
+    let name = find(1)?.name ?? \"nobody\".to_string()
+    println(f\"{name}\")
+}
+",
+    );
+    assert!(
+        rust.contains("find(1).map(|__nikaia_it| __nikaia_it.name)"),
+        "a temporary receiver is unchanged:\n{rust}"
+    );
+    assert!(!rust.contains("find(1).as_ref()"), "{rust}");
+}
+
+/// **`??` joins two views, and a fallback that owns is refused** (`NK1185`,
+/// [ADR-191](../../../docs/specification/adr/adr-191.md) D2).
+///
+/// The three ways to hand back one value that is both a view and an owned one:
+/// a copy on the borrowed branch, which
+/// [ADR-008](../../../docs/specification/adr/adr-008.md) D5 bans outright; a
+/// view fallback, which a text literal already is; or saying so here, rather
+/// than letting `rustc` say *expected `String`, found `&str`* about a file
+/// nobody wrote.
+#[test]
+fn a_fallback_that_owns_what_the_reach_views_is_refused() {
+    let source = "\
 struct User { name: String }
 
 fn main() {
@@ -1104,11 +1167,27 @@ fn main() {
     let name = user?.name ?? \"nobody\".to_string()
     println(f\"{name}\")
 }
-",
-    );
+";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    let found = check::check(&parsed, &own, &library).findings;
+    let refused = found.iter().find(|f| f.code == "NK1185").expect("refused");
+    assert!(refused.message.contains("`ref String`"), "{refused:#?}");
+    assert!(refused.message.contains("`String`"), "{refused:#?}");
+    // A way out the program can take, which is what C.2 asks of one.
     assert!(
-        rust.contains("user.map(|__nikaia_it| __nikaia_it.name)"),
-        "the view half is unbuilt, so this reach is unchanged:\n{rust}"
+        refused.help.as_deref().unwrap_or_default().contains("view"),
+        "{refused:#?}"
     );
-    assert!(!rust.contains("user.as_ref()"), "{rust}");
+
+    // **And the way out is accepted**, which is the half that makes it a way
+    // out: a text literal is already a view.
+    let taken = source.replace("\"nobody\".to_string()", "\"nobody\"");
+    let parsed = parse_to_ast(&taken).expect("the way out parses");
+    let own = Ledger::infer(&parsed);
+    assert!(
+        check::check(&parsed, &own, &library).findings.is_empty(),
+        "the way out is a program"
+    );
 }

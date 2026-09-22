@@ -755,50 +755,36 @@ nothing about the status changes.
 exit code can be set. The hook has already run and said what happened, so
 that profile loses the status and not the message.
 
-### 2.23. `?.` over a member that is not copied still takes its receiver
+### 2.23. A `?.` whose receiver is a **temporary** still takes it
 
-[ADR-113](specification/adr/adr-113.md), **two thirds built**
-([ADR-189](specification/adr/adr-189.md)). `?.` takes nothing: it reaches
-through a view of its receiver, and the result is a copy where the member
-copies and a view of the receiver otherwise, kept alive as any view of a place
-is.
+[ADR-113](specification/adr/adr-113.md), **all but one shape built**
+([ADR-189](specification/adr/adr-189.md),
+[ADR-191](specification/adr/adr-191.md)). `?.` takes nothing: it reaches through
+a view of its receiver, and the result is a copy where the member copies and a
+view of the receiver otherwise.
 
-*What is built.* A reach over a field the compiler knows to **copy** lends its
-receiver — `x.as_ref().map(|it| it.a)` — and a reach over a **method** that
-changes nothing lends its scrutinee. Both shapes leave the receiver usable on
-the next line, and both **run** with it used twice in
-`crates/nikaia/tests/nullable.rs`.
+*What is built.* A reached **method** that changes nothing lends its scrutinee;
+a field that **copies** lends its receiver; and a field that does **not** copy
+comes out as a **view** of the receiver where that receiver *roots in a
+binding* — a name, a field of one, an index of one. All three leave the receiver
+usable on the next line, and all three **run** in
+`crates/nikaia/tests/nullable.rs` with it read on both sides.
 
-*What is left is one third, and it is **not** the tether*
-([ADR-190](specification/adr/adr-190.md) D1). A member that does not copy comes
-out of the reach as a **view of the receiver**
-([ADR-113](specification/adr/adr-113.md) D2) — and a view is not a *state*: the
-lattice has three and the cheap one is the default.
-[ADR-008](specification/adr/adr-008.md) D2 reaches Tethered only where a value
-**escapes** the buffer's owning scope, and three of the four shapes a `?.` has
-do not:
+*What is left is one shape:* a receiver that **roots in a call**.
+`find(1)?.name` would be a view of a value that dies at the `;`, and binding one
+is `rustc`'s *temporary value dropped while borrowed* about a file nobody wrote
+— so the reach takes the value, as it always did, and
+[ADR-052](specification/adr/adr-052.md) D8's translation stays for it alone.
+[ADR-113](specification/adr/adr-113.md) D1's promise is kept where it means
+anything: a temporary has no next line to stay usable on.
 
-| shape | what happens | state |
-| :--- | :--- | :--- |
-| the receiver is a **local**, the view stays in its scope | compiles, runs | Borrowed |
-| the receiver is a **temporary**, the view is consumed in the same statement | compiles, runs | Borrowed |
-| view **`??` view** — `user?.name ?? "nobody"`, and a literal *is* a view | compiles, runs, zero cost | Borrowed |
-| the view is **bound past a temporary** — `let n = find(1)?.name` | *temporary value dropped while borrowed* | an escape |
-
-The fourth is not Tethered either: it is `NK2303`'s own case — a view of a
-buffer that does not outlive it, refused in this language's words and naming
-`.to_owned()` ([ADR-156](specification/adr/adr-156.md) D4), which this compiler
-already builds twice.
-
-*What it actually waits on is one question about `??`*, and it is the owner's,
-on [`open-decisions.md`](open-decisions.md): a view on the left and an **owned**
-value on the right — `user?.name ?? "nobody".to_owned()` — cannot be joined
-without the copy [ADR-008](specification/adr/adr-008.md) D5 forbids.
-
-*And it is not refused meanwhile*, which is
-[ADR-189](specification/adr/adr-189.md) D3 and stands: refusing
-`find(1)?.name ?? "nobody".to_owned()` would refuse a program that compiles and
-runs today ([Part III C.4](specification/30-nikaia-tooling.md)).
+*What it needs is a **lowering** and not a state*
+([ADR-191](specification/adr/adr-191.md) D3). `rustc`'s own help is *consider
+using a `let` binding to create a longer lived value*, and this emitter can
+write one — it is [ADR-185](specification/adr/adr-185.md) D2's trick one
+construct over. **It is not free**: a `??`'s right side is lazy, so hoisting a
+receiver out of `a ?? find(1)?.name` would run `find(1)` where today it does
+not. Deciding where a hoist is safe is the work.
 
 ### 2.25. An `overlap` keeps every failure — the cleanup half
 
