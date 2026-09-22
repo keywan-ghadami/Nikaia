@@ -149,10 +149,18 @@ compiler rather than of the language — so it is here and not in §1, where a
 defect is the compiler being *wrong*.
 
 **A lambda whose body calls something that can pause is refused at the build —
-where the parameter it is handed to is `std`'s.** Rust has no stable `async`
-closure, so the lowering has nothing to write for a `std` entry that takes one.
-The refusal is by the lowering and not by the checker on purpose: refusing it in
-the type checker would refuse a correct program (Part III, C.4).
+where the parameter it is handed to is `std`'s.** Those entries describe
+**Rust** signatures that take a **synchronous** closure, so the lowering has
+nothing to write for one. The refusal is by the lowering and not by the checker
+on purpose: refusing it in the type checker would refuse a correct program
+(Part III, C.4).
+
+**This entry used to give a different reason**, and it was false: *Rust has no
+stable `async` closure*. It has one — `async |x| { … }`, `AsyncFn`, `AsyncFnMut`
+and `AsyncFnOnce`, measured on this tree's toolchain
+([ADR-187](specification/adr/adr-187.md) D1). What is true is narrower and is
+about those `std` entries: `Iterator::map` takes `FnMut`, and an `async` closure
+handed to it yields an iterator **of futures**, which is a different program.
 
 **Where the parameter is declared in *this* language it is not refused any
 more** ([ADR-122](specification/adr/adr-122.md) D1, D2): the type says the code
@@ -183,9 +191,13 @@ that does not exist, and the lowering that would serve it is built and waiting:
 measured on a parameter declared `fn(ref String) -> String throws` in this language.
 
 *What it needs:* a `std` entry whose lambda may genuinely pause, written in
-Nikaia or described as taking a future — `|| async move { … }`, which is stable
-Rust and is how a handler is taken in practice. Not a new mechanism: a claim to
-record.
+Nikaia or described as taking one — either a future, `|| async move { … }`, or
+an `impl AsyncFn(…) -> …`, which is how a handler is taken in practice and costs
+about a ninth of the boxed form ([ADR-187](specification/adr/adr-187.md) D1).
+Which of the two a *declared* parameter lowers to is the question that record
+left on [`open-decisions.md`](open-decisions.md); which one a **described**
+entry says is the describer's, because the signature is hand-written. Not a new
+mechanism: a claim to record.
 
 ### 2.2. A lazy walk of a pausing sequence has no shape
 
@@ -865,6 +877,13 @@ parameter goes; the box on the common case is measured before the record is
 closed. **D1, D2 and D3 are built.** A parameter whose type may pause is
 `impl Fn(A) -> Pin<Box<dyn Future<Output = R>>>`, a call to one carries an
 `.await`, and a lambda handed to one is `|a| Box::pin(async move { … })`.
+
+*The shape is reopened, and D1's reason for it was false*
+([ADR-187](specification/adr/adr-187.md) D3): *Rust has no stable `async`
+closure* is what chose the box, and `impl AsyncFn(A) -> R` costs 1.37 ns/call
+against the box's 11.99 on a 0.31 floor. What holds D1 up now is its coherence
+half alone, and whether that is worth 8.7× is on
+[`open-decisions.md`](open-decisions.md).
 
 *The number is §3's:* **15.1 ns per call against 0.33 ns**, about ×45, with the
 control tying (`benches/handler`). Large as a ratio and small as a number, and

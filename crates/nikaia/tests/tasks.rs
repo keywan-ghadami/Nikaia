@@ -305,9 +305,12 @@ fn the_parenthesised_form_says_what_happened_to_it() {
 
 /// The emitted Rust has no closure in it, and that is the decision.
 ///
-/// A task's body may **pause**, and Rust has no stable `async` closure — so the
-/// body is an `async move` *block*, which is a future. `move` is Part I 8.3's
-/// implicit move and Rust's `move` meeting at the same place.
+/// A task's body may **pause**, and a body is a **block** rather than something
+/// called — so it is an `async move` *block*, which is a future, and a closure
+/// around it would only be called once. Not because the language below has no
+/// `async` closure, which is what this comment used to say and is false
+/// ([ADR-187](../../../docs/specification/adr/adr-187.md) D1, D2). `move` is
+/// Part I 8.3's implicit move and Rust's `move` meeting at the same place.
 #[test]
 fn a_task_is_an_async_block_and_never_a_closure() {
     let rust = lower(

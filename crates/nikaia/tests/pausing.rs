@@ -230,10 +230,15 @@ fn a_program_with_both_kinds_runs() {
 
 /// **A lambda that pauses is refused in Nikaia's words, at the build.**
 ///
-/// Rust has no stable `async` closure, so there is nothing for this lowering to
-/// write - and a plain closure holding an `.await` is a `rustc` error about a
-/// file nobody wrote (Part III, C.1). The refusal names the callee and says
-/// what to do instead.
+/// **The `std` entry it is handed to takes a synchronous closure**, so there is
+/// nothing for this lowering to write - and a plain closure holding an `.await`
+/// is a `rustc` error about a file nobody wrote (Part III, C.1). The refusal
+/// names the callee and says what to do instead.
+///
+/// **It is those entries and not the language below**, which this doc comment
+/// used to have backwards: Rust's `async` closure is stable
+/// ([ADR-187](../../../docs/specification/adr/adr-187.md) D1), and
+/// `Iterator::map` takes `FnMut` whatever the closure spelling is.
 ///
 /// **It is a refusal by the lowering and not by the checker**, which is the
 /// decision this test records. `examples/fortunes.nika`'s route handler is a

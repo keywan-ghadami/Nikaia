@@ -12,7 +12,14 @@
 //! |---|---|
 //! | plain closure | what `fn(i64) -> i64 sync` lowers to: `impl Fn(i64) -> i64` |
 //! | boxed future | what `fn(i64) -> i64` lowers to, awaited by the same executor a program uses |
+//! | async closure | the shape D1 was written as having no stable spelling: `impl AsyncFn(i64) -> i64` |
 //! | plain closure, twice | the control. It must tie, and it bounds the difference above from below |
+//!
+//! **The third row is why this bench outlived its record**
+//! ([ADR-187](../../../../docs/specification/adr/adr-187.md) D1). D1 chose the
+//! boxed future because *"Rust has no stable `async` closure"*, and that is
+//! false on this toolchain and was false when it was written. The row is here
+//! so the alternative is a number rather than an argument.
 //!
 //! ```sh
 //! cargo run -p handler-bench --release --bin handler
@@ -46,6 +53,18 @@ async fn run_future(n: i64, f: impl Fn(i64) -> Pin<Box<dyn Future<Output = i64>>
     total
 }
 
+/// The same callee, taking the shape D1 said the language below did not have.
+///
+/// The body is the one above with the type changed, which is the point: what
+/// separates the two rows is the box and the dynamic call, not the loop.
+async fn run_async_closure(n: i64, f: impl AsyncFn(i64) -> i64) -> i64 {
+    let mut total: i64 = 0;
+    for i in 0..n {
+        total = total.wrapping_add(f(i).await);
+    }
+    total
+}
+
 fn nanos_each(took: std::time::Duration, n: i64) -> f64 {
     took.as_secs_f64() * 1e9 / n as f64
 }
@@ -58,6 +77,7 @@ fn main() {
 
     let mut plain = f64::MAX;
     let mut future = f64::MAX;
+    let mut closure = f64::MAX;
     let mut control = f64::MAX;
 
     for _ in 0..REPEATS {
@@ -74,6 +94,13 @@ fn main() {
         future = future.min(nanos_each(began.elapsed(), N));
 
         let began = Instant::now();
+        let got = nikaia_std::rt::exec::block_on(run_async_closure(N, async |i: i64| {
+            black_box(i).wrapping_mul(3)
+        }));
+        black_box(got);
+        closure = closure.min(nanos_each(began.elapsed(), N));
+
+        let began = Instant::now();
         let got = run_plain(N, |i| black_box(i).wrapping_mul(3));
         black_box(got);
         control = control.min(nanos_each(began.elapsed(), N));
@@ -85,6 +112,10 @@ fn main() {
     println!(
         "boxed future           {future:6.2} ns/call   ×{:.2}",
         future / plain
+    );
+    println!(
+        "async closure          {closure:6.2} ns/call   ×{:.2}",
+        closure / plain
     );
     println!("plain closure, twice   {control:6.2} ns/call   (the control: it ties)");
 }

@@ -4,6 +4,48 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.138] — 2026-09-22
+
+**Rust has a stable `async` closure, and a premise under twelve sentences is
+false** — [ADR-187](docs/specification/adr/adr-187.md), raised by the owner.
+
+### The premise
+
+- **Twelve live sentences** — a `std` module header, five emitter comments, three test doc comments, the roadmap, [`spec-promises.md`](docs/spec-promises.md) and [`open-work.md`](docs/open-work.md) §2.1, the one the owner pointed at — said some form of *"Rust has no stable `async` closure"*.
+- **Measured on this tree's own toolchain**, `rustc 1.94.1`, edition 2021, stable, no feature gate and no `RUSTC_BOOTSTRAP`: `async |x: i32| -> i32 { x * 10 }` with an `AsyncFn` bound compiles and runs, as do `AsyncFnMut`, `AsyncFnOnce` and `async move |…|`.
+- **And it was false when each of them was written**, so nothing expired. It was never checked — which is [ADR-009](docs/specification/adr/adr-009.md) D4's own rule, *measure before choosing a shape*, not applied to the sentence that ruled the alternative out. **A premise that rules an option out deserves the measurement more than the option that is left.**
+- **Why it matters more than a wrong decision**: a decision is argued against and a premise is inherited. Every reader who took one of those shapes took the falsehood with it.
+
+### The number, in the tree
+
+- **`benches/handler` gains an `async closure` row**, so the alternative is a measurement rather than an argument. Best of five, control tying:
+
+| row | ns/call | × |
+| :--- | ---: | ---: |
+| plain closure (`impl Fn`) | 0.31 | 1.0 |
+| boxed future (`impl Fn(A) -> Pin<Box<dyn Future>>`) — [ADR-122](docs/specification/adr/adr-122.md) D1's shape | 11.99 | 38.3 |
+| async closure (`impl AsyncFn(A) -> R`) — the shape said not to exist | 1.37 | 4.4 |
+| plain closure, twice (the control) | 0.29 | — |
+
+- **The shape chosen because it did not exist costs 8.7× what it does.**
+
+### Where the conclusion survives, the reason is replaced and the conclusion is not
+
+- **A task's body and an `overlap` branch are `async` blocks** because a body is a **block** and not something called: a closure around it would only be called once and take nothing away. `spawn fn { … }` and `overlap { … }` lower exactly as they did.
+- **`task::interleave` and the `overlap`/`race` families take futures** for that same reason, and because `rayon::join` — the pool vehicle [ADR-033](docs/specification/adr/adr-033.md) D10 names — takes **synchronous** closures and nothing can `await` inside one. A fact about `rayon`, not about Rust.
+- **A pausing lambda handed to a `std` entry is still refused at the build**, because that entry's own Rust signature takes a synchronous closure: `Iterator::map` takes `FnMut`, and an `async` closure handed to it yields an iterator **of futures**, which is a different program. A fact about those entries, not about Rust.
+
+### Where it rested on the premise alone, it is reopened and not rewritten
+
+- **[ADR-122](docs/specification/adr/adr-122.md) D1 has no surviving reason of that kind**, and its own measurement is what makes that matter: 38× against a floor where the alternative is 4.4×.
+- **It is not this record's to overturn.** D1's second half is a *coherence* rule — one spelling for a run parameter and a kept one, so a reader can tell what a signature costs by reading it — and `impl AsyncFn` is a **bound** rather than a type, so a *kept* parameter still needs a box or a type parameter of its own. Taking the cheap shape for the run case splits run from kept again, which is exactly what D1 joined.
+- **So it goes to [`open-decisions.md`](docs/open-decisions.md)** in that page's shape, with the three options and a recommendation: **A**, split by run-or-kept, which [ADR-102](docs/specification/adr/adr-102.md) D3 already infers.
+
+### And the records keep their text
+
+- **[ADR-055](docs/specification/adr/adr-055.md), [ADR-033](docs/specification/adr/adr-033.md) and [ADR-122](docs/specification/adr/adr-122.md) are not edited.** A record says what was decided **when**, and a premise quietly corrected inside one is a record that no longer explains the code it produced.
+- **What is corrected is every *living* sentence**, plus three rows in the index's *superseded and narrowed* table — which is where this tree already says *this part of that record no longer holds*.
+
 ## [0.0.137] — 2026-09-22
 
 **A parse keeps the text its record views** —

@@ -170,9 +170,12 @@ read against the day it was written.
    cannot interleave, and the emitted Rust contained the word `async` zero
    times. So the lowering moved, and with an executor to run it `spawn` is a
    keyword form: `TaskHandle::start(async move { … })`, with the body an `async`
-   **block** because a task may pause and Rust has no stable `async` closure. A
-   `std` function taking a lambda could not have been that — a closure has
-   nowhere to pause. The parser's rule is now the trailing lambda, so `spawn fn
+   **block** because a task's body is a block rather than something called, and
+   a closure around it would only be called once. (*Not* because Rust has no
+   stable `async` closure — it has one, and this line used to say otherwise:
+   [ADR-187](specification/adr/adr-187.md) D1, D2.) What settles it against a
+   `std` function taking a lambda is Part II 11.2 above and the parser: the
+   rule is now the trailing lambda, so `spawn fn
    { … }` parses as the one form, and the parenthesised spelling says what
    happened to it. Twelve sites, one reading, one rule.
 2. ~~**`throws` with a type.**~~ **Settled, and fixed.** Part I 7.1 states that

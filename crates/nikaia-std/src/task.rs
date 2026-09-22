@@ -17,8 +17,12 @@
 //!   ([ADR-148](../../../docs/specification/adr/adr-148.md) D1). The pair D4
 //!   names, one module apart from nothing.
 //!
-//! Both take **futures**, because Rust has no stable `async` closure and a
-//! branch that pauses is the case they exist for. What ran on the pool
+//! Both take **futures**, because a branch **is** one: an `async` block that
+//! borrows what is around it and is started once, where a closure would add a
+//! call and take nothing away. *Not* because the language below has no `async`
+//! closure - it has one, measured
+//! ([ADR-187](../../../docs/specification/adr/adr-187.md) D1), and this line
+//! used to say otherwise. What ran on the pool
 //! instead — `both`, the closure pair ADR-033 D10 chose for a group the
 //! *compiler* put together — went with the automatic grouping itself
 //! (ADR-050 D1).

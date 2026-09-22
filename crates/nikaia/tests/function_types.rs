@@ -201,9 +201,16 @@ fn throws_on_the_type_is_the_result_a_throws_function_has() {
 
 /// **A lambda that pauses is an ordinary program now**
 /// ([ADR-122](../../../docs/specification/adr/adr-122.md) D2), where it used to
-/// be refused at the build: Rust has no stable `async` closure, so the lowering
-/// had no shape for one. D1 *is* the shape — a closure returning a boxed
-/// future — so there is nothing left to refuse.
+/// be refused at the build, because the lowering had no shape for one. D1 *is*
+/// the shape — a closure returning a boxed future — so there is nothing left to
+/// refuse.
+///
+/// **The reason D1 gave for choosing that shape was false**: Rust's `async`
+/// closure is stable, `impl AsyncFn(A) -> R` costs 1.37 ns/call against the
+/// box's 11.99, and whether D1's one-spelling coherence is worth the difference
+/// is open ([ADR-187](../../../docs/specification/adr/adr-187.md) D1, D3). What
+/// this test asserts — that the program lowers rather than being refused — is
+/// D2 and does not depend on which shape wins.
 #[test]
 fn a_lambda_that_pauses_fits_a_parameter_that_allows_pausing() {
     let source = "use std::io\n\nfn run(f: fn() -> String) -> String { return f() }\n\

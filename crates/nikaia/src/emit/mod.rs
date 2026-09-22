@@ -4484,10 +4484,20 @@ impl<'p> Emitter<'p> {
             // costs by reading it, and a library author who wants no box writes
             // `sync`, which is what that word already promises.
             //
-            // Rust has no stable `async` closure, so the future is named rather
-            // than inferred: `Pin<Box<dyn Future<Output = …>>>` is the shape a
-            // handler is taken in in practice and the one `|a| Box::pin(async
-            // move { … })` produces.
+            // **The future is named rather than inferred**:
+            // `Pin<Box<dyn Future<Output = …>>>`, which is the shape a handler
+            // is taken in in practice and the one `|a| Box::pin(async move
+            // { … })` produces.
+            //
+            // D1's own reason for it was that Rust has no stable `async`
+            // closure, and that is **false**
+            // ([ADR-187](../../docs/specification/adr/adr-187.md) D1):
+            // `impl AsyncFn(A) -> R` compiles on this toolchain and costs 1.37
+            // ns/call against this shape's 11.99, on a 0.31 floor. What holds
+            // the shape up now is D1's second half alone - one spelling for a
+            // run parameter and a kept one, so a reader can tell what a
+            // signature costs by reading it - and whether that is worth 8.7× is
+            // a question on `docs/open-decisions.md`.
             let shape = match code.is_sync {
                 true => match (&code.result, code.throws) {
                     (None, false) => String::new(),
@@ -6281,9 +6291,13 @@ impl<'p> Emitter<'p> {
             // things are in that one line and each is a decision somewhere
             // else:
             //
-            //   * an `async` **block** and not a closure, because the body may
-            //     pause and Rust has no stable `async` closure - the same
-            //     reason every vehicle in `task` takes futures (§6 step 3);
+            //   * an `async` **block** and not a closure, because a body is a
+            //     block: wrapping it in a closure to call it once adds a call
+            //     and takes nothing away - the same reason every vehicle in
+            //     `task` takes futures (§6 step 3). Not because the language
+            //     below has no `async` closure, which is what this line used to
+            //     say and is false
+            //     ([ADR-187](../../docs/specification/adr/adr-187.md) D1, D2);
             //   * `move`, which is Part I 8.3's implicit move: the captures go
             //     with the task because it may outlive the function that
             //     started it, and `NK2101` is what stands in front of that for
@@ -6839,9 +6853,12 @@ impl<'p> Emitter<'p> {
     /// [ADR-050](../../../docs/specification/adr/adr-050.md) D2 and D6.
     ///
     /// Each statement is a branch, each branch becomes an `async` block, and
-    /// `task::overlap<n>` polls all of them in one pass. An `async` **block** and
-    /// not a closure, for the reason a task's body is one: a branch may pause,
-    /// and Rust has no stable `async` closure. No `move`, because D4 says
+    /// `task::overlap<n>` polls all of them in one pass. An `async` **block**
+    /// and not a closure, for the reason a task's body is one: a branch is a
+    /// block, and a closure around it would only be called once
+    /// ([ADR-187](../../../docs/specification/adr/adr-187.md) D2 - the reason
+    /// this line used to give, that Rust has no `async` closure, is false).
+    /// No `move`, because D4 says
     /// nothing outlives the block — a branch borrows what is around it exactly
     /// as an ordinary statement does, and that is what makes the form lighter
     /// than two `spawn`s.
@@ -8642,8 +8659,13 @@ impl<'p> Emitter<'p> {
             // **A lambda handed to a parameter whose type may pause**
             // ([ADR-122](../../docs/specification/adr/adr-122.md) D1): a
             // closure that returns a **boxed future**, which is what a callee
-            // declared `impl Fn(A) -> Pin<Box<dyn Future<…>>>` takes. Rust has
-            // no stable `async` closure, so the shape is written out.
+            // declared `impl Fn(A) -> Pin<Box<dyn Future<…>>>` takes, so the
+            // shape is written out. It is written out because the **callee's**
+            // declaration names it and not because the language below lacks an
+            // `async` closure - it has one
+            // ([ADR-187](../../docs/specification/adr/adr-187.md) D1), and
+            // whether the callee should name it instead is the question that
+            // record leaves open.
             //
             // `move`, because the future outlives the closure body it is made
             // in and what it captures has to go with it — which is Part I 5.4's
@@ -9177,10 +9199,17 @@ fn par_fold_of(rule: &GrammarRule) -> Option<&FoldSpec> {
 
 /// **A lambda whose body pauses, which this lowering cannot write.**
 ///
-/// Rust has no stable `async` closure, so there is no shape for a lambda that
-/// gives the thread up - and a plain closure holding an `.await` is a `rustc`
-/// error about a file nobody wrote (Part III, C.1). This is that error in
-/// Nikaia's words, at the one place that has the fact: the emitter.
+/// **The `std` entry it is handed to takes a synchronous closure**, so there is
+/// no shape for a lambda that gives the thread up - and a plain closure holding
+/// an `.await` is a `rustc` error about a file nobody wrote (Part III, C.1).
+/// This is that error in Nikaia's words, at the one place that has the fact:
+/// the emitter.
+///
+/// **It is those entries and not the language below.** `Iterator::map` takes
+/// `FnMut`, and an `async` closure handed to it yields an iterator **of
+/// futures**, which is a different program. Rust's `async` closure is stable
+/// and this comment used to say it was not
+/// ([ADR-187](../../../docs/specification/adr/adr-187.md) D1, D2).
 ///
 /// **A limit of this compiler and not of the language.** Nikaia is implicitly
 /// async ([ADR-055](../../../docs/specification/adr/adr-055.md) D1), so
