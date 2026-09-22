@@ -320,6 +320,18 @@ pub struct FnContract {
     /// same doubt that takes the `sync` claim away gives this one, so one
     /// polarity decision serves both.
     pub touches_a_lock: Lock,
+    /// Whether this call may put what it is given on a **thread of its own**
+    /// ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1).
+    ///
+    /// Three values and hand-written — see [`Threads`]. It is the one column
+    /// here about a body the compiler cannot read *at all*: a Rust dependency
+    /// may bring its own runtime, and `NK2502` has been asking every
+    /// **undescribed** call that question since ADR-038 D7. A described call
+    /// was never asked, which is that record's own wording, so a crate that
+    /// answered every other question honestly turned the check off by being
+    /// described. This is the word that turns it back on, and D2 makes it fire
+    /// on the **claim** and never on its absence.
+    pub threads: Threads,
     /// Which of Part I 6.6's states each view in this signature is in
     /// ([ADR-008](../../../../docs/specification/adr/adr-008.md) D7's first
     /// half: *recorded per function: the state of every view in its
@@ -429,6 +441,48 @@ pub enum Crosses {
     /// for it either - the two differ in who is to blame.
     #[default]
     Undecided,
+}
+
+/// Whether a **function** starts a thread of its own
+/// ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1).
+///
+/// [`Crosses`]' shape, for [`Crosses`]' reason, one question over: `true`,
+/// `false`, and **absent**, where the absence is *nobody said* and never *it
+/// does not*. A `threads = false` written by a hopeful hand is a false
+/// silence, and silence read as *no* is the polarity
+/// [ADR-010](../../../../docs/specification/adr/adr-010.md) D1 calls a
+/// vulnerability generator.
+///
+/// **Hand-written and never inferred**, like `crosses`: it answers for a body
+/// this compiler does not read. What a describer may do is *propose* it, and
+/// only ever `true` — nothing a signature can show entails *does not thread*,
+/// since a function may spawn something it built itself
+/// ([ADR-193](../../../../docs/specification/adr/adr-193.md) D3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Threads {
+    /// `threads = true`: this call **may** put what it is given on a thread of
+    /// its own. `NK2502` fires on this and on nothing else (D2).
+    May,
+    /// `threads = false`: it does not. A claim, and a person's to make.
+    MayNot,
+    /// Nothing written. **Not permission and not a promise**: the call keeps
+    /// whatever answer it has today, which for a described call is silence and
+    /// for an undescribed one is `NK2502` asked of every argument.
+    #[default]
+    Undecided,
+}
+
+impl Threads {
+    /// Whether the description said it threads: `May` and nothing else. This is
+    /// what a refusal may be raised on.
+    pub fn may(self) -> bool {
+        matches!(self, Threads::May)
+    }
+
+    /// Whether the description said it does not: `MayNot` and nothing else.
+    pub fn may_not(self) -> bool {
+        matches!(self, Threads::MayNot)
+    }
 }
 
 impl Crosses {
@@ -1571,6 +1625,14 @@ impl Ledger {
                 // answer, which is why nothing may read the column before that
                 // pass has run.
                 touches_a_lock: Lock::No,
+                // **Nothing a `.nika` file declares says it**, and nothing here
+                // infers it: a Nikaia function that wants another thread writes
+                // a `task`, which the compiler sees and which is not this
+                // question. `threads` is about a body written in *another*
+                // language ([ADR-193](../../../docs/specification/adr/adr-193.md)
+                // D1), so *nobody said* is the honest answer for every entry
+                // this loop writes.
+                threads: Threads::Undecided,
                 // `sharing::infer` reads the bodies afterwards, for the same
                 // reason `sync` does: the answer is about where a value goes
                 // and not about how it was declared. Empty until then, which is
@@ -1753,6 +1815,14 @@ impl Ledger {
                 // `"?"` is the absence of a claim, which is what it means in
                 // `throws` (ADR-024 D1) said once more.
                 Lock::Undecided => out.push_str("locks = \"?\"\n"),
+            }
+            // Beside `locks`, because both are claims about what a body does
+            // that no signature shows and a person writes
+            // ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1).
+            match contract.threads {
+                Threads::Undecided => {}
+                Threads::May => out.push_str("threads = true\n"),
+                Threads::MayNot => out.push_str("threads = false\n"),
             }
             if contract.touches_known {
                 out.push_str(&format!(
@@ -1953,6 +2023,20 @@ impl Ledger {
                                 "true" => Lock::Holds,
                                 "\"?\"" => Lock::Undecided,
                                 _ => Lock::No,
+                            }
+                        }
+                        "threads" => {
+                            entry.threads = match value.trim() {
+                                "true" => Threads::May,
+                                "false" => Threads::MayNot,
+                                other => {
+                                    return Err(anyhow::anyhow!(
+                                        "line {}: `threads` is `true` or `false`, not `{other}` \
+                                         - and leaving it out is the third answer, which is \
+                                         *nobody said* (ADR-193 D1)",
+                                        at()
+                                    ))
+                                }
                             }
                         }
                         "touches" => {

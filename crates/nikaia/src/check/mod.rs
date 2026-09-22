@@ -191,6 +191,19 @@ fn viewed_as(ty: &Ty) -> Viewed {
     }
 }
 
+/// **What one call was handed**, positional and named, with the types found for
+/// each.
+///
+/// One parameter rather than four, because the two callers of
+/// [`Checker::crosses_into_an_unseen_call`] pass the same four and the question
+/// they differ on is *why* — which is the argument beside this one.
+struct Arguments<'a> {
+    args: &'a [Expr],
+    found: &'a [Ty],
+    config: &'a [ast::ConfigArg],
+    passed: &'a [(String, Ty)],
+}
+
 /// How a `?.` takes a member out of the view it reaches through
 /// ([ADR-191](../../docs/specification/adr/adr-191.md) D1).
 ///
@@ -7368,7 +7381,21 @@ impl<'a> Checker<'a> {
             // A call nothing describes is a call this compiler cannot see the
             // end of, and a thread of its own is among the things it may do
             // (ADR-038 D7). What it is handed is therefore handed across.
-            self.crosses_into_an_unseen_call(&name, args, &found, config, &passed, span);
+            self.crosses_into_an_unseen_call(
+                &name,
+                Arguments {
+                    args,
+                    found: &found,
+                    config,
+                    passed: &passed,
+                },
+                span,
+                &format!(
+                    "nothing written down describes `{name}`, so this compiler cannot see the \
+                     end of it - and starting a thread of its own is among the things it may do \
+                     (Part III, 15.2)"
+                ),
+            );
             // And a call this compiler cannot see the end of says nothing about
             // whether it can **fail**, either
             // ([ADR-091](../../docs/specification/adr/adr-091.md)).
@@ -7376,6 +7403,30 @@ impl<'a> Checker<'a> {
             return Ty::Unknown;
         };
         self.reachable(&name, contract, span);
+        // **A described call is asked too, where the description says the word**
+        // ([ADR-193](../../docs/specification/adr/adr-193.md) D2). It fires on
+        // the **claim** and never on its absence: a description that does not
+        // say is a description that was not asked, and the program keeps the
+        // answer it has today. Before this, a crate that answered every other
+        // question honestly turned `NK2502` off by being described, which is
+        // the half of [ADR-038](../../docs/specification/adr/adr-038.md) D7
+        // that was left open.
+        if contract.threads.may() {
+            self.crosses_into_an_unseen_call(
+                &name,
+                Arguments {
+                    args,
+                    found: &found,
+                    config,
+                    passed: &passed,
+                },
+                span,
+                &format!(
+                    "`{name}` is described as starting a thread of its own (`threads = true`), \
+                     so what it is given may be looked at from one (Part III, 15.2)"
+                ),
+            );
+        }
         self.may_fail_here(&key, contract, span);
         self.a_call_that_may_pause(contract);
         self.a_pausing_call_in_an_action(&name, contract, span);
@@ -8844,12 +8895,16 @@ impl<'a> Checker<'a> {
     fn crosses_into_an_unseen_call(
         &mut self,
         callee: &str,
-        args: &[Expr],
-        found: &[Ty],
-        config: &[ast::ConfigArg],
-        passed: &[(String, Ty)],
+        handed: Arguments<'_>,
         span: &Span,
+        why: &str,
     ) {
+        let Arguments {
+            args,
+            found,
+            config,
+            passed,
+        } = handed;
         let positional = args
             .iter()
             .zip(found)
@@ -8877,11 +8932,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let notes = [
-                Some(format!(
-                    "nothing written down describes `{callee}`, so this compiler cannot see the \
-                     end of it - and starting a thread of its own is among the things it may do \
-                     (Part III, 15.2)"
-                )),
+                Some(why.to_string()),
                 crossing.note(),
                 Some(SAME_AT_BOTH.to_string()),
             ];

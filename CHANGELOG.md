@@ -4,6 +4,31 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.160] — 2026-09-22
+
+**`threads` is a column** — [ADR-193](docs/specification/adr/adr-193.md) D1 and
+D2 built, and with them the half of
+[ADR-038](docs/specification/adr/adr-038.md) D7 that was left open.
+
+### The column
+
+- **Three values**, which is [`Crosses`](docs/specification/adr/adr-123.md)' shape one question over: `true`, `false`, and **absent**. The absence is *nobody said*, never *it does not* — a `threads = false` written by a hopeful hand is a false silence, and silence read as *no* is the polarity [ADR-010](docs/specification/adr/adr-010.md) D1 calls a vulnerability generator.
+- **Hand-written and never inferred.** Nothing a `.nika` file declares says it: a Nikaia function that wants another thread writes a `task`, which the compiler sees and which is not this question. `threads` is about a body written in another language.
+- It renders, re-parses, and a third spelling is refused rather than guessed at — the round trip `crosses` has, because the ledger is a **committed** file.
+
+### What it turns back on
+
+- **`NK2502` asks a described call now**, where the description says the word — and never on its absence, which is D2. Before this, a crate that answered every other question honestly **turned the check off by being described**: `NK2502` asked its question of a call *nothing* describes, which is ADR-038 D7's own wording, and no column said whether a described foreign function puts what it is given on a thread.
+- **The message names the word and not a missing file.** A note reading *nothing written down describes `f`* would send a reader to write a description that is already there.
+- `a_described_call_that_says_it_threads_is_asked_and_a_silent_one_is_not` in `crates/nikaia/tests/send.rs` holds all three values: silence refuses nothing, `threads = false` refuses nothing, `threads = true` is `NK2502` against the argument.
+
+### The defect this found
+
+- **No ledger in this tree writes the word yet**, and the reason is [`open-work.md`](docs/open-work.md) **§1.8**. `hyper_shim::across_a_thread` builds a `tokio` runtime and spawns, so `threads = true` is true of it and a reviewer would write it — but the test that would show what changes cannot run, because `examples/foreign-runtime/crossing` **does not build**.
+- **A `path` dependency is resolved against a directory the generated manifest is not in.** The workspace manifest is at `target/nikaia/build/Cargo.toml` and the member's is one deeper ([ADR-053](docs/specification/adr/adr-053.md) D1's *one member per Nikaia package*); Cargo resolves a `path` against the manifest it is written in, so `../../../../shim` lands one directory short. Three manifests say that, and so does the comment in each.
+- **And the compiler's own reader disagrees with Cargo in the same way**: `describe::crate_sources` resolves against `target/nikaia/build`, so `nikaia describe` and `cargo build` look in two different places for one crate's sources — and only the first is exercised, because `describing.rs` never runs Cargo.
+- **Not fixed here**, because the good answer narrows [ADR-002](docs/specification/adr/adr-002.md) D1's *the value with `type` removed reaches Cargo verbatim*: a `path` in `nikaia.toml` should be relative to `nikaia.toml`, with the generated manifest carrying it absolute — which that manifest already does for `nikaia-std`. That wants a record rather than a commit.
+
 ## [0.0.159] — 2026-09-22
 
 **A module is a file as often as it is a block** — the last of the scraper's

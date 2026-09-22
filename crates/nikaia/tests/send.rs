@@ -824,6 +824,54 @@ fn the_column_survives_being_written_and_read_again() {
     assert!(said.contains("`crosses` is `true` or `false`"), "{said}");
 }
 
+/// **`threads` renders, re-parses, and a third spelling is refused** — the same
+/// round trip `crosses` has, for the same reason: the ledger is a **committed**
+/// file, and a column that could be written and not read again would make a
+/// derivation differ from the file it came from.
+#[test]
+fn the_threads_column_survives_being_written_and_read_again() {
+    let entry = |extra: &str| {
+        describing("")
+            + "\n\
+               [fn.\"fremd::ueber_einen_thread\"]\n\
+               pub = true\n\
+               sync = true\n"
+            + extra
+            + "signature = \"(value: $T) -> String\"\n"
+    };
+
+    for word in ["true", "false"] {
+        let written = Ledger::parse(&entry(&format!("threads = {word}\n"))).expect("it parses");
+        let rendered = written.render();
+        assert!(
+            rendered.contains(&format!("threads = {word}")),
+            "the claim is written out: {rendered}"
+        );
+        let again = Ledger::parse(&rendered).expect("what it wrote parses");
+        assert_eq!(
+            again
+                .functions
+                .get("fremd::ueber_einen_thread")
+                .map(|c| c.threads),
+            written
+                .functions
+                .get("fremd::ueber_einen_thread")
+                .map(|c| c.threads),
+        );
+    }
+
+    // A ledger that never said it says exactly what it said, which is the third
+    // value existing: *nobody said*, and every ledger already written keeps its
+    // meaning.
+    let silent = Ledger::parse(&entry("")).expect("it parses");
+    assert!(!silent.render().contains("threads"), "{}", silent.render());
+
+    // And a spelling that is neither is refused rather than guessed at.
+    let wrong = Ledger::parse(&entry("threads = \"maybe\"\n"));
+    let said = format!("{:#}", wrong.expect_err("`maybe` is not an answer"));
+    assert!(said.contains("`threads` is `true` or `false`"), "{said}");
+}
+
 /// **`NK2501` fires for the first time**: a described type that may not cross,
 /// used inside a task.
 ///
@@ -890,37 +938,62 @@ fn a_described_type_that_may_not_cross_is_refused_into_a_foreign_call() {
     );
 }
 
-/// **And a *described* foreign call is asked nothing, which is the hole the
-/// claim exposes rather than one it makes.**
+/// **A described foreign call is asked where the description says the word, and
+/// nowhere else** ([ADR-193](../../../docs/specification/adr/adr-193.md) D1, D2).
 ///
-/// `examples/foreign-runtime/crossing` is the program: its handle now says
-/// `crosses = false`, and it is handed to `hyper_shim::across_a_thread`, which
-/// the description names. `NK2502` asks its question of a call **nothing**
-/// describes (ADR-038 D7's own words), so a described one is not asked - and no
-/// column says whether a described foreign function puts what it is given on a
-/// thread. So that program is still refused by `rustc`'s `Send` bound, against
-/// the `.nika` line, exactly as `foreign_runtime.rs` records.
+/// `examples/foreign-runtime/crossing` is the program: its handle says
+/// `crosses = false`, and it is handed to a foreign function the description
+/// names. `NK2502` used to ask its question only of a call **nothing**
+/// describes (ADR-038 D7's own words), so a crate that answered every other
+/// question honestly turned the check off by being described — and that program
+/// was refused by `rustc`'s `Send` bound instead, against the `.nika` line.
 ///
-/// Asserted rather than left to be discovered: this is the silence somebody will
-/// read as a bug, and the day a column answers it, this test is what changes.
+/// `threads` is the word that turns it back on. It fires on the **claim** and
+/// never on its absence, which is D2: a description that does not say is a
+/// description that was not asked, and the program keeps the answer it had.
 #[test]
-fn a_described_foreign_call_is_not_asked_about_crossing() {
-    let library = describing("crosses = false\n")
-        + "\n\
-           [fn.\"fremd::ueber_einen_thread\"]\n\
-           pub = true\n\
-           sync = true\n\
-           keeps = [\"value\"]\n\
-           signature = \"(value: $T) -> String\"\n";
+fn a_described_call_that_says_it_threads_is_asked_and_a_silent_one_is_not() {
+    let entry = |extra: &str| {
+        describing("crosses = false\n")
+            + "\n\
+               [fn.\"fremd::ueber_einen_thread\"]\n\
+               pub = true\n\
+               sync = true\n"
+            + extra
+            + "keeps = [\"value\"]\n\
+               signature = \"(value: $T) -> String\"\n"
+    };
+    let program = "fn ueber() {\n\
+                       let handle = fremd::ortsgebunden(\"nicht Send\".to_string())\n\
+                       let text = fremd::ueber_einen_thread(handle)\n\
+                   }";
+
+    // **Silence is not a claim.** Nothing is refused, exactly as before.
     assert!(
-        crossings_against(
-            &library,
-            "fn ueber() {\n\
-                 let handle = fremd::ortsgebunden(\"nicht Send\".to_string())\n\
-                 let text = fremd::ueber_einen_thread(handle)\n\
-             }",
-        )
-        .is_empty(),
-        "a described call is not asked, so nothing here is refused"
+        crossings_against(&entry(""), program).is_empty(),
+        "a description that does not say is one that was not asked (D2)"
+    );
+
+    // **And `threads = false` is a claim in the other direction**, which is the
+    // third value existing at all: a person wrote *it does not*, and a refusal
+    // may not be raised on that either.
+    assert!(
+        crossings_against(&entry("threads = false\n"), program).is_empty(),
+        "`threads = false` is the claim that it does not (D1)"
+    );
+
+    let refused = crossings_against(&entry("threads = true\n"), program);
+    let finding = refused
+        .first()
+        .unwrap_or_else(|| panic!("`threads = true` is asked: {refused:#?}"));
+    assert_eq!(finding.code, "NK2502");
+    assert!(finding.message.contains("`handle`"), "{}", finding.message);
+    // The note names the **word** and not the absence of a description, because
+    // this call *is* described — and a message that said otherwise would send a
+    // reader to write a file that is already there.
+    assert!(
+        finding.notes.join(" ").contains("threads = true"),
+        "{:#?}",
+        finding.notes
     );
 }
