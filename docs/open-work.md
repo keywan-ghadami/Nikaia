@@ -1398,12 +1398,15 @@ next:*
       [Part III C.4](specification/30-nikaia-tooling.md) and the scanner
       refused every one of them.
 
-      **What is left of the third limit** is the half that needs a second
-      pass: a `pub fn` in *another file* is still read as the crate's own,
-      because what module a *file* is takes the `mod foo;` in its parent to
-      say. The half inside one file is closed.
-   3. **The file-to-module pass, `cargo metadata`, and the rest of the command
-      following the parser across.** `fs` gains a **directory walk** and `std` a **subprocess**
+      **The third limit is closed.** A module is a block or a file —
+      `src/foo/bar.rs` is `foo::bar` — and whether a caller may write a path is
+      read from the `pub mod foo;` in its parent. A module nothing declares is
+      **not** offered, which is fail-closed and
+      [ADR-010](specification/adr/adr-010.md) D1's polarity. Of the scraper's
+      three named limits only the **macro** one stands, and it is
+      [ADR-001](specification/adr/adr-001.md) D1's rather than any parser's.
+   3. **`cargo metadata`, and the rest of the command following the parser
+      across.** `fs` gains a **directory walk** and `std` a **subprocess**
       ([ADR-195](specification/adr/adr-195.md) D4), both of which are the kind
       of operating-system resource
       [ADR-194](specification/adr/adr-194.md) D1 put the socket in `std` for.
@@ -1424,11 +1427,14 @@ entails *does not thread* — a function may spawn something it built itself —
 [ADR-123](specification/adr/adr-123.md) D2's licence to fill `crosses` is
 **soundness**, which these indicators do not have.
 
-*And step 3 does not close everything a parser looks as though it would.* Of the
-scraper's three named limits the `mod`-path one closes and the
+*And step 3 did not close everything a parser looks as though it would.* Of the
+scraper's three named limits the `mod`-path one is **closed** and the
 signature-translation one narrows, but the **macro** one stays — expanding one
 needs `-Zunpretty=expanded`, which is nightly, and that is the same
 [ADR-001](specification/adr/adr-001.md) D1 wall that keeps rustdoc-JSON out.
+*And one thing a parser makes possible that nothing asks for yet:* a **method**
+is read and not written down, because what an `impl`'s `pub fn` is at a foreign
+boundary is [ADR-104](specification/adr/adr-104.md) D4's own question.
 
 
 ## 3. Upkeep

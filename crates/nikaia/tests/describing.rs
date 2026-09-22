@@ -56,6 +56,23 @@ fn project(name: &str, crate_source: &str, program: &str) -> PathBuf {
     root
 }
 
+/// The same, with more of the crate than its `lib.rs`.
+///
+/// A module is a **file** as often as it is a block, and what module a file is
+/// takes the `mod foo;` in its parent to say — so a crate with one file cannot
+/// show that half at all.
+fn project_of_files(name: &str, crate_files: &[(&str, &str)], program: &str) -> PathBuf {
+    let root = project(name, "", program);
+    for (relative, text) in crate_files {
+        let at = root.join("fremd/src").join(relative);
+        if let Some(parent) = at.parent() {
+            std::fs::create_dir_all(parent).expect("a directory for the module");
+        }
+        std::fs::write(at, text).expect("write the module");
+    }
+    root
+}
+
 /// The entries of a draft, as the file would read them.
 fn entries(root: &Path) -> String {
     let (ledger, described) = draft(root, "fremd").expect("the draft is written");
@@ -137,6 +154,53 @@ fn an_item_that_is_only_text_is_not_described_and_a_re_export_is() {
     assert!(text.contains("[fn.\"fremd::shown::seen\"]"), "{text}");
     assert!(text.contains("[fn.\"fremd::real\"]"), "{text}");
     assert!(text.contains("[fn.\"fremd::rescued\"]"), "{text}");
+}
+
+/// **What module a file is**, which takes the `mod foo;` in its parent to say.
+///
+/// The scanner read every `.rs` under `src/` as the crate's own, so `seen` and
+/// `buried` were both `fremd::…` and neither was where a caller writes it. The
+/// grammar reads the declarations: `pub mod shown;` offers `shown::seen`, and
+/// `mod private;` offers nothing — and a `pub use` out of it offers one name.
+///
+/// **A module nothing declares is not offered**, which is fail-closed
+/// ([ADR-010](../../../docs/specification/adr/adr-010.md) D1): the absence is
+/// *nobody said this is public*, and the name reaches the reviewer as a `?`
+/// rather than the draft as a claim.
+#[test]
+fn a_module_is_a_file_as_often_as_it_is_a_block() {
+    let root = project_of_files(
+        "files",
+        &[
+            (
+                "lib.rs",
+                "pub mod shown;\nmod private;\npub use private::hidden as rescued;\nmod orphan_is_declared_nowhere {}\n",
+            ),
+            ("shown.rs", "pub fn seen(x: i32) -> i32 { x }\n"),
+            ("private.rs", "pub fn hidden(x: i32) -> i32 { x }\n"),
+            ("loose.rs", "pub fn adrift(x: i32) -> i32 { x }\n"),
+        ],
+        "fn main() {\n\
+         let a = fremd::shown::seen(1)\n\
+         let b = fremd::seen(2)\n\
+         let c = fremd::private::hidden(3)\n\
+         let d = fremd::rescued(4)\n\
+         let e = fremd::loose::adrift(5)\n\
+         let f = fremd::adrift(6)\n\
+         println(f\"{a}{b}{c}{d}{e}{f}\")\n\
+         }\n",
+    );
+
+    let text = entries(&root);
+
+    // Declared `pub`: offered, under its module.
+    assert!(text.contains("[fn.\"fremd::shown::seen\"]"), "{text}");
+    assert!(!text.contains("[fn.\"fremd::seen\"]"), "{text}");
+    // Declared without `pub`: offered only by what the `pub use` carries out.
+    assert!(!text.contains("[fn.\"fremd::private::hidden\"]"), "{text}");
+    assert!(text.contains("[fn.\"fremd::rescued\"]"), "{text}");
+    // Declared nowhere: fail-closed, at either path a caller might guess.
+    assert!(!text.contains("adrift"), "{text}");
 }
 
 /// **D3's table, row by row**, on signatures written to exercise each one.

@@ -34,11 +34,15 @@
 //     of reach;
 //   * a signature this cannot translate is written `?`, which is the absence of
 //     a claim and never a guess (D4's own sentence);
-//   * a `pub` item in **another file** is read as the crate's own. The half
-//     inside one file is closed — an inline `pub mod` gives its items a path
-//     and an inline private `mod` stops offering them — and the other half
-//     needs the `mod foo;` in a parent to say what module a *file* is, which is
-//     a second pass and its own piece of work.
+//   * a **method** is not described: what an `impl`'s `pub fn` is at a foreign
+//     boundary is D4's own question and nothing here asks it. The parser reads
+//     them; this does not write them down.
+//   * a **macro** is still the only one. The `mod`-path limit is **closed**: a
+//     module is a block or a file, `src/foo/bar.rs` is `foo::bar`, and whether
+//     a caller may write it is read from the `pub mod foo;` in its parent. A
+//     module nothing declares is **not** offered, which is fail-closed and
+//     [ADR-010](../../docs/specification/adr/adr-010.md) D1's polarity — the
+//     absence is *nobody said this is public*.
 //
 // Each of those is D5's case: the draft is **committed and reviewed like code**,
 // and a `?` in it is a person's to fill. A describer that guessed would put a
@@ -412,9 +416,20 @@ struct Surface {
     fields: BTreeMap<String, Vec<String>>,
     /// Every `pub struct` and `pub enum`, by the path it is defined at.
     types: BTreeSet<String>,
+    /// Every `mod` declaration found, by the module's path, and whether it was
+    /// written `pub`.
+    ///
+    /// **A module nothing declares is not offered**, which is fail-closed and
+    /// [ADR-010](../../docs/specification/adr/adr-010.md) D1's polarity: what
+    /// is missing here is *nobody said this module is public*, and reading that
+    /// as *it is* would put a claim in the draft that no source supports. The
+    /// name reaches the reviewer as a `?` instead
+    /// ([ADR-104](../../docs/specification/adr/adr-104.md) D4, D5).
+    modules: BTreeMap<String, bool>,
     /// A path a **caller** may write, and the path it resolves to. An item in a
     /// public module is here under its own path; a re-exported one is here
-    /// under the name the re-export gives it.
+    /// under the name the re-export gives it. Filled by [`Surface::resolve`],
+    /// because whether a path is offered takes every file to answer.
     reachable: BTreeMap<String, String>,
     /// `pub use` items, kept until every file has been read: one may name
     /// something another file declares.
@@ -432,31 +447,32 @@ struct Export {
 }
 
 impl Surface {
-    /// Read one file's items into this.
+    /// Read one file's items into this, under the module the **file** is.
     ///
-    /// **The path inside the file only.** A `pub fn` in `src/foo.rs` is read as
-    /// the crate's own here, as it was before, because the module a *file* is
-    /// takes the `mod foo;` in its parent to know — which is a second pass and
-    /// its own piece of work. What this closes is the half inside one file: an
-    /// inline `pub mod` gives its items a path, and an inline private `mod`
-    /// stops offering them.
+    /// `src/lib.rs` is the crate root, `src/foo.rs` and `src/foo/mod.rs` are
+    /// `foo`, `src/foo/bar.rs` is `foo::bar`. A binary's root and anything
+    /// under `src/bin/` are not modules of the library at all and are skipped —
+    /// a program that calls into this crate cannot reach them.
+    ///
+    /// **Whether any of it is offered is not decided here**: that takes the
+    /// `mod foo;` in the parent, which may be in another file, so it is
+    /// [`Surface::resolve`]'s.
     fn read(&mut self, relative: &str, text: &str) -> Result<()> {
+        let Some(at) = module_of(relative) else {
+            return Ok(());
+        };
         let items = nikaia_std::tools::rust::file(text)
             .map_err(|error| anyhow::anyhow!("{relative}: {error}"))?;
-        self.walk(&items, "", true);
+        self.walk(&items, &at);
         Ok(())
     }
 
-    fn walk(&mut self, items: &[nikaia_std::tools::rust::Item<'_>], at: &str, visible: bool) {
+    fn walk(&mut self, items: &[nikaia_std::tools::rust::Item<'_>], at: &str) {
         use nikaia_std::tools::rust::Item;
         for item in items {
             match item {
                 Item::Fun(f) => {
-                    let path = joined(at, f.name);
-                    self.functions.insert(path.clone(), Function::of(f));
-                    if visible {
-                        self.reachable.insert(path.clone(), path);
-                    }
+                    self.functions.insert(joined(at, f.name), Function::of(f));
                 }
                 Item::Rec(r) => {
                     let path = joined(at, r.name);
@@ -466,17 +482,13 @@ impl Surface {
                             r.parts.iter().map(|p| p.ty.to_string()).collect(),
                         );
                     }
-                    self.types.insert(path.clone());
-                    if visible {
-                        self.reachable.insert(path.clone(), path);
-                    }
+                    self.types.insert(path);
                 }
-                // A `pub use` inside a private `mod` offers nothing to anybody
-                // outside, so only a visible one is kept.
-                Item::Export(text) if visible => self.exports.extend(exported(at, text)),
-                Item::Export(_) => {}
+                Item::Export(text) => self.exports.extend(exported(at, text)),
                 Item::Group(g) if g.what == "mod" => {
-                    self.walk(&g.items, &joined(at, g.name), visible && g.visible)
+                    let path = joined(at, g.name);
+                    self.modules.insert(path.clone(), g.visible);
+                    self.walk(&g.items, &path);
                 }
                 // An `impl` and a `trait` are not described yet: what a method
                 // is at a foreign boundary is [ADR-104](../../docs/specification/adr/adr-104.md)
@@ -486,12 +498,45 @@ impl Surface {
         }
     }
 
+    /// Whether a caller outside the crate may write this path: every module on
+    /// the way to it was declared `pub`.
+    fn offered(&self, path: &str) -> bool {
+        let mut at = String::new();
+        let mut parts: Vec<&str> = path.split("::").collect();
+        parts.pop();
+        for part in parts {
+            at = joined(&at, part);
+            if self.modules.get(&at) != Some(&true) {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Follow the `pub use` items until nothing new becomes reachable.
     ///
     /// **A re-export may name a re-export**, so this runs to a fixed point
     /// rather than once — bounded, because a crate that re-exports in a cycle
     /// does not compile and this is not the place to say so.
     fn resolve(&mut self) {
+        // Every item in a module chain that is `pub` all the way, under its own
+        // path. This is what the scanner did for **every** item it found, which
+        // is how four functions that do not exist reached a draft.
+        let direct: Vec<String> = self
+            .functions
+            .keys()
+            .chain(self.types.iter())
+            .filter(|path| self.offered(path))
+            .cloned()
+            .collect();
+        for path in direct {
+            self.reachable.insert(path.clone(), path);
+        }
+        // A `pub use` written in a module nobody outside can reach offers
+        // nothing to anybody outside.
+        let mut exports = std::mem::take(&mut self.exports);
+        exports.retain(|export| self.offered(&joined(&export.at, "x")));
+        self.exports = exports;
         for _ in 0..8 {
             let mut added = false;
             let exports = std::mem::take(&mut self.exports);
@@ -593,6 +638,26 @@ fn after<'a>(path: &'a str, word: &str) -> Option<&'a str> {
         return Some("");
     }
     path.strip_prefix(word)?.strip_prefix("::")
+}
+
+/// The module a file **is**, or `None` where it is not one of the library's.
+///
+/// `src/main.rs` and `src/bin/*.rs` are a binary's, which a program that calls
+/// into this crate cannot reach; `build.rs` is not under `src/` and never
+/// arrives here.
+fn module_of(relative: &str) -> Option<String> {
+    let inside = relative.strip_prefix("src/")?.strip_suffix(".rs")?;
+    if inside == "lib.rs" || inside == "lib" {
+        return Some(String::new());
+    }
+    if inside == "main" || inside.starts_with("bin/") {
+        return None;
+    }
+    let path = inside.strip_suffix("/mod").unwrap_or(inside);
+    match path.is_empty() {
+        true => Some(String::new()),
+        false => Some(path.replace('/', "::")),
+    }
 }
 
 /// `a::b` from `a` and `b`, and either alone where the other is empty.

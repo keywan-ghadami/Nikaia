@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.159] — 2026-09-22
+
+**A module is a file as often as it is a block** — the last of the scraper's
+three named limits that a parser can close,
+[ADR-195](docs/specification/adr/adr-195.md) D3's *removes the class rather than
+the instance* finished.
+
+### What a file is
+
+- **`src/lib.rs` is the crate root, `src/foo.rs` and `src/foo/mod.rs` are `foo`, `src/foo/bar.rs` is `foo::bar`.** `src/main.rs` and anything under `src/bin/` are a binary's and are skipped: a program that calls into this crate cannot reach them. The scanner read every `.rs` under `src/` as the crate's own, so every item in every file was `fremd::<name>` and none of them was where a caller writes it.
+- **Whether a path is offered is read from the declaration**, which may be in another file: `pub mod shown;` in `lib.rs` offers `shown::seen`, `mod private;` offers nothing, and a `pub use private::hidden as rescued;` beside it offers exactly one name. So reachability is a second pass over every file rather than a decision taken while walking one.
+- **A module nothing declares is not offered.** `src/loose.rs` with no `mod loose;` anywhere is fail-closed at both paths a caller might guess — [ADR-010](docs/specification/adr/adr-010.md) D1's polarity: the absence is *nobody said this is public*, and the name reaches the reviewer as a `?` rather than the draft as a claim ([ADR-104](docs/specification/adr/adr-104.md) D4, D5).
+
+### What is left
+
+- **The macro limit, and it is not the parser's** — expanding one needs nightly, the same [ADR-001](docs/specification/adr/adr-001.md) D1 wall that keeps rustdoc-JSON out. Of the three limits `describe.rs`'s own header apologised for, that is the only one still there.
+- **A method is read and not written down.** The grammar reports an `impl`'s `pub fn`s; what one *is* at a foreign boundary is [ADR-104](docs/specification/adr/adr-104.md) D4's own question and nothing asks it yet.
+
 ## [0.0.158] — 2026-09-22
 
 **The scanner is out**, and `nikaia describe` reads a crate with a parser
