@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.157] — 2026-09-22
+
+**The grammar moves into the toolchain, and the route is running** —
+[ADR-196](docs/specification/adr/adr-196.md) D1, no longer a decision but a
+thing a Rust program calls.
+
+### Where it went, and why it is not an example any more
+
+- **`examples/rust-signatures.nika` → `crates/nikaia-std/src/tools/rust.nika`**, lowered by `nikaia lower-std` to the `rust.rs` beside it, committed, and `include!`d as `nikaia_std::tools::rust`. `crates/nikaia-std/tests/rust_signatures.rs` drives it from Rust: five tests, no process, no C ABI, and `&str` views into the text that was handed in — asserted, because that is what `ref String` in the source is for.
+- **The example is deleted rather than kept**, which [ADR-196](docs/specification/adr/adr-196.md) §4 left to the commit that wires it in. A copy under `examples/` would be a second 250-line grammar to keep in step with the first, and the demonstration it was making is made better by the compiler using the thing.
+- **It is not part of `std`, and a gate is what taught that the directory has to say so.** `the_shipped_std_ledger_agrees_with_its_nikaia_sources` requires `std.contracts` to carry every `pub` thing a `.nika` beside `lib.rs` declares — which is exactly right, and exactly what this file must not do. So `src/tools/` is a place with a rule: the release step lowers it, `std.contracts` may not name it, and `a_toolchain_module_is_not_part_of_std` is the new test that holds the line. `Sysroot::tool_modules` is the other half.
+- **`nikaia-std` names `winnow` directly** for the first time: a `grammar` *in this crate* expands to code that writes `winnow::…`. A generated program has always declared it; until `std` held a grammar of its own, this crate reached it only through `winnow-grammar`.
+
+### `pub use` is an item, and the reason is C.4
+
+- **A `pub fn` inside a private `mod` is reachable after all when a `pub use` says so.** A reader that dropped private modules without looking for one would refuse a call that is correct, which is [Part III C.4](docs/specification/30-nikaia-tooling.md). So `pub use …;` is read and reported with the text it was written with — splitting a path is string work rather than parsing work, and whoever needs the pieces takes them.
+- **A plain `use` is not reported**, and `pub(crate) use` is refused by the `pub` rule itself: the word has to be a word, and a `(` after it is not one.
+
+### Three things the lowered file taught, which is the point of the route
+
+- **`clippy` reads generated code too.** `match f { A(x) => …, else => {} }` on a two-variant enum is *"you seem to be trying to use `match` for destructuring a single pattern"* — a complaint about a file nobody wrote, [Part III C.1](docs/specification/30-nikaia-tooling.md)'s class whoever makes it. Both variants are named now, which is what an exhaustive `match` is for anyway.
+- **A `cfg` naming a feature no manifest declares is the same class.** The `grammar!` expansion checks `trace`, so `nikaia-std` declares it as the compiler already does.
+- **A `pub struct` whose fields are not written `pub` is unreadable from another crate**, and a `pub enum` that is not written `pub` makes a public field *"more private than the item"*. Both are Nikaia saying exactly what it meant; the source says `pub` now.
+
+### The defect this found
+
+- **`use std::<anything>` is accepted, and `rustc` is the one that says otherwise** — [`open-work.md`](docs/open-work.md) §1.7, the first entry that section has held since 0.0.137. `use std::nosuchthing` lowers, the `use` becomes a comment, the call is emitted verbatim, and what the programmer sees is `error[E0433]: … unresolved module or unlinked crate` about a file they did not write, with a `help` telling them to `cargo add` a crate that does not exist. That is [Part III C.1](docs/specification/30-nikaia-tooling.md).
+- **Found by running a program written to check a sentence**, not by reading code: the sentence was going to claim `use std::rust` is refused. It is not. The checker already has the list it needs — what a program may write after `use std::` is exactly what `std.contracts` declares — so what is missing is the refusal and its code.
+
 ## [0.0.156] — 2026-09-22
 
 **The grammar, and the route it travels** — [ADR-195](docs/specification/adr/adr-195.md)

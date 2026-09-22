@@ -666,6 +666,58 @@ fn the_shipped_std_ledger_agrees_with_its_nikaia_sources() {
     assert!(checked > 0, "no Nikaia module in std was checked");
 }
 
+/// **A `.nika` under `src/tools` is not `std`**, and `std.contracts` must not
+/// name it.
+///
+/// The test above says what a module beside `lib.rs` means: `std` offers it,
+/// and the shipped ledger has to carry every `pub` thing it declares. That rule
+/// is the reason `tools/` exists — `tools/rust.nika` is the reading half of
+/// `nikaia describe` ([ADR-195](../../../docs/specification/adr/adr-195.md)
+/// D3), which the compiler calls as an ordinary Rust module
+/// ([ADR-196](../../../docs/specification/adr/adr-196.md) D1) and which no
+/// Nikaia program is offered.
+///
+/// Written as a test because the failure it guards against is quiet: a `pub fn`
+/// of the toolchain's arriving in `std.contracts` would become part of the
+/// language's standard library, and nothing else would say so.
+#[test]
+fn a_toolchain_module_is_not_part_of_std() {
+    let shipped = std::fs::read_to_string(repo_root().join("crates/nikaia-std/std.contracts"))
+        .expect("std ships a ledger");
+    let shipped = Ledger::parse(&shipped).expect("std's ledger parses");
+
+    let tools = repo_root().join("crates/nikaia-std/src/tools");
+    let mut checked = 0;
+
+    for entry in std::fs::read_dir(&tools).expect("read the toolchain's sources") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("nika") {
+            continue;
+        }
+        let module = path
+            .file_stem()
+            .expect("stem")
+            .to_string_lossy()
+            .to_string();
+        let source = std::fs::read_to_string(&path).expect("read the module");
+        let inferred = Ledger::infer(&parse_to_ast(&source).expect("the module parses"));
+
+        for name in inferred.functions.keys() {
+            let key = format!("{module}::{name}");
+            assert!(
+                !shipped.functions.contains_key(&key),
+                "std.contracts names `{key}`, which is the toolchain's and not \
+                 std's. A module under `src/tools` is not offered to a Nikaia \
+                 program (ADR-196 D1); move it beside `lib.rs` or take the \
+                 entry out."
+            );
+            checked += 1;
+        }
+    }
+
+    assert!(checked > 0, "no toolchain module was checked");
+}
+
 /// **Every entry `std` publishes carries prose**
 /// ([ADR-139](../../../docs/specification/adr/adr-139.md) D2).
 ///

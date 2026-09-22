@@ -27,11 +27,23 @@ use nikaia::sysroot::{self, Sysroot};
 #[test]
 fn the_committed_rust_is_what_this_compiler_lowers() {
     let sysroot = Sysroot::resolve();
-    let modules = sysroot.std_modules().expect("std's Nikaia modules");
+    let mut modules = sysroot.std_modules().expect("std's Nikaia modules");
     assert!(
         !modules.is_empty(),
         "std has a Nikaia half, and this test is about it (ADR-014 D1)"
     );
+    // **And the toolchain's own**, which rides the same release step
+    // ([ADR-196](../../../docs/specification/adr/adr-196.md) D1): the `.rs` is
+    // committed, so a change to the `.nika` that is not re-lowered is a silent
+    // divergence, and that is as true of `tools/` as of `std`.
+    let tools = sysroot
+        .tool_modules()
+        .expect("the toolchain's Nikaia modules");
+    assert!(
+        !tools.is_empty(),
+        "`src/tools` holds the reading half of `nikaia describe` (ADR-195 D3)"
+    );
+    modules.extend(tools);
 
     for nika in modules {
         let expected = sysroot::lower_std_module(&nika).expect("std's Nikaia half lowers");
@@ -68,7 +80,13 @@ fn stds_nikaia_half_lowers_the_same_at_both_switches() {
     let sequential = Build::parse("x86_64-linux", "no", "yes").expect("a switch that exists");
     let concurrent = Build::parse("x86_64-linux", "yes", "yes").expect("a switch that exists");
 
-    for nika in sysroot.std_modules().expect("std's Nikaia modules") {
+    let mut modules = sysroot.std_modules().expect("std's Nikaia modules");
+    modules.extend(
+        sysroot
+            .tool_modules()
+            .expect("the toolchain's Nikaia modules"),
+    );
+    for nika in modules {
         let source = std::fs::read_to_string(&nika).expect("the source reads");
         let parsed = nikaia::parser::parse_to_ast(&source).expect("std's Nikaia half parses");
         let at_no = emit::emit_program(&parsed, sequential).expect("lowers at `no`");

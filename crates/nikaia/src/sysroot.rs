@@ -45,6 +45,13 @@ pub const STD_DIR: &str = "nikaia-std";
 /// The extension `std`'s Nikaia half carries.
 const NIKA: &str = "nika";
 
+/// Where the Nikaia that the **toolchain** uses lives, under `std`'s `src`.
+///
+/// A directory rather than a naming convention, because what separates the two
+/// is not what the files are like but what `std` promises about them
+/// ([`Sysroot::tool_modules`]).
+const TOOLS: &str = "tools";
+
 /// A sysroot: a directory with `nikaia-std/` in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sysroot {
@@ -87,11 +94,39 @@ impl Sysroot {
     /// Sorted, because [ADR-005](../../../docs/specification/adr/adr-005.md) D8
     /// bans consuming a directory listing in filesystem order anywhere output
     /// depends on it, and the release step below writes files from this list.
+    ///
+    /// **The top level only, and that is the rule that says what `std` is.**
+    /// A `.nika` beside `lib.rs` is a module of `std` and
+    /// `crates/nikaia/tests/contracts.rs` requires `std.contracts` to carry
+    /// every `pub` thing it declares. What is in [`Self::tool_modules`] is not.
     pub fn std_modules(&self) -> Result<Vec<PathBuf>> {
-        let src = self.std_dir().join("src");
+        self.nika_in(&self.std_dir().join("src"), "std's Nikaia modules")
+    }
+
+    /// **Nikaia the toolchain uses and `std` does not publish**, in `src/tools`.
+    ///
+    /// `tools/rust.nika` is the reading half of `nikaia describe`
+    /// ([ADR-195](../../../docs/specification/adr/adr-195.md) D3), lowered the
+    /// same way `std`'s own Nikaia half is and reached by the compiler as an
+    /// ordinary Rust module ([ADR-196](../../../docs/specification/adr/adr-196.md)
+    /// D1). It lives in this crate because this is where the release step
+    /// already looks, and in a directory of its own because **a `.nika` beside
+    /// `lib.rs` means something**: that `std` offers it, and that
+    /// `std.contracts` has to say so. This one is not offered and must not be
+    /// in that file.
+    pub fn tool_modules(&self) -> Result<Vec<PathBuf>> {
+        let dir = self.std_dir().join("src").join(TOOLS);
+        match dir.is_dir() {
+            false => Ok(Vec::new()),
+            true => self.nika_in(&dir, "the toolchain's Nikaia modules"),
+        }
+    }
+
+    /// Every `.nika` directly in one directory, sorted.
+    fn nika_in(&self, src: &Path, what: &str) -> Result<Vec<PathBuf>> {
         let mut out = Vec::new();
-        let entries = std::fs::read_dir(&src)
-            .with_context(|| format!("reading {} for std's Nikaia modules", src.display()))?;
+        let entries = std::fs::read_dir(src)
+            .with_context(|| format!("reading {} for {what}", src.display()))?;
         for entry in entries {
             let path = entry?.path();
             if path.extension().and_then(|e| e.to_str()) == Some(NIKA) {
@@ -225,7 +260,9 @@ pub fn lowered_path(nika: &Path) -> PathBuf {
 /// what built the compiler a second time inside every project's `target/`.
 pub fn lower_std(sysroot: &Sysroot) -> Result<Vec<PathBuf>> {
     let mut changed = Vec::new();
-    for nika in sysroot.std_modules()? {
+    let mut sources = sysroot.std_modules()?;
+    sources.extend(sysroot.tool_modules()?);
+    for nika in sources {
         let rust = lower_std_module(&nika)?;
         let rs = lowered_path(&nika);
         let current = std::fs::read_to_string(&rs).ok();

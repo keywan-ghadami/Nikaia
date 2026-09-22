@@ -16,7 +16,6 @@ down rather than described.
 | [`access-log.nika`](access-log.nika) | a web log summarised: several fields per line, a report at the end | ✅ `crates/nikaia/tests/examples.rs` |
 | [`config.nika`](config.nika) | an INI file with comments: a grammar that defines its own whitespace | ✅ `crates/nikaia/tests/examples.rs` |
 | [`json.nika`](json.nika) | a JSON document: a tree of unbounded depth, and where zero-copy stops | ✅ `crates/nikaia/tests/examples.rs` |
-| [`rust-signatures.nika`](rust-signatures.nika) | a Rust file's public surface: a grammar over a language whose text is mostly not what is being parsed | ✅ `crates/nikaia/tests/examples.rs` |
 | [`n-body.nika`](n-body.nika) | the CLBG benchmark: arithmetic in a loop, and no grammar at all | ✅ `crates/nikaia/tests/examples.rs` |
 | [`k-nucleotide.nika`](k-nucleotide.nika) | the CLBG benchmark: FASTA on standard input, counted | ✅ `crates/nikaia/tests/examples.rs` |
 | [`escaping.nika`](escaping.nika) | an HTML table: the template escapes, the type says what is markup | ✅ `crates/nikaia/tests/examples.rs` |
@@ -28,7 +27,7 @@ down rather than described.
 | [`hello-http/`](hello-http/) | a program that reaches `http` **by a path**: the dependency arm, with a program on the end of it | ✅ `crates/nikaia/tests/project.rs` |
 | [`sqlite/`](sqlite/) | a real **C library**, end to end: a buffer, two handles with their `cleanup`, an out-parameter and text the library owns | ✅ `crates/nikaia/tests/foreign_pointers.rs`, skipped where the machine has no `libsqlite3` |
 
-Each of the twelve single programs is compiled and run **at both settings**, and their output
+Each of the eleven single programs is compiled and run **at both settings**, and their output
 must be identical — that is the claim the switches rest on, and a test is where it belongs
 rather than in a paragraph. The pair is built once, through its consumer, because what it is
 there to show is the dependency arm rather than a body of code. Each is the real file: the
@@ -87,14 +86,13 @@ They are deliberately different shapes.
   where zero-copy stops and says so: a JSON string is not a slice of the input, so `Text` holds
   the **raw** body and decoding waits until a program asks about it.
 
-* **`rust-signatures.nika`** is the first grammar here over a language whose *text* is mostly
-  not the thing being parsed. A Rust file is item headers with bodies, strings, comments and
-  macros between them, and everything between the headers has to be crossed without being
-  understood - which is a skipper that knows a string, a character literal, a comment and a
-  balanced brace group are each one unit. It is also the reading half of `nikaia describe`
-  ([ADR-195](../docs/specification/adr/adr-195.md) D3), so the example and the tool are the
-  same parser; the four items its test fixture contains that are *not* items are the mistakes
-  the character scanner it replaces makes today.
+**One grammar that was here is not any more, and where it went is the point.**
+`rust-signatures.nika` read a Rust file's public surface, and in 0.0.157 it moved to
+`crates/nikaia-std/src/tools/rust.nika` - the reading half of `nikaia describe`
+([ADR-195](../docs/specification/adr/adr-195.md) D3), lowered ahead of time and reached by the
+compiler as an ordinary Rust module ([ADR-196](../docs/specification/adr/adr-196.md) D1). It is
+not an example any more because it is a tool, and a copy of it here would be a second grammar to
+keep in step with the first. `crates/nikaia-std/tests/rust_signatures.rs` is what runs it.
 
 An example that is added has to be declared: either it runs and says what it prints, or it is
 specification-level and its gaps are here. `crates/nikaia/tests/examples.rs` fails on a file

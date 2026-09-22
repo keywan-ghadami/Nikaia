@@ -53,6 +53,60 @@ pub mod text {
     include!("text.rs");
 }
 
+/// **Nikaia that the toolchain uses and `std` does not publish.**
+///
+/// A directory of its own, because a `.nika` beside `lib.rs` means something:
+/// that `std` offers it, and that `std.contracts` has to carry every `pub`
+/// thing it declares (`crates/nikaia/tests/contracts.rs`). Nothing in here is
+/// offered, nothing below re-exports it, and `std.contracts` must **not** name
+/// it.
+///
+/// It lives in this crate anyway because this is where `nikaia lower-std`
+/// already looks for `.nika` sources (ADR-002 D4, ADR-195 D2), and because the
+/// compiler - which is Rust - reaches what is in here as an ordinary Rust
+/// module (ADR-196 D1). That is the whole interface: a call.
+///
+/// **What none of it is, is *refused***, and that is a defect rather than a
+/// decision: `use std::tools` in a Nikaia program lowers, and `rustc` is what
+/// complains, about a file nobody wrote. `open-work.md` §1.7 carries it, and it
+/// is older than this module - `use std::<anything>` has always been accepted.
+pub mod tools {
+    /// **A Rust file's public surface**, read by a Nikaia grammar:
+    /// `src/tools/rust.nika`, lowered to `src/tools/rust.rs` by the Stage 0
+    /// compiler and committed beside it.
+    ///
+    /// This is the reading half of `nikaia describe` (ADR-195 D3). What it
+    /// reads, what it deliberately does not, and how it differs from the
+    /// character scanner it replaces are in the `.nika`'s own header.
+    pub mod rust {
+        include!("tools/rust.rs");
+
+        /// **The one call a Rust caller makes**, and the only hand-written Rust
+        /// in this module.
+        ///
+        /// The generated `Rust::parse_file()` hands back a parser rather than a
+        /// result; what turns one into the other is four lines the emitter
+        /// writes at every call site in a Nikaia program, and a Rust caller has
+        /// no emitter. So they are written once, here, beside the thing they
+        /// are about - which is the same argument ADR-013 makes for `std` being
+        /// a crate rather than a table inside the printer.
+        ///
+        /// The error is [`crate::grammar::ParseError`], already rendered: a
+        /// headline, the line with a caret under it, and what else was possible
+        /// there.
+        pub fn file(text: &str) -> Result<Vec<Item<'_>>, crate::grammar::ParseError> {
+            use winnow::Parser;
+            let mut stream = winnow_grammar::ParseInput::<()> {
+                state: winnow_grammar::ParseContext::<()>::default(),
+                input: winnow::stream::LocatingSlice::new(text),
+            };
+            Rust::parse_file()
+                .parse_next(&mut stream)
+                .map_err(|error| crate::grammar::ParseError::of(error.render(text)))
+        }
+    }
+}
+
 /// What a `use std::…` in a Nikaia program brings into scope.
 pub mod prelude {
     pub use crate::channel;

@@ -1,87 +1,109 @@
-// examples/rust-signatures.nika
+// crates/nikaia-std/src/tools/rust.nika
 //
 // A Rust file's public surface, read by a Nikaia grammar.
 //
-// Run:
+// **This is the reading half of `nikaia describe`**
+// ([ADR-195](../../../../docs/specification/adr/adr-195.md) D3), written in the
+// language the command belongs to. It reaches the compiler - which is Rust -
+// the way [ADR-196](../../../../docs/specification/adr/adr-196.md) D1 says such a
+// thing reaches Rust: lowered ahead of time by `nikaia lower-std`, committed as
+// the `rust.rs` beside this file, and `include!`d into
+// `nikaia_std::tools::rust`. The
+// call across is an ordinary Rust call with ordinary Rust types. There is no
+// process, no C ABI and no interface to design.
 //
-//     nikaia --input examples/rust-signatures.nika --backend rust
-//     ./rust-signatures some/crate/src/lib.rs
+// **It is not part of `std`, and the directory is what says so.** A `.nika`
+// beside `lib.rs` is a module of `std` and `crates/nikaia/tests/contracts.rs`
+// requires `std.contracts` to carry every `pub` thing it declares; this one is
+// under `tools/` and must not be in that file. It lives in this crate at all
+// because this crate is where the release step already looks for `.nika`
+// sources ([ADR-002](../../../../docs/specification/adr/adr-002.md) D4,
+// [ADR-195](../../../../docs/specification/adr/adr-195.md) D2), and for no
+// other reason.
 //
-// This is the reading half of `nikaia describe`
-// ([ADR-195](../docs/specification/adr/adr-195.md) D3), written in the language
-// it is a compiler for. What it prints is one line per item, with the module
-// and `impl` path each one was found under.
+// **What it is not is *refused***: `use std::tools` lowers, and `rustc` is what
+// complains, about a file nobody wrote - which is
+// [Part III C.1](../../../../docs/specification/30-nikaia-tooling.md)'s own
+// class. `open-work.md` §1.7 carries it, and it is a defect this file found
+// rather than made: `use std::<anything>` has always been accepted.
 //
-// Why it is here beside the others. `json.nika` is a tree whose depth the
-// document decides; `config.nika` is a tree exactly two levels deep. This is
-// the first grammar over a language whose *text* is mostly not the thing being
-// parsed: a Rust file is item headers with bodies, strings, comments and
-// macros between them, and everything between the headers has to be crossed
-// without being understood. Three things follow, and none of the others shows
-// them.
+// ## What it reads, and how it differs from what it replaces
 //
-//   * **A skipper that knows what it is skipping.** `JUNK` below crosses a
-//     string, a character literal, a comment and a balanced brace group as
-//     single units. That is the whole of why `let s = "pub fn open(";` is not
-//     a function here, and why a private `mod` hides what is inside it - both
-//     of which the character scanner this replaces gets wrong.
+// `pub fn` (with `async`, `const`, `unsafe`, `extern "C"`), `pub struct`,
+// `pub enum`, `pub trait`, `pub mod`, `pub use` and `impl` headers, the type
+// text under them, and the module and `impl` path each item was found at.
+//
+// What it replaces is a hand-written character scanner that matched `pub fn` at
+// the start of a line and counted braces without knowing what a brace is.
+// Measured on one file, that scanner reports **four functions that do not
+// exist** - one inside a block comment, one on the second line of a string
+// literal, two inside a private `mod` - and puts a fifth at the crate root
+// rather than under its module. Three things here are why none of that
+// happens:
+//
+//   * **A skipper that knows what it is skipping.** `JUNK` crosses a string, a
+//     character literal, a comment and a balanced brace group as single units,
+//     so a private `mod`'s whole body is one skip.
 //   * **Visibility is a rule of the language and not of the line.** An
 //     inherent `impl` reports its `pub fn`s; an `impl Trait for Type` reports
-//     all of them, because a trait method is as public as its trait. One
-//     scanner cannot tell those apart; two rules can.
+//     all of them, because a trait method is as public as its trait. And a
+//     `pub use` is an item here, because a `pub fn` inside a private `mod` is
+//     reachable after all when one says so - a reader that did not look for
+//     one would refuse a call that is correct
+//     ([Part III C.4](../../../../docs/specification/30-nikaia-tooling.md)).
 //   * **The extent of a type, without a type grammar.** A parameter's type
 //     runs to the next top-level `,` or `)`, a field's to the next `,` or `}`,
 //     a result's to the next `{`, `;` or `where` - with every bracket, string
 //     and character literal inside it crossed as a unit. The text is what the
-//     ledger's translation step already reads, so the grammar replaces the
-//     scanner without touching the translator.
+//     ledger's translation step already reads, so this replaces the scanner
+//     without touching the translator.
 //
-// What it does not read, stated rather than guessed at - which is
-// [ADR-104](../docs/specification/adr/adr-104.md) D4's own rule, that an
+// ## What it does not read
+//
+// Stated rather than guessed at, which is
+// [ADR-104](../../../../docs/specification/adr/adr-104.md) D4's own rule - an
 // absence of a claim is never a claim:
 //
 //   * **an item a macro generates**, which is not in the text and which no
 //     parser reaches. That limit is
-//     [ADR-001](../docs/specification/adr/adr-001.md) D1's and not this
+//     [ADR-001](../../../../docs/specification/adr/adr-001.md) D1's and not this
 //     grammar's: it survives `syn` too, for the same reason rustdoc's JSON is
 //     out of reach.
 //   * **a raw string** (`r"…"`, `r#"…"#`) and a **nested block comment**, both
 //     of which are one token in Rust and two here;
-//   * **`pub use`**, so a name re-exported under another path is reported
-//     where it was written;
+//   * **what a `pub use` resolves to.** The item is reported with the text it
+//     was written with; splitting a path is string work rather than parsing
+//     work, and whoever needs the pieces takes them.
 //   * **a tuple struct's fields**, which are reported as none - and *none* and
-//     *nobody looked* are the same word here, which is the one place this is
-//     no better than the scanner.
-
-use std::fs
-use std::cli
+//     *nobody looked* are the same word here, which is the one place this is no
+//     better than the scanner.
 
 // A named part: a parameter, a field, an enum variant. `ty` is the text of the
 // type as it was written, which is what the translation step reads.
 @borrowed
 pub struct Part {
-    name: ref String,
-    ty: ref String,
+    pub name: ref String,
+    pub ty: ref String,
 }
 
 @borrowed
 pub struct Fun {
-    name: ref String,
+    pub name: ref String,
     // `async fn` - a plain `fn` is `sync` (ADR-104 D3).
-    pauses: bool,
-    parts: Vec[Part],
+    pub pauses: bool,
+    pub parts: Vec[Part],
     // The text after `->`, or empty where there is none. Empty is *no result
     // was written*, which in Rust is the unit type.
-    result: ref String,
+    pub result: ref String,
 }
 
 // A named type with parts: a `struct` or an `enum`. `what` says which, because
 // the two differ in what a part means and nothing else here cares.
 @borrowed
 pub struct Rec {
-    what: ref String,
-    name: ref String,
-    parts: Vec[Part],
+    pub what: ref String,
+    pub name: ref String,
+    pub parts: Vec[Part],
 }
 
 // A named scope holding items: `mod`, `trait`, `impl`, `unsafe impl`.
@@ -92,21 +114,31 @@ pub struct Rec {
 // claim about the *trait* - which is the one ADR-193 D4's flag is after.
 @borrowed
 pub struct Group {
-    what: ref String,
-    name: ref String,
-    via: ref String,
-    items: Vec[Item],
+    pub what: ref String,
+    pub name: ref String,
+    pub via: ref String,
+    pub items: Vec[Item],
 }
 
-enum Item {
+pub enum Item {
     Fun(Fun),
     Rec(Rec),
     Group(Group),
+    // A `pub use`, kept as the text between the keyword and the semicolon.
+    //
+    // **Not split here on purpose.** Which name a re-export makes reachable at
+    // which path is a question about `::`, and splitting a path is string work
+    // rather than parsing work - so the grammar says *this item is a
+    // re-export and here is what it said*, and whoever needs the pieces takes
+    // them. What matters is that the item is **seen**: a `pub fn` inside a
+    // private `mod` is reachable after all when a `pub use` says so, and a
+    // reader that did not look for one would refuse a call that is correct.
+    Export(ref String),
 }
 
 // What one position in a file turned out to be. A file is a run of these, and
 // the ones that are nothing are the text between the items.
-enum Found {
+pub enum Found {
     One(Item),
     Skip,
 }
@@ -151,6 +183,16 @@ grammar Rust {
           f:function -> { Item::Fun(f) }
         | r:record -> { Item::Rec(r) }
         | g:group -> { Item::Group(g) }
+        | e:export -> { Item::Export(e) }
+
+    // `pub use …;` and nothing else: a plain `use` brings a name into this
+    // file's scope and makes nothing reachable from outside it, and
+    // `pub(crate) use` is refused by `PUB` itself.
+    rule export -> ref String = PUB USE t:USE_TEXT ";" -> { t }
+
+    rule USE_TEXT -> ref String = s:text(USE_RUN) -> { s.trim() }
+    rule USE_RUN = USE_PIECE+ -> { }
+    rule USE_PIECE = not(";") (BRACES | LINE | BLOCK | ANY) -> { }
 
     // ---- functions -----------------------------------------------------
 
@@ -177,7 +219,7 @@ grammar Rust {
         | UNSAFE -> { false }
         | EXTERN abi -> { false }
 
-    rule abi = s:string -> { } | empty -> { }
+    rule abi = string -> { } | empty -> { }
 
     // A body, or the semicolon a trait's own declaration ends with.
     rule tail = BRACES -> { } | ";" -> { }
@@ -391,6 +433,7 @@ grammar Rust {
     rule FOR = "for" not(WORD) -> { }
     rule WHERE = "where" not(WORD) -> { }
     rule MUT = "mut" not(WORD) -> { }
+    rule USE = "use" not(WORD) -> { }
     rule SELF = "self" not(WORD) -> { }
 
     rule WORD = alpha1 -> { } | digit -> { } | "_" -> { }
@@ -407,88 +450,17 @@ grammar Rust {
 fn kept(found: Vec[Found]) -> Vec[Item] {
     let mut all = Vec()
     for f in found.drain() {
+        // Both variants by name rather than a catch-all: `Found` has exactly
+        // two, so naming them is what an exhaustive `match` is for - and this
+        // file is lowered into a crate that runs `clippy`, which reads a
+        // single pattern beside an `else` as an `if let` written the long way.
+        // A complaint about the generated file is
+        // [Part III C.1](../../../../docs/specification/30-nikaia-tooling.md)'s
+        // class whoever makes it.
         match f {
             Found::One(item) => { all.push(item) }
-            else => { }
+            Found::Skip => { }
         }
     }
     return all
-}
-
-// One line per item, under the path it was found at. The path is the thing the
-// scanner this replaces could not produce: it read a `pub` item inside a `mod`
-// block as the crate's own, because the module a caller writes is something
-// only a parser knows.
-fn show(items: Vec[Item], path: String) {
-    for item in items.drain() {
-        match item {
-            Item::Fun(f) => {
-                let mut args = String()
-                let mut first = true
-                for p in f.parts.drain() {
-                    if !first { args = f"{args}, " }
-                    first = false
-                    // The receiver is written as it stood - `&mut self` is a
-                    // parameter whose name and type are the same word.
-                    if p.name == "self" { args = f"{args}{p.ty}" } else { args = f"{args}{p.name}: {p.ty}" }
-                }
-                let mut line = f"{path}{f.name}({args})"
-                if f.result != "" { line = f"{line} -> {f.result}" }
-                // `pauses` and not Rust's own word for it: what the ledger
-                // records is whether a call may suspend
-                // ([ADR-104](../docs/specification/adr/adr-104.md) D3), and
-                // this language has no keyword for that at all
-                // ([ADR-038](../docs/specification/adr/adr-038.md) D3).
-                if f.pauses { line = f"{line} pauses" }
-                println(f"{line}")
-            }
-
-            Item::Rec(r) => {
-                let mut parts = String()
-                let mut first = true
-                for p in r.parts.drain() {
-                    if !first { parts = f"{parts}, " }
-                    first = false
-                    // A variant carries its payload; a field carries a type.
-                    // `No(String)` and `key: ref String` are the same pair
-                    // written the two ways the language writes them.
-                    if p.ty == "" {
-                        parts = f"{parts}{p.name}"
-                    } else {
-                        if r.what == "enum" { parts = f"{parts}{p.name}{p.ty}" } else { parts = f"{parts}{p.name}: {p.ty}" }
-                    }
-                }
-                if first {
-                    println(f"{r.what} {path}{r.name}")
-                } else {
-                    println(f"{r.what} {path}{r.name} {{ {parts} }}")
-                }
-            }
-
-            Item::Group(g) => {
-                if g.via == "" {
-                    println(f"{g.what} {path}{g.name}")
-                } else {
-                    println(f"{g.what} {g.via} for {path}{g.name}")
-                }
-                show(g.items, f"{path}{g.name}::")
-            }
-        }
-    }
-}
-
-fn main() throws {
-    let path = cli::args().nth(1) ?? "lib.rs"
-
-    let text = fs::read_to_string(ref path) catch {
-        eprintln(f"cannot read {path}: {error}")
-        return
-    }
-
-    let items = Rust::file(text) catch {
-        eprintln(f"{path}: {error}")
-        return
-    }
-
-    show(items, String())
 }

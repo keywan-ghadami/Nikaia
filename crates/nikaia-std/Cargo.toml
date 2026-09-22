@@ -11,6 +11,11 @@ edition = "2021"
 [features]
 default = ["reentrancy-check"]
 reentrancy-check = []
+# The `grammar!` expansion in `src/rust.rs` checks this feature, so it has to
+# exist here as it does on the compiler - a `cfg` naming a feature no manifest
+# declares is a warning about a generated file, which Part III C.1 makes a
+# defect.
+trace = ["winnow-grammar/trace"]
 
 [dependencies]
 # `fs::map` maps the file (Part III, 17.1); this is the mapping.
@@ -20,6 +25,11 @@ memmap2 = "0.9"
 # so that the tests can find the parser's rlib by reading this crate's
 # metadata rather than guessing among the copies in the deps directory.
 winnow-grammar = { workspace = true }
+# Named directly because a `grammar` **in this crate** expands to code that
+# writes `winnow::…` (`src/tools/rust.nika`, ADR-196 D1). A generated program declares
+# it for the same reason; until `std` held a grammar of its own, this crate
+# reached it only through `winnow-grammar` and never by name.
+winnow = { workspace = true }
 # The UTF-8 check `fs::map` owes its `&str` views is chunked across this pool.
 # The same pool the parallel piece driver uses, so a program has one - and the
 # pool ADR-038 D4 starts for user code at `user_parallelism = yes`.

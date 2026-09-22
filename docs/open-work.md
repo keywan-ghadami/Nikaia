@@ -77,13 +77,57 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**No entry is open.** §1.1 closed at 0.0.137, §1.2 at 0.0.132, §1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay where they were, because this file is cited by number.
+**One entry is open**, §1.7. §1.1 closed at 0.0.137, §1.2 at 0.0.132, §1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay where they were, because this file is cited by number.
 
-**What that means is that the list is empty, not that the compiler is right.**
-Every entry this section has ever held was found by *running* something — the
-specification's own programs, the corpus at both settings, a two-file project —
-and never by reading the code. So an empty §1 is a statement about what has been
-run, and the way to refill it is the method above.
+**And the entry below was found the way the method above says**, by running
+something: `use std::rust` in a program, written to check a sentence this file
+was about to claim.
+
+### 1.7. `use std::<anything>` is accepted, and `rustc` is the one that says otherwise
+
+[Part III C.1](specification/30-nikaia-tooling.md): `rustc` must never speak
+about the generated file. It does here.
+
+```text
+use std::nosuchthing
+
+fn main() {
+    let x = nosuchthing::go("a")
+    println(f"{x}")
+}
+```
+
+lowers without a complaint — the `use` becomes a comment in the generated Rust
+and the call is emitted verbatim — and what the programmer then sees is
+
+```text
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `nosuchthing`
+  --> src/main.rs:10:17
+```
+
+about a file they did not write, with a `help` telling them to `cargo add` a
+crate that does not exist. The same happens for a module `std` really has in
+its crate but does not offer a program: `use std::tools` names
+`crates/nikaia-std/src/tools/`, which holds
+[ADR-196](specification/adr/adr-196.md)'s parser and is deliberately **not**
+part of `std`, and the refusal a program deserves for writing it comes from the
+wrong compiler.
+
+*Why it is a defect and not a gap:* the checker already has the list it needs.
+What a program may write after `use std::` is exactly the modules
+`std.contracts` declares, which is the same file every other `std` question is
+answered from — so the answer is a lookup, and what is missing is the refusal
+and its `NK` code.
+
+*Not found before now* because every module in `nikaia-std` was in the ledger
+until this one, so the only way to reach it was to misspell a name — and
+nothing in the corpus does.
+
+*What that leaves:* every other entry this section has ever held was found by
+*running* something — the specification's own programs, the corpus at both
+settings, a two-file project — and never by reading the code. So a short §1 is
+a statement about what has been run, and the way to lengthen it is the method
+above.
 
 ## 2. Decided and unbuilt
 
@@ -1320,23 +1364,39 @@ next:*
    separate command that nothing bootstraps through, shipped the way
    [ADR-002](specification/adr/adr-002.md) D4 already ships `std`'s Nikaia half
    — the `.nika` kept beside the `.rs`, pre-lowered at release. It has three
-   parts of its own, and the first one is **written**:
+   parts of its own, and the first two are **built** and **half built**:
 
-   1. **the grammar**, which is `examples/rust-signatures.nika` — it reads
-      `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub mod` and `impl`
-      headers with the module path each was found under, and is compiled and
-      run at both settings by `crates/nikaia/tests/examples.rs`. Measured
+   1. **the grammar**, which is **built** — `crates/nikaia-std/src/tools/rust.nika`.
+      It reads
+      `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub mod`, `pub use`
+      and `impl` headers with the module path each was found under. Measured
       against the scanner on one file: the scanner reports **four functions
       that do not exist** — one inside a block comment, one on the second line
       of a string literal, two inside a private `mod` — and puts a fifth at the
       crate root instead of under its module. The grammar reports none of them.
       It also writes `unsafe impl Send for …`, which is step 4's own flag.
-   2. **the wiring** — the `.nika` in the compiler's tree, the release step that
-      lowers it, and `nikaia-std` promoted from a dev-dependency to a real one.
-      [ADR-196](specification/adr/adr-196.md) D1 and D3: the lowered `.rs` joins
-      the compiler as an **ordinary Cargo module** and the call across is a
-      plain Rust call — not a process and not the C ABI. Then the scanner comes
-      out and `translate` stays, because the grammar hands it the same text.
+   2. **the wiring**, which is **half built**. The grammar is
+      `crates/nikaia-std/src/tools/rust.nika`, lowered by `nikaia lower-std` to
+      the `rust.rs` beside it, `include!`d as `nikaia_std::tools::rust`, and driven from
+      Rust by `crates/nikaia-std/tests/rust_signatures.rs` —
+      [ADR-196](specification/adr/adr-196.md) D1's route, running. **It is not
+      part of `std`**, and the **directory** is what says so: a `.nika` beside
+      `lib.rs` is a module of `std` and `crates/nikaia/tests/contracts.rs`
+      requires `std.contracts` to carry every `pub` thing it declares, so the
+      toolchain's own live under `src/tools` and
+      `a_toolchain_module_is_not_part_of_std` holds the line. It is not
+      *refused* either, and §1.7 is that — a defect this move found rather than
+      made.
+      What is left is the compiler's own edge —
+      [ADR-196](specification/adr/adr-196.md) D3's promotion of `nikaia-std`
+      from a dev-dependency to a real one — and the scanner coming out of
+      `describe.rs`, with `translate` staying, because the grammar hands it the
+      same text. **That last step is where [Part III C.4](specification/30-nikaia-tooling.md)
+      has to be argued rather than assumed**: keying an entry by the path an
+      item is *reachable* at refuses `crate::seen` for a function that lives at
+      `crate::shown::seen`, which is right, and it must not refuse one a
+      `pub use` brings out of a private `mod`, which is why the grammar reads
+      `pub use` at all.
    3. **`cargo metadata`, and the rest of the command following the parser
       across.** `fs` gains a **directory walk** and `std` a **subprocess**
       ([ADR-195](specification/adr/adr-195.md) D4), both of which are the kind

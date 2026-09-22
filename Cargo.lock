@@ -416,6 +416,7 @@ dependencies = [
  "memmap2",
  "polling",
  "rayon",
+ "winnow 0.7.15",
  "winnow-grammar",
 ]
 

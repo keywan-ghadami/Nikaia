@@ -164,40 +164,6 @@ longest string: 3 characters",
         wrote: None,
     },
     Example {
-        file: "rust-signatures.nika",
-        input: Some(Input {
-            name: "hazards.rs",
-            contents: "//! A crate whose text contains items that are not items.\n//!\n//! pub fn ghost(a: i32) -> i32\n\n/* A block comment that says\npub fn spectre(a: i32) -> i32\nand means nothing by it. */\n\npub trait Describe {\n    fn describe(&self) -> String;\n}\n\npub fn real(a: i32, b: &str) -> i32 {\n    let template = \"fn main() {\npub fn phantom(a: i32) -> i32 { a }\n}\";\n    let brace = '}';\n    let _ = (template, brace);\n    a + b.len() as i32\n}\n\nmod private {\n    pub fn hidden(x: i32) -> i32 { x }\n}\n\npub mod shown {\n    pub fn seen(x: i32) -> i32 { x }\n    mod deeper {\n        pub fn buried() {}\n    }\n}\n\npub(crate) fn not_public(_x: i32) {}\n\npub struct Holder<'a, T: Clone> where T: Send {\n    pub items: Vec<(T, &'a str)>,\n}\n\npub enum Answer {\n    Yes,\n    No(String),\n}\n\npub async fn later(_x: Box<dyn Fn(i32) -> i32 + Send + 'static>) -> Result<(), String> {\n    Ok(())\n}\n\nimpl<'a, T: Clone + Send> Holder<'a, T> {\n    pub fn first(&self) -> Option<&(T, &'a str)> { self.items.first() }\n    fn secret(&mut self) {}\n}\n\nstruct Smuggled<T>(T);\n\nunsafe impl<T> Send for Smuggled<T> {}\n",
-        }),
-        stdin: None,
-        args: &["{input}"],
-        // **Four of these are the scanner's mistakes, and they are why the
-        // fixture is shaped this way** (ADR-195 D3). Run
-        // `nikaia describe` over the same text and it reports `spectre`
-        // (a block comment), `phantom` (the second line of a string literal),
-        // `hidden` and `buried` (both inside a private `mod`) as callable
-        // functions of the crate - and it reports `seen` at the crate root
-        // rather than under `shown`. None of those is here.
-        //
-        // What is here that the scanner has no way to produce: the module
-        // path, the receiver, a trait method that is public because its trait
-        // is, and `unsafe impl Send for Smuggled<T>` - which is
-        // [ADR-193](../../../docs/specification/adr/adr-193.md) D4's flag.
-        expected: "\
-trait Describe
-Describe::describe(&self) -> String
-real(a: i32, b: &str) -> i32
-mod shown
-shown::seen(x: i32) -> i32
-struct Holder { items: Vec<(T, &'a str)> }
-enum Answer { Yes, No(String) }
-later(_x: Box<dyn Fn(i32) -> i32 + Send + 'static>) -> Result<(), String> pauses
-impl Holder<'a, T>
-Holder<'a, T>::first(&self) -> Option<&(T, &'a str)>
-unsafe impl Send for Smuggled<T>",
-        wrote: None,
-    },
-    Example {
         file: "n-body.nika",
         input: None,
         stdin: None,
