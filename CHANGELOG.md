@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.148] — 2026-09-22
+
+**Step 2 said the right thing about two of three limits and named them in the
+wrong order** — a correction to 0.0.147, and a better reason for the one that
+stays. No code changes.
+
+### The ordinals were swapped
+
+- **The describer's own header lists three limits in this order**: an item a macro generates is not found; a signature it cannot translate is written `?`; a `pub` item inside a `mod` block is read as the crate's own.
+- **0.0.147 said** *it closes the second — a `pub` item inside a `mod` block* (that is the **third**) *and narrows the third* (that is the **second**). The judgement was right and the numbering was not, which in an entry that cites them by position is a defect rather than a typo.
+
+### And the macro limit has a better reason than `syn`
+
+- **It is not a parser's fault at all.** Expanding a macro needs `rustc -Zunpretty=expanded`, and measured on this toolchain: *the option `Z` is only accepted on the nightly compiler*. So macro-generated items sit behind **the same [ADR-001](docs/specification/adr/adr-001.md) D1 wall that keeps rustdoc-JSON out** — one decision, two consequences, and no choice of parser moves either.
+- **And what it hides is narrower than it sounds for this tool**: a `derive` generates `impl`s and `#[tokio::main]` rewrites a body, neither of which is the `pub fn` signature a description is made of. A declarative macro that generates API surface is the case that bites.
+- **The other two are stated as what they are**: the signature-translation limit is **narrowed** — a parser reads the generics, `where` clauses and paths a line scraper gives up on, which is also what step 4 needs in order to see a bound at all — and the `mod`-path limit is **closed outright**, for the reason the header already gives: *the module path a caller writes is a thing only a real parser knows*.
+
 ## [0.0.147] — 2026-09-22
 
 **Option D gets its pipeline, checked against the repository's own worked

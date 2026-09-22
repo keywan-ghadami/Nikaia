@@ -120,11 +120,24 @@ on_one_worker<F: FnOnce() -> String + Send + 'static> → tokio::spawn(…)
 2. **A real parser (`syn`) instead of the scraper.** Yes, and it is the step the
    rest rests on. [ADR-104](specification/adr/adr-104.md) D4 said *the crate's
    sources are parsed* without naming a parser, so nothing is being
-   contradicted. It closes the second of the scraper's three named limits
-   outright — *a `pub` item inside a `mod` block is read as the crate's own* —
-   and narrows the third. **It does not close the first**: `syn` does not expand
-   macros either, so *an item a macro generates is not in the text* stays true
-   and has to keep being said.
+   contradicted. Of the scraper's **three** named limits, in its own order:
+
+   * *an item a macro generates is not in the text* — **stays, and not because
+     of `syn`.** Expanding a macro needs `rustc -Zunpretty=expanded`, which is
+     nightly: measured on this toolchain, *the option `Z` is only accepted on
+     the nightly compiler*. So macro-generated items are behind **the same
+     [ADR-001](specification/adr/adr-001.md) D1 wall that keeps rustdoc-JSON
+     out** — one decision, two consequences, and no parser choice moves either.
+     What it hides is narrower than it sounds for *this* tool: a `derive`
+     generates `impl`s and `#[tokio::main]` rewrites a body, neither of which is
+     the `pub fn` signature a description is made of. A declarative macro that
+     generates API surface is the case that bites.
+   * *a signature this cannot translate is written `?`* — **narrowed.** A parser
+     reads generics, `where` clauses and paths that a line scraper gives up on,
+     which is also what step 4 needs in order to see a bound at all.
+   * *a `pub` item inside a `mod` block is read as the crate's own* — **closed
+     outright**, and the header already says why: *the module path a caller
+     writes is a thing only a real parser knows*.
 3. **An intra-crate call graph.** Yes — and for a reason sharper than *more
    reach*. In **safe** Rust the signature scan needs no call graph, because the
    bound is not a heuristic there at all: the shim's own doc comment says why —
