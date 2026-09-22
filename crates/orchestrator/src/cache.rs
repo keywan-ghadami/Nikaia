@@ -71,6 +71,18 @@ pub struct Choices {
     /// (D6). Changing a line has to invalidate, or a build that stops reading
     /// a file keeps the old answer.
     pub reads: String,
+    /// **Every description this build reads at a foreign boundary**, as one
+    /// digest, empty where the project describes nothing
+    /// ([ADR-104](../../../docs/specification/adr/adr-104.md) D5).
+    ///
+    /// Here for `reads`' reason and with `reads`' polarity: the file binds the
+    /// whole build rather than one unit, and it is **hand-edited on purpose** —
+    /// D5 says the draft is committed and reviewed like code, and a reviewer's
+    /// `crosses = false` has to reach the next build. Without this it did not,
+    /// and it failed **open**: a description that *dropped* a claim was seen,
+    /// because a refused build records nothing, while one that *added* a claim
+    /// hit an entry recorded before the word was there.
+    pub describes: String,
 }
 
 impl Choices {
@@ -79,6 +91,7 @@ impl Choices {
             build: build.into(),
             backend: backend.into(),
             reads: String::new(),
+            describes: String::new(),
         }
     }
 
@@ -86,6 +99,14 @@ impl Choices {
     pub fn reading(self, digest: impl Into<String>) -> Self {
         Self {
             reads: digest.into(),
+            ..self
+        }
+    }
+
+    /// The same, with the descriptions this build reads at its boundaries.
+    pub fn describing(self, digest: impl Into<String>) -> Self {
+        Self {
+            describes: digest.into(),
             ..self
         }
     }
@@ -229,6 +250,12 @@ impl Key {
         // empty string is a build with no list, which is a different build from
         // one with an empty list: the first cannot read at all.
         b.field("reads", &choices.reads);
+        // **And what the boundary says**
+        // ([ADR-104](../../../docs/specification/adr/adr-104.md) D5): the
+        // descriptions are files this build reads and a person edits, so a
+        // change to one has to invalidate — for the reason the line above
+        // exists, one boundary over.
+        b.field("describes", &choices.describes);
         b.field("unit", unit);
         b.field("source", &record.source);
         // `BTreeMap` iterates in key order, so the same assets hash the same

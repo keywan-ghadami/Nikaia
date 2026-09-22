@@ -20,6 +20,12 @@
 // **This program must not build.** It is kept because what it says when it
 // fails is the finding: who refuses it, in whose vocabulary, and pointing at
 // which file.
+//
+// All three answers changed at 0.0.161. It used to be `rustc`'s `Send` bound,
+// translated onto the line below by ADR-005 D7 - the place right and the words
+// Rust's. It is `NK2502` now, in this compiler's vocabulary, because the
+// description says two things no signature could: `crosses = false` on
+// `LocalHandle` and `threads = true` on the function (ADR-193 D1, D2).
 fn main() {
     let handle = hyper_shim::local_handle("not Send".to_string())
     let crossed = hyper_shim::across_a_thread(handle)

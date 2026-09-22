@@ -226,10 +226,11 @@ struct Sources {
 /// D1 hands versions to Cargo and never resolves one itself, and a describer
 /// that guessed at that cache's shape would be resolving one.
 ///
-/// The path is **relative to the generated manifest**, which is where the
-/// manifest's own comment says it is: a build writes `Cargo.toml` to
-/// `target/nikaia/build/`, and `type = "rust"` is a passthrough, so the value
-/// reaches Cargo verbatim and means what it means there.
+/// The path is **relative to `nikaia.toml`**
+/// ([ADR-197](../../docs/specification/adr/adr-197.md) D1), as a Nikaia
+/// package's is and as anybody would guess. It used to be relative to the
+/// generated manifest, which put this reader and Cargo in two different
+/// directories for one crate's sources — and only this one had a test.
 fn crate_sources(root: &Path, value: &toml::Value, crate_word: &str, key: &str) -> Result<Sources> {
     let version = value
         .get("version")
@@ -244,17 +245,16 @@ fn crate_sources(root: &Path, value: &toml::Value, crate_word: &str, key: &str) 
              reviewer to read it"
         );
     };
-    // **Resolved lexically and not by the filesystem**: `target/nikaia/build`
-    // is written by a build, and a crate may perfectly well be described before
-    // the project has ever been built - which is the order `NK2504` puts a
-    // reader in. `canonicalize` on a directory that is not there yet fails, and
-    // what it would have answered is a `..` this can walk off itself.
-    let crate_root = without_dots(&root.join("target/nikaia/build").join(declared));
+    // **Resolved lexically and not by the filesystem**: a crate may perfectly
+    // well be described before the project has ever been built - which is the
+    // order `NK2504` puts a reader in. `canonicalize` on a directory that is
+    // not there yet fails, and what it would have answered is a `..` this can
+    // walk off itself.
+    let crate_root = without_dots(&root.join(declared));
     if !crate_root.is_dir() {
         bail!(
-            "the sources of `{key}` are not at {} - `path` in the manifest is relative to \
-             the **generated** manifest, which a build writes to `target/nikaia/build/` \
-             (ADR-002 D1's passthrough)",
+            "the sources of `{key}` are not at {} - `path` in `nikaia.toml` is relative to \
+             `nikaia.toml` (ADR-197 D1)",
             crate_root.display()
         );
     }
@@ -276,6 +276,51 @@ fn crate_sources(root: &Path, value: &toml::Value, crate_word: &str, key: &str) 
     Ok(Sources { version, files })
 }
 
+/// **Every description this build reads, as one digest**, for the cache key
+/// ([ADR-104](../../docs/specification/adr/adr-104.md) D5,
+/// [ADR-021](../../docs/specification/adr/adr-021.md) D7).
+///
+/// Empty where the project describes nothing, which is most of them. The files
+/// are read in sorted order and their *paths* hash beside their contents, so a
+/// description that is deleted misses the key as surely as one that is edited.
+///
+/// **Why this exists at all**: the file is hand-edited on purpose — D5 says the
+/// draft is committed and reviewed like code — and until this it did not reach
+/// the cache key, so a reviewer's edit took effect only after the build
+/// directory was thrown away. It failed **open**: a description that *dropped*
+/// a claim was seen, because a refused build records nothing, while one that
+/// *added* a claim hit an entry recorded before the word was there.
+pub fn descriptions_digest(root: &Path) -> String {
+    let directory = root.join(crate::project::CONTRACTS);
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        return String::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("contracts"))
+        .collect();
+    if files.is_empty() {
+        return String::new();
+    }
+    // ADR-005 D8: a directory listing is never consumed in filesystem order
+    // where the output depends on it, and this output is a cache key.
+    files.sort();
+    let mut all = String::new();
+    for path in files {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        all.push_str(&name);
+        all.push('\0');
+        all.push_str(&orchestrator::cache::sha256_hex(text.as_bytes()));
+        all.push('\0');
+    }
+    orchestrator::cache::sha256_hex(all.as_bytes())
+}
+
 /// **Where a described crate's sources are**, for a reader other than the
 /// describer: the hash rule compares what a description recorded against what
 /// is there now, and *where is there* is this one question.
@@ -288,7 +333,7 @@ pub fn crate_root(root: &Path, crate_word: &str) -> Option<PathBuf> {
     let manifest = crate::manifest::Manifest::read(&root.join("nikaia.toml")).ok()?;
     let (_, value) = rust_dependency(&manifest, crate_word).ok()?;
     let declared = value.get("path").and_then(toml::Value::as_str)?;
-    let at = without_dots(&root.join("target/nikaia/build").join(declared));
+    let at = without_dots(&root.join(declared));
     at.is_dir().then_some(at)
 }
 

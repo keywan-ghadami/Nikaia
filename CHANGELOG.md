@@ -4,6 +4,33 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.161] — 2026-09-22
+
+**A `path` is relative to the file it is written in**
+([ADR-197](docs/specification/adr/adr-197.md)) — and with the three experiments
+building again, `threads` gets measured, and **both** crossings are refused by
+this compiler.
+
+### The defect, and the record it needed
+
+- **`open-work.md` §1.8, closed in the package that opened it.** `nikaia.toml` named a Rust crate `path = "../../../../shim"` — four `..`, because [ADR-002](docs/specification/adr/adr-002.md) D1 said the value reaches Cargo verbatim and the generated manifest used to sit at `target/nikaia/build/Cargo.toml`. [ADR-053](docs/specification/adr/adr-053.md) D1 gave every package a member directory of its own, so the manifest Cargo resolves against is one level deeper and every one of those `..` is one short. **All three projects under `examples/foreign-runtime/` have been unbuildable since**, and nothing said so: the tests that build them fetch `hyper` from crates.io and are `#[ignore]`d, and CI does not run ignored tests.
+- **D1: a `path` is relative to `nikaia.toml`**, for both arms of `[dependencies]` — what a reader would guess, and what a Nikaia package's `path` already did. **D2** narrows the passthrough by exactly one key: a relative `path` is resolved and written **absolute** into the generated manifest, which that manifest already does for `nikaia-std`. The alternative was counted out and refused — `../../../../../shim` is a number a person derives from a build layout that changed once already without anybody noticing.
+- **And the compiler's own reader agreed with Cargo for the first time.** `describe::crate_sources` resolved against `target/nikaia/build`, so `nikaia describe` and `cargo build` looked in two different places for one crate's sources — and only the first had a test, because `describing.rs` never runs Cargo.
+
+### A second defect, found by getting two answers to one change
+
+- **A change to `contracts/<crate>.contracts` did not reach the build cache's key.** A hand edit — which [ADR-104](docs/specification/adr/adr-104.md) D5 *expects*, because the draft is committed and reviewed like code — took effect only after the build directory was thrown away.
+- **And it failed open.** A description that *dropped* a claim was seen, because a refused build records nothing; one that *added* a claim hit an entry recorded before the word was there. So the direction that was ignored was the one that adds a restriction.
+- `Choices::describes` is the dimension that closes it, beside `Choices::reads` and for its reason: the file binds the whole build rather than one unit ([ADR-021](docs/specification/adr/adr-021.md) D7's *every dimension in one place*).
+
+### What that let us measure
+
+- **All three ledgers under `examples/foreign-runtime/` say `threads = true` where it is true.** `across_a_thread` and `across_a_thread_unchecked` build a `tokio` runtime and spawn; `serve_once` builds a multi-threaded one. Hand-written, because nothing a signature can show entails it either way ([ADR-193](docs/specification/adr/adr-193.md) D1).
+- **`crossing/` is refused by `NK2502`**, in this compiler's vocabulary, on the author's line. It used to be `rustc`'s `Send` bound with the place fixed and the **text** still Rust's, which [ADR-005](docs/specification/adr/adr-005.md) D7 carried as its open half. For this program it is not open any more.
+- **`smuggled/` is refused too, and [`foreign-runtime.md`](docs/foreign-runtime.md) §3.5 did not expect that.** That section says a structural `Send` check *would not have caught this one either* — and the sentence is still true, because the check that catches it is not the one it is about. A structural check reads what the language below says about a type; this reads what a **person wrote down** about it: `crosses = false`, because `LocalHandle` holds an `Rc`. An `unsafe impl<T> Send for Smuggled<T>` cannot change that line, because the line never asked Rust.
+- **None of it is soundness**, which [ADR-193](docs/specification/adr/adr-193.md) D3 says out loud. A description claiming `crosses = true` about the same type gets exactly as far as it did before. What moved is *who* has to be honest — and a `.contracts` file is committed and reviewed like code.
+- **All three `#[ignore]`d experiment tests pass**, two of them for the first time since they stopped building. `docs/foreign-runtime.md` §8 is the write-up, added rather than edited in.
+
 ## [0.0.160] — 2026-09-22
 
 **`threads` is a column** — [ADR-193](docs/specification/adr/adr-193.md) D1 and

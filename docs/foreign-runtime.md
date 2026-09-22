@@ -559,3 +559,84 @@ counter is the program that wants to. [ADR-037](specification/adr/adr-037.md) D3
 already names the way out and leaves it open ("whether the *choice between `Rc`
 and `Arc`* could be made per value rather than per build"). That is now the
 question standing directly in front of `Shared`, and it was not on §6's list.
+
+---
+
+## 8. Second postscript — the frontend refuses both crossings now, and `unsafe impl Send` does not help
+
+**Date:** September 22, 2026. Added rather than edited in, for §7's reason: what
+is above is what was measured, and this is what changed.
+
+[ADR-193](specification/adr/adr-193.md) D1 gave a description a `threads`
+column — three values, hand-written, the absence meaning *nobody said* — and D2
+made `NK2502` ask a **described** call where the word says `true`. Before that,
+the refusal asked its question only of a call *nothing* describes, which is
+[ADR-038](specification/adr/adr-038.md) D7's own wording, so a crate that
+answered every other question honestly turned the check off by being described.
+
+`hyper_shim::across_a_thread` and `across_a_thread_unchecked` both build a
+`tokio` runtime and spawn, and `serve_once` builds a multi-threaded one. All
+three now say `threads = true` in the three ledgers under this directory, which
+is what a reviewer reading the crate would write.
+
+**§3.3's question — what the refusal looks like when there is something to
+refuse — is answered for `crossing/`:**
+
+```text
+error[NK2502]: `handle` may not cross a thread, and `hyper_shim::across_a_thread` may put it on one
+  --> examples/foreign-runtime/crossing/src/main.nika:25:5
+  25 |     let crossed = hyper_shim::across_a_thread(handle)
+           ^
+     = `hyper_shim::across_a_thread` is described as starting a thread of its own (`threads = true`), so what it is given may be looked at from one (Part III, 15.2)
+     = `hyper_shim::LocalHandle` is written down as a value that may not go to another thread, so this compiler does not send it to one - at either setting of `user_parallelism`
+     help: keep it where it was made and hand the call what it needs from it instead
+```
+
+Nikaia's code, Nikaia's vocabulary, the author's line. §7's item 2 recorded that
+the **text** was still Rust's; for this program it is not any more.
+
+**And `smuggled/` is refused too, which §3.5 did not expect.**
+
+That section says *a structural `Send` check in the frontend would not have
+caught this one either: the value it would check is `Send`-by-declaration at the
+point Nikaia can see it*. **That sentence is still true, and the check that
+catches it is not the one it is about.** A structural check reads what the
+language below says about a type; this one reads what a **person wrote down**
+about it — `crosses = false` on `hyper_shim::LocalHandle`, because the type
+holds an `Rc`. An `unsafe impl Send` cannot change that line, because the line
+never asked Rust.
+
+So the experiment's own finding moves, and the new one is sharper than the old:
+
+* **D7's first rule is enforceable exactly as far as the foreign crate is
+  honest** — unchanged, and now with a second axis. Honesty about the *type*
+  (`crosses`) and honesty about the *call* (`threads`) are two claims a person
+  makes, and either one alone is enough here: the program is refused because the
+  type says it may not cross and the function says it may thread.
+* **What `unsafe impl Send` defeats is `rustc`**, not a description. A crate
+  that lies in `unsafe` Rust still has to lie in its `.contracts` file to get
+  past this, and that file is committed and reviewed like code
+  ([ADR-104](specification/adr/adr-104.md) D5) — which is a different thing to
+  ask of an author than a bound the compiler infers.
+* **What is *not* claimed**: none of this is soundness. A description that says
+  `crosses = true` about a type holding an `Rc` gets exactly as far as it did
+  before. The column moves who has to be honest, and says so out loud
+  ([ADR-193](specification/adr/adr-193.md) D3).
+
+**And §2.2's sentence about the path is superseded**, which is worth saying
+because it is the reason none of this could be measured until now. That section
+records `{ path = "../../../../shim" }` as *relative to the generated
+`Cargo.toml`*, and it was, until [ADR-053](specification/adr/adr-053.md) D1 gave
+every package a member directory of its own and left every one of those `..`
+one short. All three projects here were unbuildable from that day until
+[ADR-197](specification/adr/adr-197.md), and nothing said so: the tests that
+build them fetch `hyper` from crates.io and are `#[ignore]`d, and CI does not
+run ignored tests. A `path` is relative to `nikaia.toml` now, so the three
+manifests say `../shim`.
+
+**A second defect, and it was the reason the result took two tries.** A change to `contracts/<crate>.contracts` did not reach the build
+cache's key, so a hand edit — which D5 *expects* — took effect only after the
+build directory was thrown away. It failed **open**: dropping a claim was seen,
+because a refused build records nothing, while adding one hit an entry recorded
+before the word was there. `Choices::describes` is the dimension that closes it
+([ADR-021](specification/adr/adr-021.md) D7's *every dimension in one place*).

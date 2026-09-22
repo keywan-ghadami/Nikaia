@@ -9,7 +9,16 @@
 // to code nothing describes, so a Nikaia value cannot be smuggled this way:
 // what is smuggled here came from the other side of the boundary.
 //
-// Nikaia contributes nothing to either outcome. That is the measurement.
+// **And this program is refused now**, which it was not when the comment above
+// was written. Not by a `Send` bound - `unsafe impl Send` is exactly what
+// defeats one - but by two things a person wrote down in the description
+// (ADR-193 D1, D2): `crosses = false` on `LocalHandle`, because the type holds
+// an `Rc`, and `threads = true` on the function, because it spawns. The lie is
+// told in `unsafe` Rust and the line it would have to change is in a committed
+// `.contracts` file.
+//
+// That is not soundness and the record says so (ADR-193 D3). What moved is who
+// has to be honest. `docs/foreign-runtime.md` §8 is the measurement.
 fn main() {
     let handle = hyper_shim::local_handle("not Send".to_string())
     let crossed = hyper_shim::across_a_thread_unchecked(handle)

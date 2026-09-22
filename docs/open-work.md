@@ -77,12 +77,15 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Two entries are open**, §1.7 and §1.8. §1.1 closed at 0.0.137, §1.2 at 0.0.132, §1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay where they were, because this file is cited by number.
+**One entry is open**, §1.7. §1.8 closed at 0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132, §1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay where they were, because this file is cited by number.
 
 **And both were found the way the method above says**, by running something:
 §1.7 by writing `use std::rust` in a program to check a sentence this file was
 about to claim, §1.8 by building an experiment to see what a new column changed
-about it.
+about it — and a **third**, which was fixed in the same package and never got a
+number, by trying the same change twice and getting two answers: a hand edit to
+a `contracts/<crate>.contracts` did not reach the build cache's key, and failed
+**open** while it did not.
 
 ### 1.7. `use std::<anything>` is accepted, and `rustc` is the one that says otherwise
 
@@ -123,47 +126,6 @@ and its `NK` code.
 *Not found before now* because every module in `nikaia-std` was in the ledger
 until this one, so the only way to reach it was to misspell a name — and
 nothing in the corpus does.
-
-### 1.8. A `path` dependency is resolved against a directory the generated manifest is not in
-
-*Found by trying to build `examples/foreign-runtime/crossing`, to see what
-0.0.160's `threads` column changes about it.* It does not build, and has not
-since the generated layout grew a directory:
-
-```text
-error: failed to load manifest for workspace member `…/crossing/target/nikaia/build/foreign-runtime-crossing`
-
-Caused by:
-  failed to read `…/crossing/shim/Cargo.toml`
-```
-
-The workspace manifest is at `target/nikaia/build/Cargo.toml` and the
-**member's** is one deeper, at `target/nikaia/build/<package>/Cargo.toml`
-([ADR-053](specification/adr/adr-053.md) D1's *one member per Nikaia package*).
-Cargo resolves a `path` against the manifest it is written in, so the member's,
-and `hyper-shim = { type = "rust", path = "../../../../shim" }` lands one
-directory short. Three manifests in `examples/foreign-runtime/` say that, and so
-does the comment in each of them.
-
-**And the compiler's own reader disagrees with Cargo in the same way.**
-`describe::crate_sources` resolves the value against `target/nikaia/build`, not
-against the member directory — so `nikaia describe` and `cargo build` look in
-two different places for one crate's sources, and only the first is exercised by
-a test (`crates/nikaia/tests/describing.rs` never runs Cargo).
-
-*What it costs today:* the three `#[ignore]`d tests in
-`crates/nikaia/tests/foreign_runtime.rs` cannot pass, which is why nothing has
-said so — they are ignored because they fetch `hyper` and `tokio`, and CI does
-not run ignored tests.
-
-*What a fix has to decide*, and why it is not one line: making the member's
-`path` correct means `../../../../../shim`, which is a number a person has to
-count out of a generated layout. The better answer is that a `path` in
-`nikaia.toml` is relative to **`nikaia.toml`**, and the generated manifest
-carries it absolute — which the generated manifest already does for
-`nikaia-std`. That narrows [ADR-002](specification/adr/adr-002.md) D1's *the
-value with `type` removed reaches Cargo verbatim*, so it wants a record rather
-than a commit.
 
 *What that leaves:* every other entry this section has ever held was found by
 *running* something — the specification's own programs, the corpus at both
@@ -1402,11 +1364,13 @@ next:*
    described. `a_described_call_that_says_it_threads_is_asked_and_a_silent_one_is_not`
    in `crates/nikaia/tests/send.rs` holds all three values.
 
-   *What is not done with it:* **no ledger in this tree writes the word yet.**
-   `hyper_shim::across_a_thread` builds a `tokio` runtime and spawns, so
-   `threads = true` is true of it and a reviewer would write it — and the test
-   that would show what changes, `a_value_that_may_not_cross_a_thread_is_refused_against_the_nika_line`,
-   cannot run: §1.8.
+   *And it is written down and measured* (0.0.161). All three ledgers under
+   `examples/foreign-runtime/` say `threads = true` where it is true, and both
+   crossing experiments are refused **by this compiler** — `NK2502`, in Nikaia's
+   vocabulary, on the author's line. `smuggled/` too, which
+   [`foreign-runtime.md`](foreign-runtime.md) §3.5 did not expect: an
+   `unsafe impl Send` defeats `rustc`'s bound and cannot touch a line a person
+   wrote in a committed description. §8 of that note is the measurement.
 2. **the signature scan and the note it writes**, on the scraper as it stands
    (D3). This already carries the safe half on its own, and not as a heuristic:
    in safe Rust the `Send` bound is forced and surfaces in the signature.

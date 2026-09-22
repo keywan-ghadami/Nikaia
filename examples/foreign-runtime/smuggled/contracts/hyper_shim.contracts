@@ -43,6 +43,9 @@ inference = "described-from-signatures+fields"
 [fn."hyper_shim::serve_once"]
 pub = true
 sync = true
+# A multi-threaded runtime with two worker threads, a listener and two spawned
+# tasks, all inside one call ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1).
+threads = true
 signature = "(port: i64) -> String"
 
 # `String` by value is **kept** (D3's first row): the crate takes ownership, so
@@ -60,6 +63,12 @@ signature = "(name: String) -> hyper_shim::LocalHandle"
 [fn."hyper_shim::across_a_thread"]
 pub = true
 sync = true
+# **It builds a `tokio` runtime and spawns**
+# ([ADR-193](../../../../docs/specification/adr/adr-193.md) D1), which is what
+# `on_one_worker` does and what no part of this signature shows. Hand-written,
+# because nothing a signature can say entails it either way - and it is the
+# word that makes `NK2502` ask a described call at all (D2).
+threads = true
 keeps = ["value"]
 signature = "(value: $T) -> String"
 
@@ -69,6 +78,7 @@ signature = "(value: $T) -> String"
 [fn."hyper_shim::across_a_thread_unchecked"]
 pub = true
 sync = true
+threads = true
 keeps = ["value"]
 signature = "(value: $T) -> String"
 

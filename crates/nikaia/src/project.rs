@@ -502,6 +502,37 @@ pub fn members_of(entry_manifest: &Manifest, entry_root: &Path) -> Result<Vec<Me
 
 /// `path`, resolved where the filesystem lets us. The same fallback
 /// `packages_of` uses, so the two agree about when two keys are one package.
+/// A Rust dependency's table with a relative `path` resolved against the
+/// project root ([ADR-197](../../docs/specification/adr/adr-197.md) D2).
+///
+/// **Absolute, because the file this is written into is not where the author
+/// is.** The generated member manifest lives at
+/// `target/nikaia/build/<package>/Cargo.toml`
+/// ([ADR-053](../../docs/specification/adr/adr-053.md) D1), and a path relative
+/// to *that* is a number a person derives from a build layout. The same
+/// manifest already writes `nikaia-std` absolute for the same reason.
+///
+/// A table with no `path` is handed back unchanged, which is every `version`
+/// and `git` dependency there is.
+fn rooted(value: &toml::Value, root: &Path) -> toml::Value {
+    let Some(table) = value.as_table() else {
+        return value.clone();
+    };
+    let Some(declared) = table.get("path").and_then(toml::Value::as_str) else {
+        return value.clone();
+    };
+    let at = Path::new(declared);
+    if at.is_absolute() {
+        return value.clone();
+    }
+    let mut table = table.clone();
+    table.insert(
+        "path".to_string(),
+        toml::Value::String(canonical(&root.join(at)).display().to_string()),
+    );
+    toml::Value::Table(table)
+}
+
 fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
@@ -600,6 +631,11 @@ pub fn lower_reading(
         Some(digest) => settings.choices().reading(digest),
         None => settings.choices(),
     };
+    // **And what this build's boundaries say**
+    // ([ADR-104](../../docs/specification/adr/adr-104.md) D5). A description is
+    // a file a person edits, so an edit has to reach the next build - which it
+    // did not, and failed open while it did not.
+    let choices = choices.describing(crate::describe::descriptions_digest(&layout.root));
 
     // A cache that cannot be opened is a slower build, never a failed one
     // (D12).
@@ -1594,9 +1630,13 @@ impl Project {
             match value {
                 // The whole point of D1: whatever the author wrote reaches
                 // Cargo, and Cargo resolves and links it as it would for any
-                // Rust project.
+                // Rust project - **narrowed by one key**
+                // ([ADR-197](../../docs/specification/adr/adr-197.md) D2). A
+                // relative `path` is resolved against `nikaia.toml` and written
+                // absolute; `version`, `git`, `tag`, `features` and the rest
+                // still travel untouched.
                 Dependency::Rust(value) => {
-                    dependencies.insert(dependency.clone(), value.clone());
+                    dependencies.insert(dependency.clone(), rooted(value, &member.root));
                 }
                 // **Cargo's renaming form** (ADR-053 D2): the package is named
                 // by its identity, the key is the name *this* crate uses for

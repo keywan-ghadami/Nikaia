@@ -9,11 +9,11 @@ version = "0.1.0"
 [build]
 user-parallelism = "no"
 
-# **A Nikaia path and a Rust path are resolved against different things**, which
-# is worth a line because getting it wrong costs a confusing message.  This one
-# is read by `project::packages_of` and is relative to **this directory**.  A
-# `type = "rust"` dependency is passed to Cargo verbatim (ADR-002 D1), so it is
-# relative to the *generated* manifest under `target/nikaia/build/` - which is
-# why `examples/foreign-runtime/serve` climbs four levels and this climbs one.
+# **A path is relative to this file**, whichever arm of `[dependencies]` it is
+# in ([ADR-197](../../docs/specification/adr/adr-197.md) D1). The two used to be
+# resolved against different things - a Nikaia package against this directory
+# and a Rust crate against the *generated* manifest - which is why
+# `examples/foreign-runtime/serve` climbed four levels and this one climbs one,
+# and why those three projects stopped building when that manifest moved.
 [dependencies]
 http = { path = "../http" }

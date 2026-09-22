@@ -32,9 +32,11 @@ fn project(name: &str, crate_source: &str, program: &str) -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("src")).expect("a directory to work in");
-    // The path is relative to the **generated** manifest, which a build writes
-    // to `target/nikaia/build/` — so four levels up from there is the project's
-    // own directory, and the crate sits beside `src/`.
+    // The path is relative to **`nikaia.toml`**
+    // ([ADR-197](../../../docs/specification/adr/adr-197.md) D1), so the crate
+    // sits beside `src/` and is named as such. It used to climb three levels,
+    // against a generated manifest — which is how this test and `cargo build`
+    // came to look in two different places for one crate's sources.
     std::fs::create_dir_all(root.join("fremd/src")).expect("a crate to describe");
     std::fs::write(
         root.join("nikaia.toml"),
@@ -43,7 +45,7 @@ fn project(name: &str, crate_source: &str, program: &str) -> PathBuf {
          version = \"0.1.0\"\n\
          \n\
          [dependencies]\n\
-         fremd = { type = \"rust\", path = \"../../../fremd\" }\n",
+         fremd = { type = \"rust\", path = \"fremd\" }\n",
     )
     .expect("write the manifest");
     std::fs::write(

@@ -44,7 +44,7 @@ fn project(name: &str, description: Option<&str>) -> PathBuf {
          version = \"0.1.0\"\n\
          \n\
          [dependencies]\n\
-         fremd = { type = \"rust\", path = \"../fremd\" }\n",
+         fremd = { type = \"rust\", path = \"fremd\" }\n",
     )
     .expect("write the manifest");
     if let Some(description) = description {
@@ -230,9 +230,11 @@ fn a_described_crate_is_not_something_to_import_from_std() {
 #[test]
 fn a_description_is_believed_while_its_hashes_hold() {
     let root = project("hashes", None);
-    // The crate, where the manifest's `../fremd` means from the *generated*
-    // manifest's directory — `target/nikaia/build/`.
-    let crate_root = root.join("target/nikaia/fremd");
+    // The crate, where the manifest's `fremd` means beside `nikaia.toml`
+    // ([ADR-197](../../../docs/specification/adr/adr-197.md) D1). It used to
+    // mean *from the generated manifest's directory*, which is a place the
+    // author never sees and which Cargo stopped agreeing with.
+    let crate_root = root.join("fremd");
     std::fs::create_dir_all(crate_root.join("src")).expect("a crate to hash");
     let source = crate_root.join("src/lib.rs");
     std::fs::write(&source, "pub fn zwei(a: i64, b: i64) -> i64 { a + b }\n")

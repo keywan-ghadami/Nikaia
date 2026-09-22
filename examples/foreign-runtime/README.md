@@ -17,15 +17,18 @@ false starts. This one says only what is here and how to run it.
 | `shim/` | A plain Rust crate over `hyper`, `hyper-util` and `tokio`. Not a member of the Nikaia workspace it sits inside, so `cargo test --workspace` never builds it. |
 | `serve/` | A Nikaia project that starts the server, serves one request, and sends a `String` to a thread the foreign runtime owns. **Builds and runs.** |
 | `crossing/` | The same, with a value that may not cross a thread. **Must not build**, and who refuses it is the finding. |
-| `smuggled/` | The same crossing through a foreign API that says `unsafe impl Send` about a type that is not. **Builds and runs**, and nothing anywhere complains. |
+| `smuggled/` | The same crossing through a foreign API that says `unsafe impl Send` about a type that is not. **Must not build** — and what refuses it is not a `Send` bound, which is the finding ([ADR-193](../../docs/specification/adr/adr-193.md) D1, `foreign-runtime.md` §8). |
 | `overlaps.nika` | Four pairs of statements, three of them with a foreign call in, for `--overlaps`. |
 
 Each project's `nikaia.toml` reaches the shim as
-`hyper-shim = { type = "rust", path = "../../../../shim" }`. The path is
-relative to the *generated* `Cargo.toml`, which a build writes into
-`target/nikaia/build/`, which is why it climbs four levels and not one. A
-version from crates.io would need no such care; a path dependency is used here
-only so the experiment is self-contained.
+`hyper-shim = { type = "rust", path = "../shim" }` — the directory beside this
+one, because a `path` is relative to the file it is written in
+([ADR-197](../../docs/specification/adr/adr-197.md) D1). It used to climb four
+levels, against the *generated* `Cargo.toml`, and stopped being right when that
+manifest gained a directory: all three projects here were unbuildable for as
+long as the tests that would have said so stayed `#[ignore]`d. A version from
+crates.io would need no such care; a path dependency is used here only so the
+experiment is self-contained.
 
 ## Running it
 

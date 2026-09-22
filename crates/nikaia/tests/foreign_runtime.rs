@@ -178,25 +178,22 @@ fn a_nikaia_program_serves_one_request_through_hyper() {
 /// Question 2, first rule: a value that may **not** cross a thread, handed to
 /// a thread the foreign runtime owns.
 ///
-/// It is refused, and **by whom depends on who can decide**. The structural
-/// `Send` check (ADR-005 §1 Group B, `NK2501`/`NK2502`) decides what is written
-/// down, and since [ADR-037](../../../docs/specification/adr/adr-037.md) D6 the
-/// records name no type it may refuse **at this destination for this reason**:
-/// `Shared` was the one, and it is answered by what it holds. (It *is* refused
-/// at a foreign destination since
-/// [ADR-061](../../../docs/specification/adr/adr-061.md) D1, which is a
-/// different row and a different reason - a Rust library has one signature.)
-/// This program's value was never that case anyway - it is *borrowed from the
-/// foreign crate*, so its type has no ledger entry and the verdict is
-/// `Undecided`, which is not permission and not a refusal either
-/// (`contracts::send`). So what refuses this one is still `rustc`, and after D6
-/// that is true of every crossing.
+/// It is refused **by this compiler**, and that sentence is new.
 ///
-/// What changed is the half Part III C.1 actually calls a bug: the refusal now
-/// arrives **against the `.nika` line**, because ADR-005 D7 enumerates `E0277`
-/// and `nikaia build` reads `cargo --message-format=json` through
-/// `diagnostics::translate` instead of handing Cargo's stderr to the terminal.
-/// The *text* is still `rustc`'s, which D7 records as the open half.
+/// It used to be `rustc`'s `Send` bound, translated onto the `.nika` line by
+/// [ADR-005](../../../docs/specification/adr/adr-005.md) D7 — the place fixed
+/// and the **text** still Rust's, which that record carried as its open half.
+/// The structural `Send` check had nothing to say: the value's type comes from
+/// the foreign crate, so its verdict is `Undecided`, which is neither
+/// permission nor a refusal.
+///
+/// What decides it now is two things a **person wrote down**
+/// ([ADR-193](../../../docs/specification/adr/adr-193.md) D1, D2):
+/// `crosses = false` on `hyper_shim::LocalHandle`, because the type holds an
+/// `Rc`, and `threads = true` on `hyper_shim::across_a_thread`, because it
+/// builds a `tokio` runtime and spawns. Neither is inferred and neither could
+/// be; both are in the committed description a reviewer reads
+/// ([ADR-104](../../../docs/specification/adr/adr-104.md) D5).
 #[test]
 #[ignore = "runs cargo and fetches hyper and tokio from crates.io"]
 fn a_value_that_may_not_cross_a_thread_is_refused_against_the_nika_line() {
@@ -210,12 +207,13 @@ fn a_value_that_may_not_cross_a_thread_is_refused_against_the_nika_line() {
     );
 
     let complaint = said(&built);
-    assert!(
-        complaint.contains("cannot be sent between threads safely"),
-        "the refusal is a `Send` refusal: {complaint}"
-    );
 
-    // The half that is fixed: the place. Part III C.1's Iron Rule.
+    // **Nikaia's own code, and the author's own line** — Part III C.1's Iron
+    // Rule with nothing of `rustc`'s left in it.
+    assert!(
+        complaint.contains("NK2502"),
+        "the refusal is this compiler's: {complaint}"
+    );
     assert!(
         complaint.contains("src/main.nika:"),
         "the refusal names the `.nika` line the author wrote: {complaint}"
@@ -229,41 +227,58 @@ fn a_value_that_may_not_cross_a_thread_is_refused_against_the_nika_line() {
         "and no longer points into a file the author has never read: {complaint}"
     );
 
-    // The half that is open, asserted so that it cannot quietly stop being
-    // true: the *text* is still Rust's, which ADR-005 D7 records rather than
-    // solves. A frontend check cannot translate it, because the type it is
-    // about was never written in Nikaia.
+    // And it says **which claim** decided it, because that is what a reader has
+    // to check: the description is a person's and a wrong one is a person's to
+    // correct.
     assert!(
-        !complaint.contains("NK25"),
-        "this crossing is `Undecided` for the structural check - the value's \
-         type comes from the foreign crate - so there is no `NK25xx` for it. A \
-         code appearing here means the check has learned to decide it, and this \
-         test is what has to change: {complaint}"
+        complaint.contains("threads = true"),
+        "the note names the word that made the call answerable: {complaint}"
+    );
+    assert!(
+        complaint.contains("may not go to another thread"),
+        "and the claim about the value: {complaint}"
     );
 }
 
-/// The same crossing through a foreign API that lies about `Send`.
+/// The same crossing through a foreign API that lies about `Send` — **and it is
+/// refused too**, which `docs/foreign-runtime.md` §3.5 did not expect.
 ///
-/// It builds, it runs, and it increments an `Rc` refcount on a thread the
-/// foreign runtime owns. Nikaia contributes no check to either outcome: the
-/// whole of D7's first rule is, today, rustc's `Send` bound on whatever the
-/// foreign crate happened to write - which ADR-033 D4 already names as the
-/// "reached through `unsafe`" case, and which no analysis in the frontend can
-/// see.
+/// That section says a structural `Send` check *would not have caught this one
+/// either: the value it would check is `Send`-by-declaration at the point
+/// Nikaia can see it*. The sentence is still true, and the check that catches
+/// it is not the one it is about. A structural check reads what the language
+/// below says about a type; this reads what a **person wrote down** about it —
+/// `crosses = false`, because `LocalHandle` holds an `Rc`. An
+/// `unsafe impl<T> Send for Smuggled<T>` cannot change that line, because the
+/// line never asked Rust.
+///
+/// **None of this is soundness** ([ADR-193](../../../docs/specification/adr/adr-193.md)
+/// D3). A description that claimed `crosses = true` about the same type would
+/// get exactly as far as it did before. What moved is *who* has to be honest,
+/// and a `.contracts` file is committed and reviewed like code.
 #[test]
 #[ignore = "runs cargo and fetches hyper and tokio from crates.io"]
-fn a_foreign_api_that_lies_about_send_is_not_caught_by_anything() {
+fn a_foreign_api_that_lies_about_send_is_caught_by_what_a_person_wrote() {
     let run = nikaia("run", &experiment().join("smuggled"));
     assert!(
-        run.status.success(),
-        "this is expected to build and run - the point is that nothing stops \
-         it: {}",
+        !run.status.success(),
+        "an `Rc` reached a foreign thread through a crate that lies about \
+         `Send`, and nothing stopped it: {}",
         said(&run)
     );
+
+    let complaint = said(&run);
     assert!(
-        String::from_utf8_lossy(&run.stdout).contains("crossed: not Send"),
-        "an `Rc` was read on a foreign thread: {}",
-        said(&run)
+        complaint.contains("NK2502"),
+        "and what stops it is this compiler: {complaint}"
+    );
+    assert!(
+        complaint.contains("across_a_thread_unchecked"),
+        "at the call that lies: {complaint}"
+    );
+    assert!(
+        !complaint.contains("crossed: not Send"),
+        "the program did not run: {complaint}"
     );
 }
 
