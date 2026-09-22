@@ -4,6 +4,40 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.140] — 2026-09-22
+
+**`?.` lends its receiver where that needs no representation, and the third case
+waits on the tether** — [ADR-189](docs/specification/adr/adr-189.md), building
+two thirds of [ADR-113](docs/specification/adr/adr-113.md) and narrowing
+[`open-work.md`](docs/open-work.md) §2.23 to what is left.
+
+### What a program heard
+
+- **`let name = user?.id` then `user?.id` again** was `rustc`'s *use of moved value*, with a `help: consider calling .as_ref()` and a `help: you can clone the value` beside it — two hints naming things this language does not have ([ADR-008](docs/specification/adr/adr-008.md) D5 writes a copy and never inserts one), about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)).
+- **Part I 3.5 already said otherwise.** *`?.` takes nothing* has been the language's rule since [ADR-113](docs/specification/adr/adr-113.md); the compiler did not do it.
+
+### Reading the record against the code found it is not one piece of work
+
+- **[ADR-113](docs/specification/adr/adr-113.md) D2 gives the reach two answers**: a member that **copies** comes out copied, and a member that does not comes out as a **view of the receiver**. The second is the state Part I 6.6 calls Tethered, and [`open-work.md`](docs/open-work.md) §2.42 is *at least four change packages*, the representation being the expensive half.
+- **Measured rather than reasoned**, because the line was not obvious: lowering the third case as D2 asks makes `user?.name` a `ref String?`, and `user?.name ?? "nobody".to_owned()` then has a view on one side of the `??` and an owned value on the other — no fit, and no way to make one that does not insert the copy D5 forbids. The receiver is usually a temporary besides, so the view dangles, which is the refusal the tether analysis would own.
+
+### The two thirds that need nothing
+
+- **D1** — a field the compiler knows to **copy**: `x.as_ref().map(|it| it.a)`, with `and_then` where [ADR-052](docs/specification/adr/adr-052.md) D6 flattens.
+- **D2** — a **method** that changes nothing: the `match` takes `x.as_ref()` as its scrutinee. This half needs no representation at all, which is why it lands whole: what comes out of a reached method is the **call's own result** and not a view of the receiver. Asked of the `mutates` column and only where every candidate for the name agrees, which is `NK1138`'s rule one construct over.
+- **Only where the compiler knows.** Both are sets of the *certain* cases rather than their complement: an unresolved name and a field with no type lower exactly as they did, which is the direction that cannot break a program that worked ([C.4](docs/specification/30-nikaia-tooling.md)).
+
+### And the third is left alone rather than refused
+
+- **`?.` over a member that is not copied still takes its receiver**, and [ADR-052](docs/specification/adr/adr-052.md) D8's translated note stays for it alone — narrowed to *`?.` over a member that is not copied takes the value it reaches through*, because a message explaining a move that no longer happens would be worse than the backend's.
+- **Not refused**, although a refusal is what stands where Tethered would everywhere else here (`NK2302`, `NK2303`). Those refuse programs the language below already refused. This one would refuse `find(1)?.name ?? "nobody".to_owned()`, which compiles and runs today.
+- **A test pins it as a lowering and not as a refusal**, so the day the tether lands, the test that has to change says so.
+
+### Upkeep found while reading
+
+- **§2.42's *what rests on it* had been stale for three versions.** It named *the `keeps` column of a grammar's entry, in §1* — closed at 0.0.137 ([ADR-186](docs/specification/adr/adr-186.md)) without the tether, because a parse keeps its `input` by its **declared result type** and not by a state. The entry now says so, which is the file's own rule: *read against the code before it is followed*.
+- **§2.34 and §2.10 look like low-hanging fruit and are not**, which is the same rule met twice more: *the symbol prefix is one line in the build* has no `artifact` key and no `#[no_mangle]` emitter to prefix, and *the cleanup point the ledger should narrate* needs `NK2401`, which is not built.
+
 ## [0.0.139] — 2026-09-22
 
 **The escape set is the language below's, written down once and refused here** —

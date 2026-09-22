@@ -998,3 +998,115 @@ fn a_statement_with_two_wraps_runs() {
     // 1 + 7, and 2 + 9.
     assert_eq!(ran("two-wraps-run", source).trim(), "8 11");
 }
+
+// ---------------------------------------------------------------------------
+// `?.` reaches through a view of its receiver
+// ([ADR-113](../../../docs/specification/adr/adr-113.md) D1,
+// [ADR-189](../../../docs/specification/adr/adr-189.md))
+// ---------------------------------------------------------------------------
+
+/// **The line [ADR-113](../../../docs/specification/adr/adr-113.md) was written
+/// for, for a member that copies.** `user?.id` used to take `user`, so a second
+/// reach was `rustc`'s *use of moved value* about a file nobody wrote
+/// (Part III, C.1) — with a `help: consider calling .as_ref()` and a
+/// `.clone()` beside it, neither of which this language has.
+///
+/// It **runs** rather than only compiles, because the thing that would go wrong
+/// with `as_ref()` is a value read out of the wrong place.
+#[test]
+fn a_reached_field_that_copies_leaves_the_receiver_where_it_was() {
+    let printed = ran(
+        "safe-field-lends",
+        "\
+struct User { name: String, id: i64 }
+
+fn main() {
+    let user: User? = User { name: \"Ada\".to_string(), id: 7 }
+    let first = user?.id ?? 0
+    let again = user?.id ?? 0
+    println(f\"{first} {again}\")
+}
+",
+    );
+    assert_eq!(printed.trim(), "7 7");
+}
+
+/// **And for a method**, which is the half that needs no representation at all:
+/// what comes out of a reached method is the **call's** result rather than a
+/// view of the receiver.
+#[test]
+fn a_reached_method_leaves_the_receiver_where_it_was() {
+    let printed = ran(
+        "safe-method-lends",
+        "\
+struct User { name: String }
+
+impl User {
+    fn greet(ref self, word: ref String) -> String {
+        return f\"{word}, {self.name}\"
+    }
+}
+
+fn main() {
+    let u: User? = User { name: \"Ada\".to_string() }
+    let first = u?.greet(\"Hallo\") ?? \"nobody\".to_string()
+    let again = u?.greet(\"Servus\") ?? \"nobody\".to_string()
+    println(f\"{first} | {again}\")
+}
+",
+    );
+    assert_eq!(printed.trim(), "Hallo, Ada | Servus, Ada");
+}
+
+/// **The scrutinee is lent only where every candidate says the call changes
+/// nothing**, which is `NK1138`'s own rule one construct over.
+///
+/// A name this compiler cannot resolve is claimed nothing about, and the reach
+/// lowers exactly as it did — the direction that cannot break a program that
+/// worked ([C.4](../../../docs/specification/30-nikaia-tooling.md)).
+#[test]
+fn a_reach_this_compiler_cannot_resolve_lowers_as_it_did() {
+    let rust = lowered(
+        "\
+fn main() {
+    let x = whatever()?.wobble()
+}
+",
+    );
+    assert!(rust.contains("match whatever()"), "{rust}");
+    assert!(!rust.contains("whatever().as_ref()"), "{rust}");
+}
+
+/// **The third case is not built, and this test is what holds it open.**
+///
+/// A member that does **not** copy comes out of a view as a *view of the
+/// receiver* ([ADR-113](../../../docs/specification/adr/adr-113.md) D2), and a
+/// view that outlives its buffer is the state this compiler does not build
+/// (`docs/open-work.md` §2.42). So that reach lowers as it always did — it
+/// takes the receiver — and
+/// [ADR-052](../../../docs/specification/adr/adr-052.md) D8's translation stays
+/// for it alone.
+///
+/// Written as an assertion about the **lowering** and not as a refusal,
+/// because the program below is one that compiles and runs today: refusing it
+/// would refuse a correct program, which is the one thing this compiler may
+/// never do ([C.4](../../../docs/specification/30-nikaia-tooling.md)).
+#[test]
+fn a_reached_field_that_moves_still_takes_the_receiver() {
+    let rust = lowered(
+        "\
+struct User { name: String }
+
+fn main() {
+    let user: User? = User { name: \"Ada\".to_string() }
+    let name = user?.name ?? \"nobody\".to_string()
+    println(f\"{name}\")
+}
+",
+    );
+    assert!(
+        rust.contains("user.map(|__nikaia_it| __nikaia_it.name)"),
+        "the view half is unbuilt, so this reach is unchanged:\n{rust}"
+    );
+    assert!(!rust.contains("user.as_ref()"), "{rust}");
+}

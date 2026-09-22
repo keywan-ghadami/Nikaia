@@ -347,6 +347,37 @@ pub struct Checked {
     /// position, which keeps `map` - the answer that cannot make a nested
     /// option out of a plain field - as the one it falls back to.
     pub flattened_reaches: BTreeSet<(usize, String)>,
+    /// Part I 3.5: the `?.` reaches over a field this compiler knows to
+    /// **copy**, as the byte the statement starts at and the field's name
+    /// ([ADR-189](../../docs/specification/adr/adr-189.md) D1).
+    ///
+    /// What the emitter does with it is take the receiver by `as_ref()`, so the
+    /// reach leaves the value where it was — which is
+    /// [ADR-113](../../docs/specification/adr/adr-113.md) D1 for the half of D2
+    /// that needs no representation: a number, a `bool` and a `char` come out
+    /// of a view by being copied, and a member that would come out as a view
+    /// needs the state that is not built.
+    ///
+    /// **Recorded only where this compiler knows**, which is why it is a set of
+    /// the certain cases rather than the complement: a field whose type is
+    /// `Unknown` is left where it was, and the reach lowers exactly as it did
+    /// before this set existed.
+    pub copied_reaches: BTreeSet<(usize, String)>,
+    /// Part I 3.5: the `?.` reaches over a **method** that changes nothing, as
+    /// the byte the statement starts at and the method's name
+    /// ([ADR-189](../../docs/specification/adr/adr-189.md) D2).
+    ///
+    /// The method half of the same sentence the field half writes: the reach
+    /// takes its scrutinee by `as_ref()`, so the receiver is lent to the call
+    /// and is usable afterwards. A **method** needs no representation for it at
+    /// all — what comes out is the call's own result and not a view of the
+    /// receiver — so this half of
+    /// [ADR-113](../../docs/specification/adr/adr-113.md) D1 is whole.
+    ///
+    /// **Only where every candidate for the name says it changes nothing**, the
+    /// rule `NK1138` already uses one construct over: a name this compiler
+    /// cannot resolve is not claimed about, and the reach lowers as it did.
+    pub lent_reaches: BTreeSet<(usize, String)>,
     /// The **struct-literal fields** where a plain value stands in a nullable
     /// slot, as the byte the statement starts at and the field's name
     /// (Part I 2.3).
@@ -1062,6 +1093,10 @@ pub struct Propagation {
     pub nullable: BTreeMap<usize, Wrap>,
     /// [`Checked::flattened_reaches`].
     pub flattened: BTreeSet<(usize, String)>,
+    /// [`Checked::copied_reaches`].
+    pub copied: BTreeSet<(usize, String)>,
+    /// [`Checked::lent_reaches`].
+    pub lent_reaches: BTreeSet<(usize, String)>,
     /// [`Checked::nullable_fields`].
     pub nullable_in_fields: BTreeMap<(usize, String, String), BTreeMap<String, Wrap>>,
     /// [`Checked::nullable_args`].
@@ -1224,6 +1259,8 @@ pub fn propagation_against(
         narrowing: checked.narrowing_casts,
         nullable: checked.nullable_sites,
         flattened: checked.flattened_reaches,
+        copied: checked.copied_reaches,
+        lent_reaches: checked.lent_reaches,
         nullable_in_fields: checked.nullable_fields,
         nullable_in_args: checked.nullable_args,
         task_handles: checked.task_handles,
@@ -5523,6 +5560,27 @@ impl<'a> Checker<'a> {
                     }
                     None => (&args[..], self.parsed.text(*method).to_string()),
                 };
+                // **The receiver is lent to the call where the call changes
+                // nothing** ([ADR-189](../../docs/specification/adr/adr-189.md)
+                // D2, [ADR-113](../../docs/specification/adr/adr-113.md) D1 and
+                // D3). What comes out of a reached **method** is the call's own
+                // result rather than a view of the receiver, so this half needs
+                // no representation and is whole.
+                //
+                // Asked of the `mutates` column and only where **every**
+                // candidate for the name agrees, which is the rule `NK1138`
+                // uses one construct over: a name this compiler cannot resolve
+                // is claimed nothing about, and the reach lowers exactly as it
+                // did (Part III C.4).
+                let candidates: Vec<_> = self
+                    .own
+                    .candidates(&name)
+                    .into_iter()
+                    .chain(self.library.candidates(&name))
+                    .collect();
+                if !candidates.is_empty() && candidates.iter().all(|(_, c)| !c.mutates) {
+                    self.checked.lent_reaches.insert((span.start, name.clone()));
+                }
                 match self.call_on(*inner, *method, args, &written, span) {
                     // The `and_then` case, recorded by name for the emitter
                     // exactly as a nullable field is (ADR-028: the emitter has
@@ -5626,6 +5684,27 @@ impl<'a> Checker<'a> {
                             Ty::Nullable(_) => {
                                 self.checked.flattened_reaches.insert((span.start, field));
                                 declared.ty
+                            }
+                            // **A member that copies comes out of a view**
+                            // ([ADR-189](../../docs/specification/adr/adr-189.md)
+                            // D1, [ADR-113](../../docs/specification/adr/adr-113.md)
+                            // D1 and D2). A number, a `bool` and a `char` are
+                            // read through the receiver and copied, so the
+                            // reach leaves the receiver where it was and the
+                            // result's type is what it always was.
+                            //
+                            // **The other half is not here**, and it is the
+                            // representation rather than this walk: a member
+                            // that does **not** copy comes out as a *view* of
+                            // the receiver (D2), and a view that outlives its
+                            // buffer is the state this compiler does not build
+                            // (`open-work.md` §2.42). So that reach lowers
+                            // exactly as it did, moving the receiver, and
+                            // [ADR-052](../../docs/specification/adr/adr-052.md)
+                            // D8's translation stays for it alone.
+                            plain if !crate::contracts::keeps::moves(plain) => {
+                                self.checked.copied_reaches.insert((span.start, field));
+                                Ty::Nullable(Box::new(plain.clone()))
                             }
                             plain => Ty::Nullable(Box::new(plain.clone())),
                         }

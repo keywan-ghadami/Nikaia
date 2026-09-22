@@ -755,21 +755,41 @@ nothing about the status changes.
 exit code can be set. The hook has already run and said what happened, so
 that profile loses the status and not the message.
 
-### 2.23. `?.` reaches through a view
+### 2.23. `?.` over a member that is not copied still takes its receiver
 
-[ADR-113](specification/adr/adr-113.md). `?.` takes nothing: it reaches
+[ADR-113](specification/adr/adr-113.md), **two thirds built**
+([ADR-189](specification/adr/adr-189.md)). `?.` takes nothing: it reaches
 through a view of its receiver, and the result is a copy where the member
-copies and a view of the receiver otherwise, kept alive as any view of a
-place is. **Nothing of it is built**: `x?.a` lowers to `x.map(|it| it.a)`, a
-method reach to a `match` over `x` by value, and a receiver used again is
-refused below with the note ADR-052 D8 used to translate.
+copies and a view of the receiver otherwise, kept alive as any view of a place
+is.
 
-*Evidence:* `let name = user?.name` then `println(user)` is *"use of moved
-value"* today.
+*What is built.* A reach over a field the compiler knows to **copy** lends its
+receiver — `x.as_ref().map(|it| it.a)` — and a reach over a **method** that
+changes nothing lends its scrutinee. Both shapes leave the receiver usable on
+the next line, and both **run** with it used twice in
+`crates/nikaia/tests/nullable.rs`.
 
-*What it needs, in the record's order (§5):* the two lowerings over
-`as_ref()`; the tether analysis reading the result as a view; the translation
-removed and a test that uses the receiver again.
+*What is left is one third, and it is [§2.42](#242-the-tether-a-view-that-outlives-its-buffer-is-refused-not-tethered)'s.*
+A member that does not copy comes out of the reach as a **view of the
+receiver**, which is the state Part I 6.6 calls Tethered and this compiler does
+not build. So that reach still takes the value, and
+[ADR-052](specification/adr/adr-052.md) D8's translation stays for it alone,
+narrowed to say which case it is about.
+
+*Measured, rather than left as a reason.* Lowering the third case as
+[ADR-113](specification/adr/adr-113.md) D2 asks makes `user?.name` a
+`ref String?`, and `user?.name ?? "nobody".to_owned()` then has a view on one
+side of the `??` and an owned value on the other — no fit, and no way to make
+one that does not insert a copy [ADR-008](specification/adr/adr-008.md) D5
+forbids. The receiver is usually a temporary besides, so the view dangles,
+which is the refusal the tether analysis would own.
+
+*And it is not refused meanwhile*, although a refusal is what stands where
+Tethered would everywhere else here (`NK2302`, `NK2303`). Those refuse programs
+the language below already refused; this one would refuse
+`find(1)?.name ?? "nobody".to_owned()`, which compiles and runs today — and a
+correct program refused is the one thing this compiler may never do
+([Part III C.4](specification/30-nikaia-tooling.md)).
 
 ### 2.25. An `overlap` keeps every failure — the cleanup half
 
@@ -1167,10 +1187,17 @@ analysis, the representation, the ledger — and **the analysis is done**. What 
 left is the representation and the type, and the representation is the expensive
 half: three layouts per struct, chosen per site, with the container holding the
 handle. **What rests on it:** *text is one type*, above, whose `String` state
-comes from this analysis; the `keeps` column of a grammar's entry, in §1 — where
-a rule's `input` is a position the analysis does not reach, because a grammar
-entry is written by the ledger rather than declared as a function; and `Bytes`
+comes from this analysis; the third of `?.` that is not built, above, where a
+member that does not copy comes out as a view of the receiver; and `Bytes`
 itself, which is the same question read from the other end.
+
+*One thing that used to rest on it does not*, and it is worth saying because
+the sentence above carried it for three versions: **the `keeps` column of a
+grammar's entry** closed at 0.0.137
+([ADR-186](specification/adr/adr-186.md)) without this. A parse keeps its
+`input` exactly when its declared result may hold a view into it, which is a
+question about the rule's **declared type** and not about a state — so the
+analysis reached it after all, one item kind over.
 
 *And the analysis has a limit worth knowing before it is trusted further.* It
 errs **towards Tethered**, which is D7's own polarity, and the one shape it does

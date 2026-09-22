@@ -1165,6 +1165,13 @@ struct Emitter<'p> {
     /// Part I 3.5: the `?.` reaches whose field is itself nullable and which
     /// therefore flatten (`check::Checked::flattened_reaches`).
     flattened_reaches: std::collections::BTreeSet<(usize, String)>,
+    /// Part I 3.5: the `?.` reaches whose field **copies**, so the receiver can
+    /// be taken by `as_ref()` and left where it was
+    /// (`check::Checked::copied_reaches`).
+    copied_reaches: std::collections::BTreeSet<(usize, String)>,
+    /// Part I 3.5: the `?.` reaches over a method that changes nothing, so the
+    /// scrutinee can be taken by `as_ref()` (`check::Checked::lent_reaches`).
+    lent_reaches: std::collections::BTreeSet<(usize, String)>,
     /// Part I 2.3: the struct-literal fields where a plain value stands in a
     /// nullable slot (`check::Checked::nullable_fields`).
     nullable_fields: std::collections::BTreeMap<
@@ -2057,6 +2064,8 @@ impl<'p> Emitter<'p> {
             specialising: std::cell::RefCell::new(None),
             at_field: std::cell::RefCell::new(None),
             flattened_reaches: propagation.flattened,
+            copied_reaches: propagation.copied,
+            lent_reaches: propagation.lent_reaches,
             nullable_fields: propagation.nullable_in_fields,
             lent_args: propagation.lent_args,
             mut_args: propagation.mut_args,
@@ -5513,8 +5522,20 @@ impl<'p> Emitter<'p> {
                 let flattens = self
                     .flattened_reaches
                     .contains(&(flow.statement, name.clone()));
+                // **The scrutinee is lent where the call changes nothing**
+                // ([ADR-189](../../docs/specification/adr/adr-189.md) D2):
+                // `find(1)?.greet("Hallo")` used to take `find(1)`'s value into
+                // the `match`, so a receiver bound to a name was gone
+                // afterwards and `rustc` said so about a file nobody wrote
+                // (Part III C.1). What comes out is the **call's** result, so
+                // nothing about the reach needs the state that is not built.
+                let lent = match self.lent_reaches.contains(&(flow.statement, name.clone())) {
+                    true => ".as_ref()",
+                    false => "",
+                };
                 out.push("match ");
                 self.postfix_base(out, receiver, depth, flow)?;
+                out.push(lent);
                 out.push(&format!(
                     " {{
 {}",
@@ -5635,8 +5656,28 @@ impl<'p> Emitter<'p> {
                     .flattened_reaches
                     .contains(&(flow.statement, field.clone()));
                 let how = if flattens { "and_then" } else { "map" };
+                // **The receiver is lent where the member copies**
+                // ([ADR-189](../../docs/specification/adr/adr-189.md) D1):
+                // `user?.id` reads `user` where it lies and `user` is usable on
+                // the next line, which is
+                // [ADR-113](../../docs/specification/adr/adr-113.md) D1. Before
+                // it, `Option::map` took its receiver and `rustc` said *use of
+                // moved value* about a file nobody wrote (Part III C.1).
+                //
+                // **Only where the checker said the member copies**, which is
+                // the safe direction: a member that would come out as a *view*
+                // needs the state this compiler does not build, and a field
+                // whose type this compiler could not work out is claimed
+                // nothing about (Part III C.4). Both lower exactly as they did.
+                let copies = self
+                    .copied_reaches
+                    .contains(&(flow.statement, field.clone()));
+                let lent = match copies {
+                    true => ".as_ref()",
+                    false => "",
+                };
                 self.postfix_base(out, base, depth, flow)?;
-                out.push(&format!(".{how}(|__nikaia_it| __nikaia_it.{field})"));
+                out.push(&format!("{lent}.{how}(|__nikaia_it| __nikaia_it.{field})"));
             }
             Expr::Index { base, index } => {
                 // **A length is an `i64`, so an index is one too**

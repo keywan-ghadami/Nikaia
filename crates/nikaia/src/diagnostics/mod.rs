@@ -441,14 +441,22 @@ fn is_rust_internal(note: &str) -> bool {
 /// `translate_units` turns it into an internal error carrying the backend's own
 /// words (D2).
 ///
-/// **And one that is a translation rather than a name.** `x?.field` lowers to
-/// `Option::map` (or `and_then`), which takes its receiver by value - so using
-/// `x` again is a move, and the note explaining *why* says
-/// *"`Option::<T>::map` takes ownership of the receiver `self`"*. The
-/// explanation is the part a reader needs and the spelling is a shape this
-/// compiler chose, so the spelling is replaced with the one the program wrote:
-/// `?.`. This is not the `Shared[T]` case - there is no second Nikaia form for
-/// it to be confused with, so nothing about this compiler can hide behind it.
+/// **And one that is a translation rather than a name.** `x?.field` over a
+/// member that is **not copied** lowers to `Option::map` (or `and_then`), which
+/// takes its receiver by value - so using `x` again is a move, and the note
+/// explaining *why* says *"`Option::<T>::map` takes ownership of the receiver
+/// `self`"*. The explanation is the part a reader needs and the spelling is a
+/// shape this compiler chose, so the spelling is replaced with the one the
+/// program wrote: `?.`. This is not the `Shared[T]` case - there is no second
+/// Nikaia form for it to be confused with, so nothing about this compiler can
+/// hide behind it.
+///
+/// **Narrowed to that one case at 0.0.140**
+/// ([ADR-189](../../../../docs/specification/adr/adr-189.md)). A reached
+/// **method**, and a field whose member **copies**, take the receiver by
+/// `as_ref()` now and there is no move left to explain; what still moves is the
+/// member that would come out as a *view*, and that waits on the state this
+/// compiler does not build (`docs/open-work.md` §2.42).
 /// The two types an `expected … found …` names, where both are the same.
 ///
 /// Rust writes a type mismatch as *"expected `A`, found `B`"*, so a message
@@ -558,11 +566,13 @@ fn in_this_language(message: &str) -> String {
         .replace("TrustedSet", "HashSet")
         .replace(
             "`Option::<T>::map` takes ownership of the receiver `self`",
-            "`?.` takes the value it reaches through (Part I, 3.5)",
+            "`?.` over a member that is not copied takes the value it reaches through \
+             (Part I, 3.5)",
         )
         .replace(
             "`Option::<T>::and_then` takes ownership of the receiver `self`",
-            "`?.` takes the value it reaches through (Part I, 3.5)",
+            "`?.` over a member that is not copied takes the value it reaches through \
+             (Part I, 3.5)",
         )
 }
 
