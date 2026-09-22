@@ -1310,8 +1310,13 @@ next:*
 2. **the signature scan and the note it writes**, on the scraper as it stands
    (D3). This already carries the safe half on its own, and not as a heuristic:
    in safe Rust the `Send` bound is forced and surfaces in the signature.
-3. **`syn` and cargo metadata under it** (D4), which is what makes step 2
-   reliable rather than lucky.
+3. **A real parser and cargo metadata under it** (D4), which is what makes step
+   2 reliable rather than lucky. **Which parser is open**:
+   [ADR-193](specification/adr/adr-193.md) D4 says `syn`, and
+   [`open-decisions.md`](open-decisions.md) asks whether `nikaia describe`
+   should be a **Nikaia** program instead, with a grammar — a separate command
+   that nothing bootstraps through, shipped the way
+   [ADR-002](specification/adr/adr-002.md) D4 already ships `std`'s Nikaia half.
 4. **`unsafe impl Send`/`Sync` flagged** (D5) — cheap, sound, and independent of
    3.
 5. **the intra-crate call graph and the `use` table** (D4), for the row where an

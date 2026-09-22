@@ -4,6 +4,37 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.154] — 2026-09-22
+
+**Two things are called a parser, and only one of them was decided** — the
+owner's differentiation, asked properly. No code changes.
+
+### The distinction, which is the whole of why this is a separate question
+
+| | the HTTP/1.1 parser | `describe`'s Rust-signature parser |
+| :--- | :--- | :--- |
+| runs | per connection, in a server's hot path | once per crate, when a person types a command |
+| the compiler needs it | to serve | **never** — `NK2504` names the command and a person runs it |
+| decided | Rust for the MVP ([ADR-194](docs/specification/adr/adr-194.md) D5) | **open, and now asked** |
+
+### Why `describe` is a good self-hosting candidate, measured
+
+- **Nothing bootstraps through it.** The compiler compiles without it; it writes a file a person then reviews ([ADR-104](docs/specification/adr/adr-104.md) D5).
+- **The way it would ship already exists.** [ADR-002](docs/specification/adr/adr-002.md) D4 pre-lowers `std`'s Nikaia half — *the `.nika` kept beside the `.rs`* — so a binary install compiles the `.rs` and needs no compiler to do it, and `nikaia lower-std` is the release step. A Nikaia `describe` rides the same one. **There is no chicken and egg.**
+- **The half that would become a grammar is the half that is hand-written char scanning today**: `describe.rs` is 843 lines, and `split_top_level`, `items_of`, `fields_at`, `line_starts`, `signature_at` and `matching` are a scanner written by hand — which is what the module header already apologises for, *a **signature scraper** and not a Rust parser*.
+
+### What it would cost, against `std`'s actual surface
+
+- **`std` has `fs::map`, `fs::read`, `fs::read_to_string`, `fs::write` and `cli::args`** — and **no directory walk** (reading a crate means reading its `.rs` files) and **no subprocess** ([ADR-193](docs/specification/adr/adr-193.md) D4's first step wants `cargo metadata`).
+- **Both are the kind of thing [ADR-194](docs/specification/adr/adr-194.md) D1 just put the socket in `std` for**, so [ADR-069](docs/specification/adr/adr-069.md) D2's subtraction covers them: work, not a boundary problem — but two pieces of new `std` surface this question would be the reason for.
+
+### The recommendation, and the thing to do before taking it
+
+- **A — Nikaia, with a grammar** — and the argument is not self-hosting for its own sake: the hand-written scanner is what **made** every one of `describe`'s three named limits, and a grammar removes the class rather than the instance. That is the move [ADR-117](docs/specification/adr/adr-117.md) D2 made with a reserved list over a cut, and [ADR-048](docs/specification/adr/adr-048.md) D1 with a trait over an emitter case.
+- **But `syn` would remove it too, in a tree that is already Rust** — that is B's real strength and it is not waved away.
+- **So the thing to ask first is whether a Nikaia grammar can do it at all**, and that is answerable by writing one against the crates `examples/foreign-runtime/` already has, compared with the scraper's own output. **An afternoon, and it settles the question with a measurement instead of a preference** — the route [`rc-or-arc.md`](docs/rc-or-arc.md) and [`lock-free.md`](docs/lock-free.md) both took.
+- **What it costs if wrong**: every bug in the language becomes a bug in the tool that stands between a program and a foreign crate, and `describe` is security-adjacent — which is [ADR-193](docs/specification/adr/adr-193.md) D3's whole asymmetry. That its output is **reviewed by a person** is what makes the risk bearable, and it is why this is a better first self-hosted tool than one whose output nobody reads.
+
 ## [0.0.153] — 2026-09-22
 
 **Two servers, not one** — [ADR-194](docs/specification/adr/adr-194.md), the
