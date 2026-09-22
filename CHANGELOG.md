@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.150] — 2026-09-22
+
+**Citing a question is not asking it** — the list's own cross-references
+followed, and four of them did not resolve. Found while answering *is the tether
+next?*; no code changes.
+
+### Two questions were named in the entry they block and never asked
+
+- **§2.6, the *head* of §2's order.** *`rt::io::wait` cannot be awaited … That is the entry in `open-decisions.md`.* That page has held no entry about `rt::io::wait` **in its whole history** — checked against every heading it has ever carried. So the first item in the list rests on a question nobody put in the shape that page asks for.
+- **§2.5.** *That is **how does a package receive a handler** on `open-decisions.md`.* Never there either.
+- **It reads like the rule was followed and it is the rule skipped.** Naming a question in the entry it blocks is the cheap half; putting it where it can be answered is the half that costs an afternoon. The head of the file says so now: **an entry that names a question elsewhere is not finished until the link resolves.**
+
+### And two were answered and not written back
+
+- **§2.1** cited *the question that record left on `open-decisions.md`* about a pausing code parameter's shape — answered by [ADR-192](docs/specification/adr/adr-192.md) D1 at 0.0.144, six versions ago.
+- **§2.16** cited *`open-decisions.md`'s question about a described foreign function and a thread* — answered by [ADR-193](docs/specification/adr/adr-193.md) at 0.0.149, one version ago.
+
+### §2.5 was stale about the language as well
+
+- **Measured:** `fn apply(f: fn() -> String) -> String { return f() }` **parses and lowers**. The entry said it was a parse error, which it was when the entry was written ([ADR-102](docs/specification/adr/adr-102.md) D1 opened it, [ADR-192](docs/specification/adr/adr-192.md) D1 decides its shape).
+- **The other door is still shut**, also measured: `fn tell[T: greet::Speaks](x: T)` is a parse error at the `:`, which is the bound-takes-a-path entry and waits on a module question nobody has decided.
+- So the bullet said *neither door is open* where **one is**, and what is left in that entry is `route` itself rather than the language.
+
+### Why this came out of a question about the tether
+
+- **The tether is not next**, and §2.42's own measurement is why: the analysis half is built and swept the tree, every view in `examples/`, `benches/` and `tests/` solves to **Borrowed**, and the entry says outright that *the piece that was going to decide whether the rest is worth starting has answered: nothing in the tree needs Tethered.* It is also the most expensive thing in the file — at least four change packages, of which the representation is the expensive half.
+- **That is this project's own gate**, applied twice in the last week: [`lock-free.md`](docs/lock-free.md) §6's *the question is not how much would it save but does a real program need it*, and [`staging-candidates.md`](docs/staging-candidates.md)'s *without a measured crossover the complexity is certain and the gain is not*.
+- **What would make it next is a program that escapes** — a parser handing its rows past the buffer's scope. §2.42 names the server as the likeliest source, and the server is already #1 in the order.
+
 ## [0.0.149] — 2026-09-22
 
 **A description says whether it threads, and the describer proposes the answer**

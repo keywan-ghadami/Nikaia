@@ -48,6 +48,15 @@ for — what is blocked, the options, a recommendation, and what either directio
 costs if it is wrong. What stays here is what a record already decided and the
 compiler does not do yet.
 
+**Citing a question is not asking it**, and that is a failure this file has had
+twice — found at 0.0.150 by following its own links. Two entries said *that is
+**X** on [`open-decisions.md`](open-decisions.md)* about questions that page has
+never held in its whole history, one of them at the **head of §2's order**. It
+reads like the rule above was followed and it is the rule above skipped: naming
+a question in the entry it blocks is the cheap half, and putting it where it can
+be answered is the half that costs an afternoon. An entry that names a question
+elsewhere is not finished until the link resolves.
+
 ---
 
 ## 1. Defects
@@ -201,9 +210,11 @@ measured on a parameter declared `fn(ref String) -> String throws` in this langu
 Nikaia or described as taking one — either a future, `|| async move { … }`, or
 an `impl AsyncFn(…) -> …`, which is how a handler is taken in practice and costs
 about a ninth of the boxed form ([ADR-187](specification/adr/adr-187.md) D1).
-Which of the two a *declared* parameter lowers to is the question that record
-left on [`open-decisions.md`](open-decisions.md); which one a **described**
-entry says is the describer's, because the signature is hand-written. Not a new
+Which of the two a *declared* parameter lowers to was the question that record
+left, and it is **answered**: [ADR-192](specification/adr/adr-192.md) D1 — a
+**run** parameter is `impl AsyncFn(A) -> R` and only a **kept** one keeps the
+box. Which one a **described** entry says is the describer's, because the
+signature is hand-written. Not a new
 mechanism: a claim to record.
 
 ### 2.2. A lazy walk of a pausing sequence has no shape
@@ -294,15 +305,23 @@ form. What is left is machinery, not syntax:
   decided what a handler *is* — the request as its first implicit argument, and
   what each return type answers with — and none of it can be built before there is
   a server to bind to.
-* **And a handler cannot be received at all**, which is the language question
-  this entry used to say it did not have.
+* **A handler can be received now, through one of the two doors.**
   `.route("/fortunes") fn { fortunes(db) }` needs `route` to declare a parameter
-  that is code, and neither door is open: a function type is not sayable
-  (`fn apply(f: fn() -> String)` is a parse error) and a bound cannot name a
-  trait another package publishes. That is
-  *how does a package receive a handler* on
-  [`open-decisions.md`](open-decisions.md), and it is independent of the
-  server — a socket layer would leave it exactly where it is.
+  that is code, and **that door is open**: measured at 0.0.150,
+  `fn apply(f: fn() -> String) -> String { return f() }` parses and lowers
+  ([ADR-102](specification/adr/adr-102.md) D1, and
+  [ADR-192](specification/adr/adr-192.md) D1 for the shape it takes). This entry
+  said it was a parse error, which it was when the entry was written.
+  **The second door is still shut**: `fn tell[T: greet::Speaks](x: T)` is a
+  parse error at the `:`, which is the bound-takes-a-path entry below and waits
+  on a module question nobody has decided. Either door is enough, so what is
+  left here is `route` itself and not the language.
+
+  *And the question this bullet named was never written down.* It said *that is
+  **how does a package receive a handler** on
+  [`open-decisions.md`](open-decisions.md)* — that page has never held such an
+  entry, in its whole history. Citing a question is not asking it, which is the
+  head of this file's own rule met from the wrong side.
 
 **Measured, so the order is known.** Given a manifest that depends on
 `examples/http/`, the file stops before any of the three: `dsl postgres { … }`
@@ -355,10 +374,18 @@ makes it the mechanism that loses at the sizes a server sends most.
 **And there is a runtime piece underneath all of it.** A server waits on
 sockets, and `rt::io::wait` — the readiness half this would rest on —
 **cannot be awaited**, only blocked on: on the completion path the executor
-parks on the ring, and a worker's reply does not reach it. That is the entry in
-[`open-decisions.md`](open-decisions.md), and the entry above about standard
-input is the small end of the same question. Nothing here can be an
+parks on the ring, and a worker's reply does not reach it. The entry above about
+standard input is the small end of the same question, and nothing here can be an
 `async fn` that actually pauses until it is answered.
+
+*And this entry has been saying that question is on
+[`open-decisions.md`](open-decisions.md), which it never was* — that page has
+held no entry about `rt::io::wait` in its whole history. **The head of this list
+therefore rests on a question nobody put in the shape that page asks for**,
+which is the file's own rule not followed: *the moment an item is blocked by a
+question, the question goes where questions go*. Citing a question is not asking
+it. Writing it is work of its own, because the options are the runtime's and
+this entry states only the symptom.
 
 ### 2.7. There is no target that lets foreign code call in, and the record for one is written
 
@@ -584,8 +611,8 @@ unreachable into **our own code** was waiting for: a described foreign type is
 the first thing that can answer `MayNot` there, and `NK2501` has something to
 say the day a program `spawn`s one. `NK2502` and `NK2503` need more than that —
 the call itself has to be one nothing describes — which is
-[`open-decisions.md`](open-decisions.md)'s question about a described foreign
-function and a thread.
+[ADR-193](specification/adr/adr-193.md)'s `threads` column — decided at 0.0.149
+and §2.44 below.
 
 ### 2.17. `par_iter` has no entry to demand `sync` of
 
