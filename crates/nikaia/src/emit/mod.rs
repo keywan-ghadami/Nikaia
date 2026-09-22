@@ -6771,6 +6771,39 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
             }
+            // **And a type another *package* publishes**, which this arm did
+            // not ask about: `tiny::Server()` is Part I 4.2's constructor
+            // reached through the package that declares it, and the entry
+            // `tiny::Server::new` is in the ledger the build merged
+            // ([ADR-100](../../docs/specification/adr/adr-100.md) D1).
+            //
+            // Without it the call went out **verbatim** — `tiny::Server()` —
+            // and `rustc` answered *use struct literal syntax instead* and
+            // *type annotations needed* about a file nobody wrote
+            // ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+            // And it is the very form `NK1149`'s help hands over — *write
+            // `tiny::Server(…)`* — so the way out could not be taken either,
+            // which is [C.2](../../docs/specification/30-nikaia-tooling.md)'s
+            // rule that a way out that cannot be taken is not one.
+            //
+            // **Unaliased and whole**, for the reason the callee key below
+            // gives: `use tiny as t` writes `t::Server` and the ledger keys
+            // `tiny::Server::new`, and a path of any depth is one key.
+            let qualified = self.parsed.unaliased(
+                &segments
+                    .iter()
+                    .map(|s| self.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+            );
+            let key = format!("{qualified}::new");
+            if self.own_contracts.functions.contains_key(&key) {
+                out.push(&format!("{qualified}::new("));
+                let takes = self.takes_a_handle(&key);
+                self.args(out, &key, args, &takes, depth, flow)?;
+                out.push(")");
+                return Ok(());
+            }
         }
 
         self.expr(out, func, depth, flow)?;

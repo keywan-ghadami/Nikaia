@@ -818,6 +818,76 @@ fn a_package_is_depended_on_by_path() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// **A package's own type is constructed through the package that declares it**
+/// (Part I 4.2, [ADR-140](../../../docs/specification/adr/adr-140.md) D2), and
+/// the whole of [ADR-018](../../../docs/specification/adr/adr-018.md)'s shape
+/// runs on top of it.
+///
+/// **Found by writing the shape that record prints.** `tiny::Server()` lowered
+/// **verbatim** — the constructor rule asked the *library*'s ledger about a
+/// qualified name and never the package's — and `rustc` answered *use struct
+/// literal syntax instead* and *type annotations needed* about a file nobody
+/// wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)). It
+/// is also the form `NK1149`'s own help hands over, so the way out could not be
+/// taken either ([C.2](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// Four things at once, because the point is that they compose: a **type**
+/// constructed through its package, a **method chain** over it, a
+/// **function-typed parameter** crossing the package boundary
+/// ([ADR-102](../../../docs/specification/adr/adr-102.md) D1), and the
+/// **`async` closure** [ADR-192](../../../docs/specification/adr/adr-192.md) D1
+/// writes for a run parameter — handed to a callee in another package.
+#[test]
+fn a_packages_type_is_constructed_and_its_handler_chain_runs() {
+    let dir = a_program_and_a_package(
+        "package-constructor",
+        "tiny",
+        &[
+            (
+                "tiny/src/main.nika",
+                "pub struct Request { pub path: String }\n\
+                 pub struct Response { pub status: i32, pub body: String }\n\
+                 pub struct Server { pub routes: i64 }\n\
+                 \n\
+                 impl Server {\n    \
+                     pub fn new() -> Server { return Server { routes: 0 } }\n\
+                 \n    \
+                     pub fn route(ref self, path: ref String, handler: fn(Request) -> Response) -> Server {\n        \
+                         let answered = handler(Request { path: path.to_owned() })\n        \
+                         println(f\"{path} {answered.status} {answered.body}\")\n        \
+                         return Server { routes: self.routes + 1 }\n    \
+                     }\n\
+                 \n    \
+                     pub fn listen(ref self, at: ref String) {\n        \
+                         println(f\"listening on {at} with {self.routes}\")\n    \
+                     }\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use tiny\n\
+                 \n\
+                 fn main() {\n    \
+                     tiny::Server()\n        \
+                         .route(\"/a\") fn(r) { return tiny::Response { status: 200, body: f\"A {r.path}\" } }\n        \
+                         .route(\"/b\") fn(r) { return tiny::Response { status: 404, body: f\"B {r.path}\" } }\n        \
+                         .listen(\"127.0.0.1:8080\")\n\
+                 }\n",
+            ),
+        ],
+    );
+
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "/a 200 A /a\n/b 404 B /b\nlistening on 127.0.0.1:8080 with 2",
+        "{}",
+        said(&ran)
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// **And `NK1110` fires for the first time**: a name a package does not publish
 /// cannot be reached from outside it (Part I, 9.2).
 ///

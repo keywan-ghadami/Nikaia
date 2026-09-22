@@ -67,7 +67,36 @@ file-serving — the *zero setup*.
   configuration file: `nikaia serve --route /total=total`, or a `[routes]`
   table in `nikaia-runtime.toml`.
 
-**What this page recommends: D, with C kept, and never A.**
+**Two of it are answered** (the owner, at 0.0.152), and what is left is
+narrower than the options below suggest:
+
+* **Where it binds: localhost.** Anything wider is asked for.
+* **Routes: `.route(…)`, option C, for the MVP.** No `@route` yet. So the
+  exposure decision is in the **source**, where nothing is implicit — which is
+  the safest of the four and needs no language change at all. A and B are not
+  the MVP, and D is a deployment concern that arrives with a deployment.
+
+**And the shape is measured to work, end to end, before any of it is built.**
+`crates/nikaia/tests/project.rs` runs [ADR-018](specification/adr/adr-018.md)'s
+own chain across a package boundary — a type constructed through its package, a
+method chain over it, a function-typed parameter
+([ADR-102](specification/adr/adr-102.md) D1) and the `async` closure
+[ADR-192](specification/adr/adr-192.md) D1 writes for it — with the socket the
+only thing missing. Three more things came out of writing it:
+
+* **`tiny::Server()` did not lower**, and that was a defect rather than a gap:
+  the constructor rule asked the *library*'s ledger about a qualified name and
+  never the package's. Fixed at 0.0.152.
+* **[ADR-018](specification/adr/adr-018.md)'s own example is refused today.**
+  It writes `http::Server::new()`, and `NK1149` answers *a type is constructed by
+  its anonymous constructor* since [ADR-140](specification/adr/adr-140.md) D2.
+  The record is not rewritten; whoever builds the server writes `http::Server()`.
+* **The builder chain needs nothing new.** `self`, `ref self` and `ref mut self`
+  are all receivers, so a consuming `fn route(self, …) -> Server` chains exactly
+  as the record prints it.
+
+**What this page recommended, for the day the MVP is not the question: D, with C
+kept, and never A.**
 
 The precedent is exact and it is this project's own.
 [ADR-038](specification/adr/adr-038.md) D5 **moved `cleanup-deadline` out of the

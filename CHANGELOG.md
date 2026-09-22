@@ -4,6 +4,43 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.152] — 2026-09-22
+
+**A package's type could not be constructed through the package that declares
+it** — a defect found by writing
+[ADR-018](docs/specification/adr/adr-018.md)'s own shape, fixed, and the whole
+chain now **runs** across a package boundary. The owner's two MVP decisions are
+recorded with it.
+
+### The defect
+
+- **`tiny::Server()` lowered verbatim.** The constructor rule
+  ([ADR-140](docs/specification/adr/adr-140.md) D2, `Type()` is `Type::new()`) asks the **library**'s ledger about a qualified name and never the **package**'s — so a bare `Server()` in one file became `Server::new()` and `tiny::Server()` went out as it was written.
+- **`rustc` answered about a file nobody wrote**: *use struct literal syntax instead* and *type annotations needed* ([Part III C.1](docs/specification/30-nikaia-tooling.md)).
+- **And it is the form `NK1149`'s own help hands over** — *write `tiny::Server(…)`* — so the way out could not be taken either, which is [C.2](docs/specification/30-nikaia-tooling.md)'s rule that a way out that cannot be taken is not one.
+- **Fixed where the library arm already stood**, off the ledger the build merged ([ADR-100](docs/specification/adr/adr-100.md) D1), unaliased and at any path depth — `use tiny as t` writes `t::Server` and the ledger keys `tiny::Server::new`.
+
+### And the MVP's whole surface is measured, before any of it is built
+
+`crates/nikaia/tests/project.rs` runs [ADR-018](docs/specification/adr/adr-018.md)'s chain across two packages — four things at once, because the point is that they compose:
+
+- a **type** constructed through its package;
+- a **method chain** over it;
+- a **function-typed parameter** crossing the package boundary ([ADR-102](docs/specification/adr/adr-102.md) D1) — the ledger carries it as `handler: fn(tiny::Request) -> tiny::Response`;
+- the **`async` closure** [ADR-192](docs/specification/adr/adr-192.md) D1 writes for a run parameter, handed to a callee in another package, lowering to `impl AsyncFn(Request) -> Response`.
+
+The socket is the only thing missing.
+
+### Two more things that came out of writing it
+
+- **[ADR-018](docs/specification/adr/adr-018.md)'s own example is refused today.** It writes `http::Server::new()`, and `NK1149` answers *a type is constructed by its anonymous constructor* since [ADR-140](docs/specification/adr/adr-140.md) D2. The record is not rewritten; whoever builds the server writes `http::Server()`.
+- **The builder chain needs nothing new.** `self`, `ref self` and `ref mut self` are all receiver forms, so a consuming `fn route(self, …) -> Server` chains exactly as the record prints it. `mut self` is not one — that is `ref mut self`.
+
+### The owner's two decisions, recorded
+
+- **Where it binds: localhost.** Anything wider is asked for.
+- **Routes: `.route(…)` for the MVP**, no `@route` yet. The exposure decision is in the **source**, where nothing is implicit — the safest of the four options and no language change at all.
+
 ## [0.0.151] — 2026-09-22
 
 **The server's runtime blocker has been built since ADR-121, and the microservice
