@@ -93,6 +93,19 @@ pub struct Fun {
     // and empty where there are none. Not split here, for the reason
     // `Item::Export` gives: splitting a list is string work.
     pub generics: ref String,
+    // Every path this body calls, in the order it calls them, with duplicates.
+    //
+    // **The other row's evidence** ([ADR-193](../../../../docs/specification/adr/adr-193.md)
+    // D4). A bound is what a function asks of its caller; a **call** is what it
+    // does, and the two answer different questions - `across_a_thread_unchecked`
+    // has no bound, because an `unsafe impl Send` took it away, and only
+    // following the calls reaches the `spawn`.
+    //
+    // A path and not a resolved callee: `spawn` and `tokio::spawn` are two
+    // strings for one function and which one a file writes is a question about
+    // its `use` items. That is whoever walks this to answer, from `Item::Used`
+    // beside this.
+    pub calls: Vec[ref String],
     // The `where` clause's text, without the word, and empty where there is
     // none.
     //
@@ -151,6 +164,25 @@ pub enum Item {
     Fun(Fun),
     Rec(Rec),
     Group(Group),
+    // A `fn` that is **not** `pub`, with everything a `pub` one carries.
+    //
+    // **Reported rather than skipped**, for the reason a private `mod` is: a
+    // private function is not an entry and is on the way to one. `on_one_worker`
+    // in `examples/foreign-runtime/shim` is the case
+    // ([ADR-193](../../../../docs/specification/adr/adr-193.md) D4) - nothing
+    // outside the crate can call it, and it is the only thing between
+    // `across_a_thread_unchecked` and a `tokio::spawn`. A reader that threw it
+    // away could not follow the calls at all.
+    Hidden(Fun),
+    // A plain `use`, kept as the text between the keyword and the semicolon.
+    //
+    // **What a name in this file means** ([ADR-193](../../../../docs/specification/adr/adr-193.md)
+    // D4): `use tokio::spawn; spawn(x)` and `tokio::spawn(x)` are one function
+    // and two strings, and a reader of `Fun::calls` that did not have this
+    // table would miss every crate that imports what it calls. It offers
+    // nothing to anybody outside, which is what makes it a different variant
+    // from `Export` beside it.
+    Used(ref String),
     // A `pub use`, kept as the text between the keyword and the semicolon.
     //
     // **Not split here on purpose.** Which name a re-export makes reachable at
@@ -168,6 +200,13 @@ pub enum Item {
 pub enum Found {
     One(Item),
     Skip,
+}
+
+// What one piece of a function body turned out to be.
+pub enum Called {
+    One(ref String),
+    Many(Vec[ref String]),
+    Nothing,
 }
 
 grammar Rust {
@@ -199,6 +238,7 @@ grammar Rust {
 
     rule found -> Found =
           i:item -> { Found::One(i) }
+        | f:method -> { Found::One(Item::Hidden(f)) }
         | JUNK -> { Found::Skip }
 
     rule found_exposed -> Found =
@@ -211,11 +251,14 @@ grammar Rust {
         | r:record -> { Item::Rec(r) }
         | g:group -> { Item::Group(g) }
         | e:export -> { Item::Export(e) }
+        | u:import -> { Item::Used(u) }
 
     // `pub use …;` and nothing else: a plain `use` brings a name into this
     // file's scope and makes nothing reachable from outside it, and
     // `pub(crate) use` is refused by `PUB` itself.
     rule export -> ref String = PUB USE t:USE_TEXT ";" -> { t }
+
+    rule import -> ref String = USE t:USE_TEXT ";" -> { t }
 
     rule USE_TEXT -> ref String = s:text(USE_RUN) -> { s.trim() }
     rule USE_RUN = USE_PIECE+ -> { }
@@ -226,8 +269,8 @@ grammar Rust {
     rule function -> Fun = PUB f:method -> { f }
 
     rule method -> Fun =
-        pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result w:where_clause tail -> {
-            Fun { name, generics: g, wheres: w, pauses, parts, result }
+        pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result w:where_clause c:tail -> {
+            Fun { name, generics: g, wheres: w, calls: c, pauses, parts, result }
         }
 
     // `const`, `unsafe` and `extern "C"` may stand between `pub` and `fn`, and
@@ -249,7 +292,51 @@ grammar Rust {
     rule abi = string -> { } | empty -> { }
 
     // A body, or the semicolon a trait's own declaration ends with.
-    rule tail = BRACES -> { } | ";" -> { }
+    // A body, or the semicolon a trait's own declaration ends with - and what
+    // the body **calls**, at every depth.
+    rule tail -> Vec[ref String] = cs:inside -> { cs } | ";" -> { Vec() }
+
+    rule inside -> Vec[ref String] = "{" cs:inside_run "}" -> { cs }
+
+    rule inside_run -> Vec[ref String] =
+        pieces:inside_piece* -> { joined(pieces) }
+
+    // What one piece turned out to be. **Three variants and not a list**: a
+    // piece that is one call would otherwise build a list of one, which the
+    // language below reads as `Vec::new()` followed by a `push` and complains
+    // about - a complaint about the generated file, which is
+    // [Part III C.1](../../../../docs/specification/30-nikaia-tooling.md)'s
+    // class whoever makes it.
+
+    // One unit of a body. **Not named `block`**: the backend folds a rule's
+    // name, so `block` and the `BLOCK` above would be one rule and the
+    // generated Rust would not compile - a thing worth writing down once
+    // rather than meeting twice.
+    //
+    // Order matters: a string, a character literal and a
+    // comment are crossed before anything inside them is read, a nested brace
+    // group is descended into so a call inside a closure is not lost, and a
+    // call is taken before the character it starts with would be.
+    rule inside_piece -> Called =
+          not("}") STRING -> { Called::Nothing }
+        | not("}") CHAR -> { Called::Nothing }
+        | not("}") LINE -> { Called::Nothing }
+        | not("}") BLOCK -> { Called::Nothing }
+        | not("}") inner:inside -> { Called::Many(inner) }
+        | not("}") p:CALL -> { Called::One(p) }
+        | not("}") ANY -> { Called::Nothing }
+
+    // A path immediately followed by `(`. Lexical, so the `(` has to be the
+    // next character: `match (a, b) {` is not a call to `match`, and `f (x)` is
+    // not read as one either - which is the price of not writing a Rust
+    // expression grammar, and a price worth naming.
+    //
+    // A turbofish is read past: `spawn::<T>(…)` is a call to `spawn`.
+    rule CALL -> ref String = p:text(PATH) TURBOFISH "(" -> { p }
+
+    rule PATH = raw_ident (PATH_TAIL)* -> { }
+    rule PATH_TAIL = "::" raw_ident -> { }
+    rule TURBOFISH = "::" ANGLES -> { } | empty -> { }
 
     rule parameters -> Vec[Part] = "(" ps:parameter_list ")" -> { ps }
 
@@ -483,6 +570,19 @@ grammar Rust {
 
     // A trailing comma, allowed everywhere Rust allows one.
     rule COMMA = "," -> { } | empty -> { }
+}
+
+// Every call one body's pieces found, in order.
+fn joined(pieces: Vec[Called]) -> Vec[ref String] {
+    let mut all = Vec()
+    for piece in pieces.drain() {
+        match piece {
+            Called::One(one) => { all.push(one) }
+            Called::Many(many) => { for one in many { all.push(one) } }
+            Called::Nothing => { }
+        }
+    }
+    return all
 }
 
 // What `p*` collected, with the text between the items dropped.

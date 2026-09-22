@@ -4,6 +4,50 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.163] — 2026-09-22
+
+**The row a bound cannot answer** —
+[ADR-193](docs/specification/adr/adr-193.md) D4's intra-crate call graph and
+`use` table, which is the last step of that record.
+
+### What it finds
+
+```toml
+# `across_a_thread_unchecked`: reaches `tokio::spawn` through `on_one_worker`.
+#   A sink reached through a call says *this function threads something*,
+#   never *this function threads your argument* (ADR-193 D4) - connecting
+#   those is dataflow through a closure capture and is not built.
+#   Does this put it on a thread?  -> threads = true | false
+```
+
+- **That function asks its caller for nothing.** An `unsafe impl<T> Send for Smuggled<T>` took the bound away, so 0.0.162's signature scan is correctly silent about it — and the only thing between it and a `tokio::spawn` is `on_one_worker`, which is **private**.
+- **A private `fn` is reported rather than skipped**, which is the same move a private `mod` got: nothing outside the crate can call it, and the graph goes through it. A reader that dropped it could not follow the calls at all.
+- **The walk is breadth-first**, so the path a note names is the shortest one — a reviewer is being handed something to check, and the shortest chain is quickest to check.
+- **`across_a_thread` gets both notes**, because they answer two questions: what it asks of its caller, and what it does.
+
+### The `use` table
+
+- **`use tokio::spawn; spawn(x)` and `tokio::spawn(x)` are one function and two strings.** A body's calls are resolved against the file's `use` items before anything looks at them — the items are read first, because one may be written below the function that needs it.
+- **A `pub use` is an import here too**: it brings the name into the file exactly as a plain one does, and offers it onward besides.
+- **Flat over the file** rather than per module, and the note says why: a `use` inside a `mod` reaches only that block, and treating it as the file's can only make a name resolve where it would not have — which for a *note* is a wrong sentence to a reviewer rather than a wrong claim in a file.
+
+### What the grammar grew
+
+- **A function's body yields the paths it calls**, at every depth, with strings, character literals, comments and nested brace groups crossed as units. A call is a path immediately followed by `(`, lexically — so `match (a, b) {` is not a call to `match`, and `f (x)` is not read as one either, which is the price of not writing a Rust expression grammar and is worth naming.
+- **A turbofish is read past**: `spawn::<T>(…)` is a call to `spawn`.
+- **And one thing found by meeting it**: the parser backend folds a rule's name, so `block` and `BLOCK` would be one rule and the generated Rust would not compile. Written down in the file rather than met twice.
+
+### And a hole in the release step, walked into rather than found
+
+- **`nikaia lower-std` emitted without checking.** `lower_std_module` went from the parser straight to the emitter, so a module this compiler would refuse a *program* for lowered in silence — and `rustc` was left to complain about the generated file, which is [Part III C.1](docs/specification/30-nikaia-tooling.md).
+- **It happened here.** `tools/rust.nika` had a grammar action calling a function that could pause, which `NK2209` exists to refuse in one sentence on the `.nika` line. What came out instead was `` error[E0728]: `await` is only allowed inside `async` functions `` about `rust.rs:193`.
+- **Why nobody noticed**: a module of `std` is written by the people who write the compiler, which is exactly why the checks a program gets were the ones this half was going without. `a_sysroot_module_is_checked_before_it_is_lowered` is the test.
+- **And the cause under it is the one the unanswered-method-call ceiling names**: a `match` arm's binding has no type here, so `many.drain()` resolved to nothing and took `flat`'s `sync` claim away — fail-closed, and correct as far as it goes.
+
+### The sinks
+
+- **Full paths and not bare names**, for the reason `Send` is matched as a word: a `.spawn(…)` method on the crate's own type would match a bare `spawn`, and a note about a function that threads nothing asks a reviewer a question with no answer. A crate that imports the name is answered by the `use` table, which resolves it back to a path.
+
 ## [0.0.162] — 2026-09-22
 
 **The describer proposes and never claims** —

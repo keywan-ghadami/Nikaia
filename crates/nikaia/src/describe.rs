@@ -208,25 +208,64 @@ pub fn draft(root: &Path, crate_word: &str) -> Result<(Ledger, Described)> {
         else {
             continue;
         };
+        let mut said = Vec::new();
+
+        // **The bound**, which carries the safe half on its own (D4): every
+        // safe way of reaching another thread demands it of the caller.
         let bound: Vec<String> = function.sent_across().collect();
-        if bound.is_empty() {
-            continue;
-        }
-        let key = format!("{crate_word}::{name}");
-        notes.about_a_function.insert(
-            key,
-            vec![
-                format!(
-                    "`{name}`: {} is bound `Send`.",
-                    a_list(&bound, "the parameter", "the parameters")
-                ),
-                "  Does this put it on a thread?  -> threads = true | false".to_string(),
+        if !bound.is_empty() {
+            said.push(format!(
+                "`{name}`: {} is bound `Send`.",
+                a_list(&bound, "the parameter", "the parameters")
+            ));
+            said.push(
                 "  Seen and not claimed (ADR-193 D3): a `Send` bound says the callee **may**"
                     .to_string(),
+            );
+            said.push(
                 "  send it, which is usually `spawn` and is sometimes an API keeping a door open."
                     .to_string(),
-            ],
-        );
+            );
+        }
+
+        // **And the other row**: a sink reached through the crate's own calls.
+        // `across_a_thread_unchecked` has no bound, because an
+        // `unsafe impl Send` took it away, and only following the calls reaches
+        // the `spawn` (D4).
+        let at = surface.reachable.get(name).cloned().unwrap_or_default();
+        if let Some(path) = reaches_a_thread(&at, &surface.functions) {
+            let (sink, through) = path.split_last().expect("a path ends at its sink");
+            said.push(match through.is_empty() {
+                true => format!("`{name}`: calls `{sink}`."),
+                false => format!(
+                    "`{name}`: reaches `{sink}` through {}.",
+                    through
+                        .iter()
+                        .map(|step| format!("`{step}`"))
+                        .collect::<Vec<_>>()
+                        .join(" -> ")
+                ),
+            });
+            said.push(
+                "  A sink reached through a call says *this function threads something*,"
+                    .to_string(),
+            );
+            said.push(
+                "  never *this function threads your argument* (ADR-193 D4) - connecting"
+                    .to_string(),
+            );
+            said.push(
+                "  those is dataflow through a closure capture and is not built.".to_string(),
+            );
+        }
+
+        if said.is_empty() {
+            continue;
+        }
+        said.push("  Does this put it on a thread?  -> threads = true | false".to_string());
+        notes
+            .about_a_function
+            .insert(format!("{crate_word}::{name}"), said);
     }
 
     let described = Described {
@@ -507,9 +546,14 @@ fn names_the_program_writes(root: &Path, crate_word: &str) -> Result<BTreeSet<St
 /// fifth at the crate root rather than under its module.
 #[derive(Default)]
 struct Surface {
-    /// Every `pub fn`, by the path it is **defined** at. A private `mod`'s are
-    /// here too, because a `pub use` may reach one.
+    /// Every `fn`, by the path it is **defined** at — a private `mod`'s, because
+    /// a `pub use` may reach one, and a private `fn`'s, because the call graph
+    /// goes through it ([ADR-193](../../docs/specification/adr/adr-193.md) D4).
     functions: BTreeMap<String, Function>,
+    /// The subset of [`Self::functions`] the crate writes `pub`. A path is
+    /// offered only if its function is one of these **and** every module on the
+    /// way to it is `pub`.
+    offers: BTreeSet<String>,
     /// Every `pub struct`'s field types, by the path the type is defined at.
     /// A `pub enum` is a type without an entry here, which is *nobody looked*
     /// and not *it holds nothing* — the difference [`crosses`] rests on.
@@ -570,16 +614,36 @@ impl Surface {
         };
         let items = nikaia_std::tools::rust::file(text)
             .map_err(|error| anyhow::anyhow!("{relative}: {error}"))?;
-        self.walk(&items, &at);
+        // **The file's `use` items first**, because a call is resolved against
+        // them and one may be written below the function that needs it
+        // ([ADR-193](../../docs/specification/adr/adr-193.md) D4).
+        let mut imports = BTreeMap::new();
+        imported(&items, &mut imports);
+        self.walk(&items, &at, &imports);
         Ok(())
     }
 
-    fn walk(&mut self, items: &[nikaia_std::tools::rust::Item<'_>], at: &str) {
+    fn walk(
+        &mut self,
+        items: &[nikaia_std::tools::rust::Item<'_>],
+        at: &str,
+        imports: &BTreeMap<String, String>,
+    ) {
         use nikaia_std::tools::rust::Item;
         for item in items {
             match item {
                 Item::Fun(f) => {
-                    self.functions.insert(joined(at, f.name), Function::of(f));
+                    let path = joined(at, f.name);
+                    self.offers.insert(path.clone());
+                    self.functions.insert(path, Function::of(f, imports));
+                }
+                // **On the way to an entry rather than one**
+                // ([ADR-193](../../docs/specification/adr/adr-193.md) D4):
+                // nothing outside the crate can call it, and the call graph
+                // goes through it.
+                Item::Hidden(f) => {
+                    self.functions
+                        .insert(joined(at, f.name), Function::of(f, imports));
                 }
                 Item::Rec(r) => {
                     let path = joined(at, r.name);
@@ -592,10 +656,13 @@ impl Surface {
                     self.types.insert(path);
                 }
                 Item::Export(text) => self.exports.extend(exported(at, text)),
+                // Read before this walk, into the table every call above was
+                // resolved against.
+                Item::Used(_) => {}
                 Item::Group(g) if g.what == "mod" => {
                     let path = joined(at, g.name);
                     self.modules.insert(path.clone(), g.visible);
-                    self.walk(&g.items, &path);
+                    self.walk(&g.items, &path, imports);
                 }
                 // **An `unsafe impl` is a promise the toolchain cannot check**
                 // ([ADR-193](../../docs/specification/adr/adr-193.md) D5), and
@@ -640,8 +707,8 @@ impl Surface {
         // path. This is what the scanner did for **every** item it found, which
         // is how four functions that do not exist reached a draft.
         let direct: Vec<String> = self
-            .functions
-            .keys()
+            .offers
+            .iter()
             .chain(self.types.iter())
             .filter(|path| self.offered(path))
             .cloned()
@@ -662,6 +729,11 @@ impl Surface {
                     Some((name, alias)) => {
                         let offered = joined(&export.at, alias);
                         for candidate in self.candidates(export, name) {
+                            // **`self.functions` and not `self.offers`**: a
+                            // `pub use` may carry a function that is not `pub`
+                            // where it was written, and refusing to resolve one
+                            // would refuse a call the crate answers
+                            // ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
                             if !self.functions.contains_key(&candidate)
                                 && !self.types.contains(&candidate)
                             {
@@ -678,8 +750,8 @@ impl Surface {
                         for base in self.bases(export) {
                             let under = format!("{base}::");
                             let names: Vec<String> = self
-                                .functions
-                                .keys()
+                                .offers
+                                .iter()
                                 .chain(self.types.iter())
                                 .filter_map(|path| path.strip_prefix(&under))
                                 .filter(|rest| !rest.contains("::"))
@@ -842,6 +914,129 @@ fn named(one: &str) -> Option<(String, String)> {
     }
 }
 
+/// **What a name in one file means**, from its `use` items
+/// ([ADR-193](../../docs/specification/adr/adr-193.md) D4).
+///
+/// `use tokio::spawn;` makes `spawn` and `tokio::spawn` one function written
+/// two ways, and a reader of a body's calls that did not have this table would
+/// miss every crate that imports what it calls.
+///
+/// **Flat over the file** rather than per module. A `use` inside a `mod` block
+/// reaches only that block, and treating it as the file's can only make a name
+/// resolve where it would not have — which for a *note* naming a path is a
+/// wrong sentence to a reviewer rather than a wrong claim in a file. The
+/// precise version wants a scope table, and what it would buy is not this
+/// step's.
+fn imported(items: &[nikaia_std::tools::rust::Item<'_>], out: &mut BTreeMap<String, String>) {
+    use nikaia_std::tools::rust::Item;
+    for item in items {
+        match item {
+            // A `pub use` is an import here too: it brings the name into this
+            // file exactly as a plain one does, and offers it onward besides.
+            Item::Used(text) | Item::Export(text) => {
+                for one in exported("", text) {
+                    let Some((name, alias)) = &one.name else {
+                        continue;
+                    };
+                    let full = match one.prefix.is_empty() {
+                        true => name.clone(),
+                        false => format!("{}::{name}", one.prefix),
+                    };
+                    out.insert(alias.clone(), full);
+                }
+            }
+            Item::Group(g) => imported(&g.items, out),
+            _ => {}
+        }
+    }
+}
+
+/// **Where a value goes to another thread**, as the paths a crate writes
+/// ([ADR-193](../../docs/specification/adr/adr-193.md) D4).
+///
+/// Every **safe** way of reaching another thread carries a `Send` bound, which
+/// is why the bound alone answers most of the question. This list is for the
+/// other row: a crate that took the bound away with an `unsafe impl Send` still
+/// has to reach one of these to do anything with what it was given.
+///
+/// **Full paths and not bare names.** A `.spawn(…)` method on some type of the
+/// crate's own would match a bare `spawn`, and a note about a function that
+/// threads nothing asks a reviewer a question with no answer — which is the
+/// same reason `Send` is matched as a word. A crate that imports the name is
+/// answered by the `use` table instead, which resolves it back to a path here.
+const THREAD_SINKS: &[&str] = &[
+    "std::thread::spawn",
+    "std::thread::Builder::spawn",
+    "std::thread::scope",
+    "thread::spawn",
+    "thread::scope",
+    "tokio::spawn",
+    "tokio::task::spawn",
+    "tokio::task::spawn_blocking",
+    "tokio::task::spawn_local",
+    "task::spawn_blocking",
+    "rayon::spawn",
+    "rayon::scope",
+    "rayon::join",
+    "async_std::task::spawn",
+    "smol::spawn",
+];
+
+/// The path from a function to the first thread sink it reaches, through the
+/// crate's own calls — or `None` where it reaches none.
+///
+/// **Breadth first**, so the path a note names is the shortest one: a reviewer
+/// reading *reaches `tokio::spawn` through `on_one_worker`* is being handed
+/// something to check, and the shortest chain is the one that is quickest to
+/// check.
+///
+/// A cycle terminates because a path is walked once.
+fn reaches_a_thread(from: &str, functions: &BTreeMap<String, Function>) -> Option<Vec<String>> {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut queue: std::collections::VecDeque<(String, Vec<String>)> =
+        std::collections::VecDeque::new();
+    queue.push_back((from.to_string(), Vec::new()));
+    seen.insert(from.to_string());
+    while let Some((at, how)) = queue.pop_front() {
+        let Some(function) = functions.get(&at) else {
+            continue;
+        };
+        for call in &function.calls {
+            if THREAD_SINKS.contains(&call.as_str()) {
+                let mut path = how.clone();
+                path.push(call.clone());
+                return Some(path);
+            }
+            let Some(inside) = the_crates_own(call, functions) else {
+                continue;
+            };
+            if !seen.insert(inside.clone()) {
+                continue;
+            }
+            let mut next = how.clone();
+            next.push(inside.clone());
+            queue.push_back((inside, next));
+        }
+    }
+    None
+}
+
+/// The crate's own function a call names, where exactly one answers to it.
+///
+/// The path as written first; failing that the one function whose path **ends**
+/// with it, and only where there is one. Two functions of that name is an
+/// ambiguity this cannot resolve without a scope table, and a note naming the
+/// wrong one is worse than no note.
+fn the_crates_own(call: &str, functions: &BTreeMap<String, Function>) -> Option<String> {
+    if functions.contains_key(call) {
+        return Some(call.to_string());
+    }
+    let ending = format!("::{call}");
+    let mut found = functions.keys().filter(|path| path.ends_with(&ending));
+    let one = found.next()?;
+    found.next().is_none().then(|| one.clone())
+}
+
 /// Whether a bound list names `Send` as a **word**.
 ///
 /// `not(WORD)` in prose: `Sender` and `Resend` contain the letters and are not
@@ -902,6 +1097,13 @@ struct Function {
     /// value across a thread boundary in safe Rust demands it of its caller and
     /// says so here.
     bounds: String,
+    /// Every path this body calls, with the file's `use` items applied
+    /// ([ADR-193](../../docs/specification/adr/adr-193.md) D4).
+    ///
+    /// **The other row's evidence.** A bound is what a function asks of its
+    /// caller; a call is what it does — and `across_a_thread_unchecked` has no
+    /// bound, because an `unsafe impl Send` took it away.
+    calls: Vec<String>,
     /// `async fn` — a plain `fn` is `sync` (D3).
     pauses: bool,
 }
@@ -913,7 +1115,7 @@ impl Function {
     /// parameter list, a `where` bound's head, a receiver — the grammar hands
     /// over what was written and this takes the pieces, which is the same
     /// division `Item::Export` is read under and for the same reason.
-    fn of(f: &nikaia_std::tools::rust::Fun<'_>) -> Function {
+    fn of(f: &nikaia_std::tools::rust::Fun<'_>, imports: &BTreeMap<String, String>) -> Function {
         Function {
             parameters: split_top_level(f.generics)
                 .into_iter()
@@ -935,6 +1137,14 @@ impl Function {
                 false => Some(f.result.to_string()),
             },
             bounds: format!("{}, {}", f.generics, f.wheres),
+            calls: f
+                .calls
+                .iter()
+                .map(|call| match imports.get(*call) {
+                    Some(full) => full.clone(),
+                    None => call.to_string(),
+                })
+                .collect(),
             pauses: f.pauses,
         }
     }

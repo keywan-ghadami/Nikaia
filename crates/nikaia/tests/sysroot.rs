@@ -178,3 +178,81 @@ fn the_override_names_a_sysroot() {
         Path::new("/opt/nikaia/lib").join("nikaia-std")
     );
 }
+
+/// **A sysroot module is checked before it is lowered**, which it was not.
+///
+/// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md) is what
+/// that cost, and it was paid: `crates/nikaia-std/src/tools/rust.nika` had a
+/// grammar action calling a function that could pause — which `NK2209` exists
+/// to refuse, in one sentence, on the `.nika` line — and because
+/// `lower_std_module` went straight from the parser to the emitter, what a
+/// reader saw instead was `rustc` on the generated file:
+///
+/// ```text
+/// error[E0728]: `await` is only allowed inside `async` functions and blocks
+///    --> crates/nikaia-std/src/tools/rust.rs:193:33
+/// ```
+///
+/// A module of `std` is written by the same people who write the compiler,
+/// which is exactly why nobody noticed: the checks a *program* gets are the
+/// ones this half was going without.
+#[test]
+fn a_sysroot_module_is_checked_before_it_is_lowered() {
+    let root = std::env::temp_dir().join(format!(
+        "nikaia-sysroot-check-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let src = root.join("nikaia-std/src");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&src).expect("a sysroot to work in");
+
+    // A grammar whose action calls something that can pause — the shape the
+    // real one had. `flat` calls a method on what a **`match` arm** bound, and
+    // this compiler gives a pattern binding no type, so the call resolves to
+    // nothing and takes the `sync` claim away (the fail-closed direction). A
+    // grammar's action may not pause (ADR-142 D1), because the generated parser
+    // is an ordinary function.
+    let module = src.join("probe.nika");
+    std::fs::write(
+        &module,
+        "enum Piece {\n\
+             Many(Vec[ref String]),\n\
+             Nothing,\n\
+         }\n\
+         \n\
+         grammar G {\n\
+             pub rule all -> Vec[ref String] = ps:piece* -> { flat(ps) }\n\
+             rule piece -> Piece = s:raw_ident -> { Piece::Nothing } | any -> { Piece::Nothing }\n\
+         }\n\
+         \n\
+         fn flat(ps: Vec[Piece]) -> Vec[ref String] {\n\
+             let mut out = Vec()\n\
+             for p in ps.drain() {\n\
+                 match p {\n\
+                     Piece::Many(many) => { for one in many.drain() { out.push(one) } }\n\
+                     Piece::Nothing => { }\n\
+                 }\n\
+             }\n\
+             return out\n\
+         }\n",
+    )
+    .expect("write the module");
+
+    let refused = sysroot::lower_std_module(&module).expect_err("a module that cannot lower");
+    let said = format!("{refused:#}");
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(
+        said.contains("NK2209"),
+        "the refusal is this compiler's, by code: {said}"
+    );
+    assert!(
+        said.contains("probe.nika"),
+        "and names the file somebody wrote: {said}"
+    );
+    assert!(
+        !said.contains("E0728") && !said.contains("await"),
+        "and never `rustc`'s about the file nobody wrote: {said}"
+    );
+}

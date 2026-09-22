@@ -17,6 +17,7 @@ pub struct Part<'a> {
 pub struct Fun<'a> {
     pub name: &'a str,
     pub generics: &'a str,
+    pub calls: Vec<&'a str>,
     pub wheres: &'a str,
     pub pauses: bool,
     pub parts: Vec<Part<'a>>,
@@ -48,6 +49,8 @@ pub enum Item<'a> {
     Fun(Fun<'a>),
     Rec(Rec<'a>),
     Group(Group<'a>),
+    Hidden(Fun<'a>),
+    Used(&'a str),
     Export(&'a str),
 }
 
@@ -55,6 +58,13 @@ pub enum Item<'a> {
 pub enum Found<'a> {
     One(Item<'a>),
     Skip,
+}
+
+#[derive(Debug, Clone)]
+pub enum Called<'a> {
+    One(&'a str),
+    Many(Vec<&'a str>),
+    Nothing,
 }
 
 grammar! {
@@ -91,6 +101,8 @@ grammar! {
         rule found -> Found<'a> =
             i:item
             -> { Found::One(i) }
+          | f:method
+            -> { Found::One(Item::Hidden(f)) }
           | JUNK
             -> { Found::Skip }
 
@@ -111,9 +123,15 @@ grammar! {
             -> { Item::Group(g) }
           | e:export
             -> { Item::Export(e) }
+          | u:import
+            -> { Item::Used(u) }
 
         rule export -> &'a str =
             PUB USE t:USE_TEXT ";"
+            -> { t }
+
+        rule import -> &'a str =
+            USE t:USE_TEXT ";"
             -> { t }
 
         rule USE_TEXT -> &'a str =
@@ -133,8 +151,8 @@ grammar! {
             -> { f }
 
         rule method -> Fun<'a> =
-            pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result w:where_clause tail
-            -> { Fun { name, generics: g, wheres: w, pauses, parts, result } }
+            pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result w:where_clause c:tail
+            -> { Fun { name, generics: g, wheres: w, calls: c, pauses, parts, result } }
 
         rule qualifiers -> bool =
             qs:qualifier*
@@ -160,10 +178,52 @@ grammar! {
           | empty
             -> { }
 
-        rule tail =
-            BRACES
-            -> { }
+        rule tail -> Vec<&'a str> =
+            cs:inside
+            -> { cs }
           | ";"
+            -> { Vec::new() }
+
+        rule inside -> Vec<&'a str> =
+            "{" cs:inside_run "}"
+            -> { cs }
+
+        rule inside_run -> Vec<&'a str> =
+            pieces:inside_piece*
+            -> { joined(pieces) }
+
+        rule inside_piece -> Called<'a> =
+            not("}") STRING
+            -> { Called::Nothing }
+          | not("}") CHAR
+            -> { Called::Nothing }
+          | not("}") LINE
+            -> { Called::Nothing }
+          | not("}") BLOCK
+            -> { Called::Nothing }
+          | not("}") inner:inside
+            -> { Called::Many(inner) }
+          | not("}") p:CALL
+            -> { Called::One(p) }
+          | not("}") ANY
+            -> { Called::Nothing }
+
+        rule CALL -> &'a str =
+            p:text(PATH) TURBOFISH "("
+            -> { p }
+
+        rule PATH =
+            raw_ident(PATH_TAIL)*
+            -> { }
+
+        rule PATH_TAIL =
+            "::" raw_ident
+            -> { }
+
+        rule TURBOFISH =
+            "::" ANGLES
+            -> { }
+          | empty
             -> { }
 
         rule parameters -> Vec<Part<'a>> =
@@ -539,6 +599,18 @@ grammar! {
           | empty
             -> { }
     }
+}
+
+fn joined(pieces: Vec<Called<'_>>) -> Vec<&str> {
+    let mut all = Vec::new();
+    for piece in pieces.into_iter() {
+        match piece {
+            Called::One(one) => { all.push(one) },
+            Called::Many(many) => { for one in many.iter() { all.push(one); } },
+            Called::Nothing => { },
+        };
+    }
+    all
 }
 
 fn kept(found: Vec<Found<'_>>) -> Vec<Item<'_>> {

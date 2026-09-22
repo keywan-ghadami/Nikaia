@@ -436,16 +436,17 @@ fn describe(crate_name: &str, project: Option<PathBuf>) -> Result<i32> {
     let proposed = written.notes.about_a_function.len();
     if proposed > 0 {
         println!(
-            "\n{proposed} signature{} carr{} a `Send` bound, and the file asks about {} \n\
-             beside the entry: does the call put what it is given on a thread? The \n\
-             describer proposes and never claims (ADR-193 D3).",
+            "\n{proposed} entr{} {} something the signature does not say - a `Send` bound, \n\
+             or a thread sink the calls reach - and the file asks beside {}: does this \n\
+             put what it is given on a thread? The describer proposes and never claims \n\
+             (ADR-193 D3, D4).",
             match proposed {
-                1 => "",
-                _ => "s",
+                1 => "y",
+                _ => "ies",
             },
             match proposed {
-                1 => "ies",
-                _ => "y",
+                1 => "carries",
+                _ => "carry",
             },
             match proposed {
                 1 => "it",

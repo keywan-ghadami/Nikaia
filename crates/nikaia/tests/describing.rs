@@ -279,6 +279,108 @@ fn what_the_describer_saw_is_a_note_and_never_a_column() {
     );
 }
 
+/// **The row a bound cannot answer** — [ADR-193](../../../docs/specification/adr/adr-193.md)
+/// D4's call graph, on the shim it was written from.
+///
+/// `across_a_thread_unchecked` asks its caller for nothing: an
+/// `unsafe impl<T> Send for Smuggled<T>` took the bound away. The only thing
+/// between it and a `tokio::spawn` is `on_one_worker`, which is **private** —
+/// nothing outside the crate can call it, and a reader that dropped a private
+/// function could not follow the calls at all.
+///
+/// And the sentence the note has to carry, which is why this is a note: *a sink
+/// reached through a call says this function threads **something**, never this
+/// function threads **your argument***. Connecting those is dataflow through a
+/// closure capture and is not built.
+#[test]
+fn a_bound_that_was_taken_away_is_found_by_following_the_calls() {
+    let described = |project: &str| {
+        let root = repo_root().join("examples/foreign-runtime").join(project);
+        let (ledger, described) = draft(&root, "hyper_shim").expect("the draft is written");
+        ledger.render_description("hyper_shim", &described.version, &described.notes)
+    };
+
+    let text = described("smuggled");
+    let above = text
+        .split("[fn.\"hyper_shim::across_a_thread_unchecked\"]")
+        .next()
+        .expect("the text before the entry");
+    assert!(
+        above.contains("reaches `tokio::spawn` through `on_one_worker`"),
+        "the path is named:\n{text}"
+    );
+    assert!(
+        above.contains("this function threads something"),
+        "and what a sink does say:\n{text}"
+    );
+    assert!(
+        above.contains("never *this function threads your argument*"),
+        "and what it does not:\n{text}"
+    );
+
+    // The one with the bound gets **both**, because they are two answers to
+    // two questions and a reviewer wants each.
+    let text = described("crossing");
+    let above = text
+        .split("[fn.\"hyper_shim::across_a_thread\"]")
+        .next()
+        .expect("the text before the entry");
+    assert!(above.contains("is bound `Send`"), "{text}");
+    assert!(above.contains("reaches `tokio::spawn`"), "{text}");
+
+    // And a function that reaches no sink says nothing. `local_handle` calls
+    // `std::rc::Rc::new` and nothing else.
+    let above = text
+        .split("[fn.\"hyper_shim::local_handle\"]")
+        .next()
+        .expect("the text before the entry");
+    let immediately = above.rsplit("\n\n").next().unwrap_or("");
+    assert!(
+        !immediately.contains("`local_handle`"),
+        "a function that threads nothing is not asked about:\n{text}"
+    );
+}
+
+/// **A `use` makes one function two strings**, and the table is what puts them
+/// back together ([ADR-193](../../../docs/specification/adr/adr-193.md) D4).
+///
+/// Written as its own test because the shim writes `tokio::spawn` in full, so
+/// the repository's own evidence never exercises the table — and a crate that
+/// imports what it calls is the common case rather than the exception.
+#[test]
+fn a_call_is_resolved_through_the_files_use_items() {
+    let root = project(
+        "imports",
+        "use std::thread::spawn;\n\
+         \n\
+         pub fn losschicken(x: i32) -> i32 {\n\
+         spawn(move || x);\n\
+         x\n\
+         }\n\
+         \n\
+         pub fn ruhig(x: i32) -> i32 { x }\n",
+        "fn main() {\n    fremd::losschicken(1)\n    fremd::ruhig(2)\n}",
+    );
+    let text = entries(&root);
+    let above = text
+        .split("[fn.\"fremd::losschicken\"]")
+        .next()
+        .expect("the text before the entry");
+    assert!(
+        above.contains("calls `std::thread::spawn`"),
+        "`spawn` is `std::thread::spawn` in this file:\n{text}"
+    );
+
+    // And the one that calls nothing says nothing, which is what keeps the
+    // note worth reading.
+    let above = text
+        .split("[fn.\"fremd::ruhig\"]")
+        .next()
+        .expect("the text before the entry");
+    let immediately = above.rsplit("\n\n").next().unwrap_or("");
+    assert!(!immediately.contains("`ruhig`"), "{text}");
+}
+
 /// **`Send` is a word**, and a bound that merely contains the letters is not it.
 ///
 /// The same rule the grammar's keywords are written under, one layer up: a

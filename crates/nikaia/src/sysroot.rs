@@ -240,6 +240,39 @@ pub fn lower_std_module(path: &Path) -> Result<String> {
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let parsed = crate::parser::parse_to_ast(&source)
         .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+    // **Checked before it is lowered**, which it was not, and
+    // [Part III C.1](../../../docs/specification/30-nikaia-tooling.md) is what
+    // that cost: a module this compiler would refuse a *program* for lowered in
+    // silence, and `rustc` was left to complain about the generated file. It
+    // happened — `tools/rust.nika` had a grammar action calling a function that
+    // could pause, which `NK2209` exists to refuse, and what a reader saw was
+    // *`await` is only allowed inside `async` functions*.
+    //
+    // The library is `std`'s own shipped ledger, which is what a module of it
+    // is compiled against anyway, and the checks that need a project — a
+    // manifest's boundary, an allowlist, a package's other units — have nothing
+    // to say about a file that is one unit and depends on nothing.
+    let own = crate::contracts::Ledger::infer(&parsed);
+    let library =
+        crate::contracts::Ledger::parse(crate::contracts::STD).context("std's shipped ledger")?;
+    let checked = crate::check::check(&parsed, &own, &library);
+    let refusals: Vec<&crate::check::Finding> = checked
+        .findings
+        .iter()
+        .filter(|finding| matches!(finding.severity, crate::check::Severity::Error))
+        .collect();
+    if let Some(first) = refusals.first() {
+        anyhow::bail!(
+            "{}: {} {}{}",
+            path.display(),
+            first.code,
+            first.message,
+            match refusals.len() {
+                1 => String::new(),
+                more => format!(" (and {} more)", more - 1),
+            }
+        );
+    }
     let lowered =
         crate::emit::emit_std(&parsed).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
     Ok(lowered.rust)

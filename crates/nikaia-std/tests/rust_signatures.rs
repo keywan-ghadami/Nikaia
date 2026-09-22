@@ -107,8 +107,15 @@ fn lines(items: &[Item<'_>], path: &str, out: &mut Vec<String>) {
                 }
                 out.push(line);
             }
+            // A `fn` that is not `pub`. Reported rather than skipped, because
+            // the call graph goes through it
+            // ([ADR-193](../../../docs/specification/adr/adr-193.md) D4), and
+            // shown here so a test that asserts what is *not* an item can see
+            // that this one is not an offer either.
+            Item::Hidden(f) => out.push(format!("{path}{}() (private)", f.name)),
             Item::Rec(r) => out.push(format!("{} {path}{}", r.what, r.name)),
             Item::Export(text) => out.push(format!("use {text}")),
+            Item::Used(text) => out.push(format!("(use {text})")),
             Item::Group(g) => {
                 let shut = match g.visible {
                     true => "",
@@ -143,10 +150,27 @@ fn read(text: &str) -> Vec<String> {
 fn nothing_that_is_not_an_item_is_reported() {
     let found = read(HAZARDS);
 
-    for phantom in ["ghost", "spectre", "phantom", "republish", "secret"] {
+    // **These are not items at all** — one in a doc comment, one in a block
+    // comment, one on the second line of a string literal.
+    for phantom in ["ghost", "spectre", "phantom"] {
         assert!(
             !found.iter().any(|line| line.contains(phantom)),
             "`{phantom}` is not an item of this crate, and `{found:?}` says it is"
+        );
+    }
+
+    // **And these are items the crate does not offer**, reported and marked
+    // rather than dropped: a private `fn` is on the way to a public one, and
+    // [ADR-193](../../../docs/specification/adr/adr-193.md) D4's call graph
+    // goes through it. `pub(crate)` is on this list because it is not `pub`.
+    for hidden in ["republish", "secret", "not_public"] {
+        let line = found
+            .iter()
+            .find(|line| line.contains(hidden))
+            .unwrap_or_else(|| panic!("`{hidden}` is an item: {found:?}"));
+        assert!(
+            line.ends_with("(private)"),
+            "`{hidden}` is not offered, and says so: {line}"
         );
     }
 
@@ -175,10 +199,6 @@ fn nothing_that_is_not_an_item_is_reported() {
         found.contains(&"use private::hidden as rescued".to_string()),
         "{found:?}"
     );
-
-    // `pub(crate)` is not `pub`, which the keyword rule says by refusing the
-    // `(` after the word.
-    assert!(!found.iter().any(|l| l.contains("not_public")), "{found:?}");
 
     // And the one that is real is where it was written.
     assert!(

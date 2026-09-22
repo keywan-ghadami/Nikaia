@@ -1444,8 +1444,18 @@ next:*
    or it is not — and it sees a promise made about a **private** type, which is
    what every other step in D4 is blind to. The note says what it cannot do: a
    tool can see that the promise was made and not whether it is true.
-5. **the intra-crate call graph and the `use` table** (D4), for the row where an
-   `unsafe impl Send` took the bound away.
+5. **the intra-crate call graph and the `use` table** — **built** at 0.0.163
+   (D4), for the row where an `unsafe impl Send` took the bound away. A body's
+   calls come from the grammar; the file's `use` items put `spawn` and
+   `tokio::spawn` back together; a private `fn` is reported rather than skipped,
+   because the graph goes through it and nothing outside the crate can call it;
+   and the walk is breadth-first, so the path a note names is the shortest one a
+   reviewer has to check. `across_a_thread_unchecked` reaches `tokio::spawn`
+   through `on_one_worker`, which is exactly the row this step exists for.
+
+*So [ADR-193](specification/adr/adr-193.md) is built*, except for
+`cargo metadata` — which is [ADR-195](specification/adr/adr-195.md) D4's `std`
+subprocess and is step 3.3 above, not this record's.
 
 *One rule of the record is worth repeating here, because it is the thing a first
 implementation gets wrong:* the describer **proposes and never claims**, and it
