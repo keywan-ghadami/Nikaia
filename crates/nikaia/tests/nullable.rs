@@ -1080,10 +1080,12 @@ fn main() {
 /// **The third case is not built, and this test is what holds it open.**
 ///
 /// A member that does **not** copy comes out of a view as a *view of the
-/// receiver* ([ADR-113](../../../docs/specification/adr/adr-113.md) D2), and a
-/// view that outlives its buffer is the state this compiler does not build
-/// (`docs/open-work.md` §2.42). So that reach lowers as it always did — it
-/// takes the receiver — and
+/// receiver* ([ADR-113](../../../docs/specification/adr/adr-113.md) D2) — which
+/// is **not** a state: three of the four shapes a `?.` has are Borrowed and the
+/// fourth is `NK2303`'s ([ADR-190](../../../docs/specification/adr/adr-190.md)
+/// D1). What it waits on is one question about `??` — a view on the left and an
+/// owned value on the right — which is on `docs/open-decisions.md`. So that
+/// reach lowers as it always did — it takes the receiver — and
 /// [ADR-052](../../../docs/specification/adr/adr-052.md) D8's translation stays
 /// for it alone.
 ///

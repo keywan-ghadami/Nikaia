@@ -4,6 +4,43 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.141] — 2026-09-22
+
+**The tether is needed at an escape and nowhere else — `?.` has no escape in
+it** — [ADR-190](docs/specification/adr/adr-190.md), correcting the reason
+[ADR-189](docs/specification/adr/adr-189.md) D3 gave one version earlier.
+
+### The owner asked the right question
+
+- **0.0.140 put the third of `?.` behind [`open-work.md`](docs/open-work.md) §2.42**, the largest entry in that file. The owner asked whether the tether is not only needed at very specific boundaries.
+- **It is**, and [ADR-008](docs/specification/adr/adr-008.md) D2 says so in its own table: **Tethered is chosen when the value escapes the buffer's owning scope** — returned past it, captured by a `@detached` lambda, written into a longer-lived container or a global. *A struct field is not an escape by itself*, which is the sentence that makes the 1BRC inner loop free.
+- **A `?.` is none of those.**
+
+### Measured: three of the four shapes are Borrowed
+
+| shape | what happens | state |
+| :--- | :--- | :--- |
+| the receiver is a **local**, the view stays in its scope | compiles, runs | Borrowed |
+| the receiver is a **temporary**, the view is consumed in the same statement | compiles, runs | Borrowed |
+| view **`??` view** — `user?.name ?? "nobody"`, and a literal *is* a view | compiles, runs, **zero cost** | Borrowed |
+| the view is **bound past a temporary** — `let n = find(1)?.name` | *temporary value dropped while borrowed* | an escape |
+
+- **And the fourth is not Tethered either**: it is `NK2303`'s own case — a view of a buffer that does not outlive it, refused in this language's words and naming `.to_owned()` ([ADR-156](docs/specification/adr/adr-156.md) D4). This compiler already builds that answer twice.
+
+### What actually blocks it is one question about `??`
+
+- **A view on the left and an owned value on the right** — `user?.name ?? "nobody".to_owned()` — cannot be joined. An owned result needs a copy on the borrowed branch, which [ADR-008](docs/specification/adr/adr-008.md) D5 bans outright; a view result needs the fallback to be one, which `"nobody"` already is and `"nobody".to_owned()` is not; refusing the mixed form names `.to_owned()`, which the program already wrote.
+- **It is a language question and not a measurement**, so it goes to [`open-decisions.md`](docs/open-decisions.md) with three options and a recommendation — **A**, `??` joins two views and the mixed form is refused, whose migration is six lines in one test file and none in the corpus.
+
+### The record is not rewritten
+
+- **[ADR-189](docs/specification/adr/adr-189.md) D3's conclusion stands** — the third case lowers as it did and is not refused, because refusing `find(1)?.name ?? "nobody".to_owned()` would refuse a program that compiles and runs today. What is replaced is the *cause* written beside it, in the living sentences and in one row of the index's *superseded and narrowed* table ([ADR-187](docs/specification/adr/adr-187.md) D4's rule, met a second time inside one day).
+
+### The method it cost
+
+- **[ADR-189](docs/specification/adr/adr-189.md) reasoned from D2's wording — *a view of the receiver* — to D2's state, without asking which state.** The lattice has three and the cheap one is the default, so *a view of X* says nothing about which; only **escaping the buffer's owning scope** does. A shape's state is a measurement — which is the rule [ADR-187](docs/specification/adr/adr-187.md) had been written about one day earlier, met from the other side.
+- **§2.42's *what rests on it* has now lost two entries**, both found by reading it against the code rather than following it: the grammar entry's `keeps` at 0.0.137, and this at 0.0.141. The entry now carries the distinction that keeps it from growing wrong a third time.
+
 ## [0.0.140] — 2026-09-22
 
 **`?.` lends its receiver where that needs no representation, and the third case

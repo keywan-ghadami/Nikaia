@@ -5696,9 +5696,12 @@ impl<'a> Checker<'a> {
                             // **The other half is not here**, and it is the
                             // representation rather than this walk: a member
                             // that does **not** copy comes out as a *view* of
-                            // the receiver (D2), and a view that outlives its
-                            // buffer is the state this compiler does not build
-                            // (`open-work.md` §2.42). So that reach lowers
+                            // the receiver (D2) - which is not a **state**:
+                            // three of the four shapes a `?.` has are Borrowed
+                            // and the fourth is `NK2303`'s
+                            // ([ADR-190](../../docs/specification/adr/adr-190.md)
+                            // D1). What it waits on is one question about `??`,
+                            // on `docs/open-decisions.md`. So that reach lowers
                             // exactly as it did, moving the receiver, and
                             // [ADR-052](../../docs/specification/adr/adr-052.md)
                             // D8's translation stays for it alone.

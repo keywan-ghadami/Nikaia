@@ -769,27 +769,36 @@ changes nothing lends its scrutinee. Both shapes leave the receiver usable on
 the next line, and both **run** with it used twice in
 `crates/nikaia/tests/nullable.rs`.
 
-*What is left is one third, and it is [§2.42](#242-the-tether-a-view-that-outlives-its-buffer-is-refused-not-tethered)'s.*
-A member that does not copy comes out of the reach as a **view of the
-receiver**, which is the state Part I 6.6 calls Tethered and this compiler does
-not build. So that reach still takes the value, and
-[ADR-052](specification/adr/adr-052.md) D8's translation stays for it alone,
-narrowed to say which case it is about.
+*What is left is one third, and it is **not** the tether*
+([ADR-190](specification/adr/adr-190.md) D1). A member that does not copy comes
+out of the reach as a **view of the receiver**
+([ADR-113](specification/adr/adr-113.md) D2) — and a view is not a *state*: the
+lattice has three and the cheap one is the default.
+[ADR-008](specification/adr/adr-008.md) D2 reaches Tethered only where a value
+**escapes** the buffer's owning scope, and three of the four shapes a `?.` has
+do not:
 
-*Measured, rather than left as a reason.* Lowering the third case as
-[ADR-113](specification/adr/adr-113.md) D2 asks makes `user?.name` a
-`ref String?`, and `user?.name ?? "nobody".to_owned()` then has a view on one
-side of the `??` and an owned value on the other — no fit, and no way to make
-one that does not insert a copy [ADR-008](specification/adr/adr-008.md) D5
-forbids. The receiver is usually a temporary besides, so the view dangles,
-which is the refusal the tether analysis would own.
+| shape | what happens | state |
+| :--- | :--- | :--- |
+| the receiver is a **local**, the view stays in its scope | compiles, runs | Borrowed |
+| the receiver is a **temporary**, the view is consumed in the same statement | compiles, runs | Borrowed |
+| view **`??` view** — `user?.name ?? "nobody"`, and a literal *is* a view | compiles, runs, zero cost | Borrowed |
+| the view is **bound past a temporary** — `let n = find(1)?.name` | *temporary value dropped while borrowed* | an escape |
 
-*And it is not refused meanwhile*, although a refusal is what stands where
-Tethered would everywhere else here (`NK2302`, `NK2303`). Those refuse programs
-the language below already refused; this one would refuse
-`find(1)?.name ?? "nobody".to_owned()`, which compiles and runs today — and a
-correct program refused is the one thing this compiler may never do
-([Part III C.4](specification/30-nikaia-tooling.md)).
+The fourth is not Tethered either: it is `NK2303`'s own case — a view of a
+buffer that does not outlive it, refused in this language's words and naming
+`.to_owned()` ([ADR-156](specification/adr/adr-156.md) D4), which this compiler
+already builds twice.
+
+*What it actually waits on is one question about `??`*, and it is the owner's,
+on [`open-decisions.md`](open-decisions.md): a view on the left and an **owned**
+value on the right — `user?.name ?? "nobody".to_owned()` — cannot be joined
+without the copy [ADR-008](specification/adr/adr-008.md) D5 forbids.
+
+*And it is not refused meanwhile*, which is
+[ADR-189](specification/adr/adr-189.md) D3 and stands: refusing
+`find(1)?.name ?? "nobody".to_owned()` would refuse a program that compiles and
+runs today ([Part III C.4](specification/30-nikaia-tooling.md)).
 
 ### 2.25. An `overlap` keeps every failure — the cleanup half
 
@@ -1187,17 +1196,23 @@ analysis, the representation, the ledger — and **the analysis is done**. What 
 left is the representation and the type, and the representation is the expensive
 half: three layouts per struct, chosen per site, with the container holding the
 handle. **What rests on it:** *text is one type*, above, whose `String` state
-comes from this analysis; the third of `?.` that is not built, above, where a
-member that does not copy comes out as a view of the receiver; and `Bytes`
-itself, which is the same question read from the other end.
+comes from this analysis, and `Bytes` itself, which is the same question read
+from the other end.
 
-*One thing that used to rest on it does not*, and it is worth saying because
-the sentence above carried it for three versions: **the `keeps` column of a
-grammar's entry** closed at 0.0.137
-([ADR-186](specification/adr/adr-186.md)) without this. A parse keeps its
-`input` exactly when its declared result may hold a view into it, which is a
-question about the rule's **declared type** and not about a state — so the
-analysis reached it after all, one item kind over.
+*Two things this list named do not rest on it*, and both were found by reading
+it against the code rather than following it — which is the rule this file's own
+head states. **The `keeps` column of a grammar's entry** closed at 0.0.137
+([ADR-186](specification/adr/adr-186.md)): a parse keeps its `input` exactly
+when its declared **result type** may hold a view into it, which is not a state.
+**The third of `?.`** closed out of this list at 0.0.141
+([ADR-190](specification/adr/adr-190.md)): three of its four shapes are
+Borrowed and the fourth is `NK2303`'s, so none of it is an escape.
+
+*Which is worth saying twice, because it is how this entry grows wrong:* a value
+that is a **view** is not a value that is **Tethered**. The lattice has three
+states and the cheap one is the default, so *a view of X* says nothing about
+which — only **escaping the buffer's owning scope** does
+([ADR-008](specification/adr/adr-008.md) D2).
 
 *And the analysis has a limit worth knowing before it is trusted further.* It
 errs **towards Tethered**, which is D7's own polarity, and the one shape it does

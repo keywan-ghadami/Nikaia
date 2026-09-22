@@ -455,8 +455,10 @@ fn is_rust_internal(note: &str) -> bool {
 /// ([ADR-189](../../../../docs/specification/adr/adr-189.md)). A reached
 /// **method**, and a field whose member **copies**, take the receiver by
 /// `as_ref()` now and there is no move left to explain; what still moves is the
-/// member that would come out as a *view*, and that waits on the state this
-/// compiler does not build (`docs/open-work.md` §2.42).
+/// member that would come out as a *view*, and that waits on one question about
+/// `??` ([ADR-190](../../../../docs/specification/adr/adr-190.md) D2,
+/// `docs/open-decisions.md`) rather than on a state - three of the four shapes
+/// a `?.` has are Borrowed, and the fourth is `NK2303`'s.
 /// The two types an `expected … found …` names, where both are the same.
 ///
 /// Rust writes a type mismatch as *"expected `A`, found `B`"*, so a message
