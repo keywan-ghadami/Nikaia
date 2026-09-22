@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.147] — 2026-09-22
+
+**Option D gets its pipeline, checked against the repository's own worked
+example** — the owner's five steps, read against
+[`examples/foreign-runtime/shim`](examples/foreign-runtime/shim), which was
+written to study this exact hole and has **both** shapes in it side by side. No
+code changes.
+
+### The shim answers the question that was about to be argued
+
+```rust
+across_a_thread<T: Describe + Send + 'static>      → on_one_worker(move || value.describe())
+across_a_thread_unchecked<T: Describe + 'static>   → on_one_worker(move || smuggled.describe())
+                                                       // the bound is gone: `unsafe impl Send for Smuggled<T>`
+on_one_worker<F: FnOnce() -> String + Send + 'static> → tokio::spawn(…)
+```
+
+- **In safe Rust the `Send` bound is not a heuristic at all**, and this repository already said so in the shim's own doc comment: *every safe way of reaching another thread carries it — `std::thread::spawn`, `tokio::spawn`, `rayon`'s scopes — so a foreign crate that takes a value across a thread boundary in safe Rust demands it of its caller too.* Rust's type system does the propagation and the answer surfaces in the **signature**. That is stronger ground than *99 %*.
+- **Which is why the call graph earns its keep for the other row, not the first one.** `across_a_thread_unchecked` has no bound — an `unsafe impl Send` on a wrapper took it away — so only following the calls reaches `tokio::spawn`. That is the shape the shim says *nothing anywhere complains about*.
+
+### Step by step
+
+- **1, cargo metadata** — yes; it replaces a guess about which files with the resolved version's actual sources. A subprocess, on a command a person runs rather than a build step.
+- **2, `syn` instead of the scraper** — yes, and the rest rests on it. [ADR-104](docs/specification/adr/adr-104.md) D4 said *the crate's sources are parsed* without naming a parser, so nothing is contradicted. It closes the second of the scraper's three named limits outright and narrows the third. **It does not close the first**: `syn` does not expand macros either, so *an item a macro generates is not in the text* stays true and has to keep being said.
+- **3, the intra-crate call graph** — yes, for the `unsafe impl Send` row above and not for the safe one.
+- **4, the matcher** — yes, with two things named rather than discovered: a per-file **`use` table**, or `use tokio::spawn; spawn(x)` is a different string from `tokio::spawn(x)`; and that a sink reached through a call says *this function threads something*, never *this function threads your argument*. Connecting those is dataflow through a wrapper and a closure capture — a third tool. So the output is a **note that names the path**, not a claim.
+- **5, the crate summary cache** — **not yet**, by this project's own rule: [`staging-candidates.md`](docs/staging-candidates.md)'s *a staging decision enters the compiler only together with a measured crossover; without one the complexity is certain and the gain is not*. `nikaia describe` is on-demand, and the committed `.contracts` file **is** already the artifact that keeps the answer ([ADR-100](docs/specification/adr/adr-100.md)). A second cache with a key of its own is the shape [ADR-021](docs/specification/adr/adr-021.md) D5 and D9 were written about.
+
+### And a sixth step the list did not have
+
+- **Flag `unsafe impl Send` and `unsafe impl Sync` in the described crate.** One syntactic pattern, **sound** — the item is in the text or it is not — and the single most useful sentence this tool could write about a foreign crate: *this crate makes a promise the toolchain cannot check*. The shim is the worked example, and the hole it opens on purpose is invisible to every other step.
+- **What none of it can do, and the note must say so**: a tool can see that the promise was made; it cannot see whether it is true. That is the line between *a rule the toolchain enforces and a rule it inherits* — the shim's own words — and it is why every output here is a note for a reviewer and the column stays a person's.
+
 ## [0.0.146] — 2026-09-22
 
 **The `threads` question gains an option that helps the describer instead of

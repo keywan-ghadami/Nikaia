@@ -100,6 +100,73 @@ entail:
 propose `false` never, and stays silent wherever it cannot see — which is the
 same *absence is nobody said* the column already rests on.
 
+**What D would take, step by step, and what each step is worth.** The owner's
+shape, checked against
+[`examples/foreign-runtime/shim`](../examples/foreign-runtime/shim) — which is
+the repository's own answer, because it was written to study this exact hole and
+has **both** shapes in it side by side:
+
+```rust
+across_a_thread<T: Describe + Send + 'static>      → on_one_worker(move || value.describe())
+across_a_thread_unchecked<T: Describe + 'static>   → on_one_worker(move || smuggled.describe())
+                                                       // the bound is gone: `unsafe impl Send for Smuggled<T>`
+on_one_worker<F: FnOnce() -> String + Send + 'static> → tokio::spawn(…)
+```
+
+1. **Cargo metadata to find the crate's files.** Yes, and it replaces a guess
+   with an answer: the resolved version's actual sources, path and git
+   dependencies included. It is a subprocess, and this is a command a person
+   runs rather than a build step, so the cost is not the question.
+2. **A real parser (`syn`) instead of the scraper.** Yes, and it is the step the
+   rest rests on. [ADR-104](specification/adr/adr-104.md) D4 said *the crate's
+   sources are parsed* without naming a parser, so nothing is being
+   contradicted. It closes the second of the scraper's three named limits
+   outright — *a `pub` item inside a `mod` block is read as the crate's own* —
+   and narrows the third. **It does not close the first**: `syn` does not expand
+   macros either, so *an item a macro generates is not in the text* stays true
+   and has to keep being said.
+3. **An intra-crate call graph.** Yes — and for a reason sharper than *more
+   reach*. In **safe** Rust the signature scan needs no call graph, because the
+   bound is not a heuristic there at all: the shim's own doc comment says why —
+   *every safe way of reaching another thread carries it … so a foreign crate
+   that takes a value across a thread boundary in safe Rust demands it of its
+   caller too*. Rust's type system does the propagation and the answer surfaces
+   in the signature. **What the call graph is for is the other row**:
+   `across_a_thread_unchecked` has no bound, because an `unsafe impl Send` on a
+   wrapper took it away — and only following the calls reaches `tokio::spawn`.
+   That is the shape the shim says *nothing anywhere complains about*.
+4. **The pattern and sink matcher.** Yes, with two things named rather than
+   discovered: a per-file **`use` table**, or `use tokio::spawn; spawn(x)` is a
+   different string from `tokio::spawn(x)` and the matcher misses it; and the
+   knowledge that a sink reached through a call says *this function threads
+   something*, never *this function threads your argument* — connecting the two
+   is dataflow through a wrapper and a closure capture, which is a third tool.
+   So the call graph's output is a **note that names the path**, not a claim.
+5. **A crate summary cache.** **Not yet**, and the rule is this project's own:
+   [`staging-candidates.md`](staging-candidates.md) — *a staging decision enters
+   the compiler only together with a measured crossover; without one the
+   complexity is certain and the gain is not*. Two things say the crossover is
+   unlikely to be there: `nikaia describe` is a command a person runs when a
+   program first reaches into a crate, not a build step; and the committed
+   `.contracts` file **is** already the artifact that keeps the answer
+   ([ADR-100](specification/adr/adr-100.md)). A second cache with a key of its
+   own is the shape [ADR-021](specification/adr/adr-021.md) D5 and D9 were
+   written about.
+
+**And one step the list does not have, which may be worth more than three of
+them: flag `unsafe impl Send` and `unsafe impl Sync` in the described crate.**
+It is one syntactic pattern, it is sound — the item is in the text or it is not
+— and it is the single most useful sentence this tool could write about a
+foreign crate: *this crate makes a promise the toolchain cannot check*. The shim
+is the worked example, and the hole it opens on purpose is invisible to every
+other step above.
+
+**What none of it can do, and the note must say so.** `unsafe impl Send` is a
+promise a crate makes about its own type. A tool can see that the promise was
+made; it cannot see whether it is true. That is the line between *a rule the
+toolchain enforces and a rule it inherits* — the shim's own words — and it is
+why every output here is a note for a reviewer and the column stays a person's.
+
 **What this page recommends: A with D, and the third value.** The precedent is exact —
 `crosses = false` is already a hand-written claim about something a signature
 cannot show — and the description is reviewed like code
