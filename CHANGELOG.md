@@ -4,6 +4,44 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.144] — 2026-09-22
+
+**The body's run-or-kept answer decides a code parameter's shape** —
+[ADR-192](docs/specification/adr/adr-192.md), the owner's **option A**, closing
+[`open-decisions.md`](docs/open-decisions.md)'s question and narrowing
+[ADR-122](docs/specification/adr/adr-122.md) D1.
+
+### Read at the right altitude, it is not a new rule
+
+- **[ADR-122](docs/specification/adr/adr-122.md) D1 made a pausing code parameter a boxed future *whether the callee runs it or keeps it***, on the ground that Rust had no stable `async` closure. [ADR-187](docs/specification/adr/adr-187.md) measured that ground and found it false.
+- **This language already lets an analysis pick a representation for one written type**, in four places: `Shared[T]` is `Rc` or `Arc` and *which one is decided per value* ([ADR-037](docs/specification/adr/adr-037.md) D7); [ADR-008](docs/specification/adr/adr-008.md) D2 is titled *solved per construction site, not per type*; [Part I 5.4](docs/specification/10-nikaia-light.md) C says it about **this very construct** — *the context of such a parameter is inferred, not written … there is no `@detached` to write*; and [ADR-094](docs/specification/adr/adr-094.md) D1 already lets the callee's body decide the caller's `&`.
+
+### D1: the shape follows the body
+
+- **Run** — the body calls it and does not keep it: `impl AsyncFn(A) -> R`. **Kept** — stored, handed back, given to a task: the boxed closure, unchanged, because `AsyncFn` is a **bound** and a value a field holds needs a type. **`sync`** is untouched and still writes the plain closure.
+- **The lambda follows at the call**: `async |a| { … }` at a run parameter, `|a| Box::pin(async move { … })` at a kept one. **No `move` on the run shape**, which is [Part I 5.4](docs/specification/10-nikaia-light.md) A — a lambda handed to a parameter the body only calls **borrows** what it captures, because the call is over before the caller's frame is.
+- **Measured**, `benches/handler`, control tying: plain closure **0.27** ns/call, boxed future **11.69**, async closure **1.28**. The shape a run parameter used to pay costs 8.7× the one it needed.
+
+### D2: no column is added
+
+- **Run is the absence of `keeps`**, which is where [ADR-102](docs/specification/adr/adr-102.md) D3 already put it: *the same analysis that decides whether a value is a view or kept, asked of a parameter that is code … the ledger records which of the two a parameter is*. It does — `fn runs(f: fn() -> String) { return f() }` carries no `keeps`, and `fn holds(f: fn() -> String) { spawn fn { f() } }` carries `keeps = ["f"]`.
+- **What this adds is a second reader** of a column that was already written.
+
+### D3: the two ends read it the same way
+
+- **The declaration writes the parameter and the call writes the argument**, and the two disagreeing is one parameter with two shapes — `rustc`'s words about a file nobody wrote. A callee this build has no contract for reads as **run** at both ends; the direction matters less than the agreement. It is [ADR-094](docs/specification/adr/adr-094.md) D1's own rule for the `&`: *one answer read twice*.
+
+### D4: what it traded away, and what answers for it
+
+- **Predictability.** A reader can no longer tell a run parameter's cost from its signature alone, and a library author who moves a body from run to kept moves every caller's cost — action at a distance, which [ADR-005](docs/specification/adr/adr-005.md) §3 rejected in-source annotations to avoid.
+- **The instrument for that already exists and is used twice**: a `keeps` change is a `nikaia.contracts` diff in review, a tether state is one ([ADR-008](docs/specification/adr/adr-008.md) D6 — *the inverse tool is inspection, not assertion*), and `--locked` fails a build whose contracts moved unrecorded. This is its third use, not a new mechanism.
+
+### What moved and what did not
+
+- **`std`'s own entries are untouched** ([ADR-122](docs/specification/adr/adr-122.md) D3): they are Rust with hand-written signatures, and `declared_here` still gates the whole question.
+- **The kept branch is written and not yet reachable from a program**: a field, a result and a `let` are `NK1142` until [ADR-102](docs/specification/adr/adr-102.md) D5 lands, so `spawn` is the one position that can keep a code parameter today — and a test holds that branch honest until then.
+- **Two tests changed and two were added.** The two that changed asserted the old shape, which is what a test is for.
+
 ## [0.0.143] — 2026-09-22
 
 **A decision written at the wrong altitude** — the owner's critique of

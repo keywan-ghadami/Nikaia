@@ -1,34 +1,39 @@
 //! What the **boxed future** costs a handler that does not pause
 //! ([ADR-122](../../../../docs/specification/adr/adr-122.md) D3).
 //!
-//! D1 makes a parameter whose type may pause lower to a closure returning a
+//! D1 made a parameter whose type may pause lower to a closure returning a
 //! boxed future — `impl Fn(A) -> Pin<Box<dyn Future<Output = R>>>` — whether the
-//! callee runs it or keeps it, so that a reader can tell what a signature costs
-//! by reading it. A caller who hands such a parameter a lambda that does **not**
-//! pause pays a heap allocation and a dynamic call it did not before, and D3
-//! says that number is measured rather than assumed.
+//! callee runs it or keeps it, and D3 said that number is measured rather than
+//! assumed. **The *whether* is gone since
+//! [ADR-192](../../../../docs/specification/adr/adr-192.md) D1**: a **run**
+//! parameter takes `impl AsyncFn(A) -> R` and only a **kept** one keeps the
+//! box, because `AsyncFn` is a bound and a field needs a type. What the rows
+//! below measure is therefore what each of the two shapes costs, rather than a
+//! cost one case was paying for the other.
 //!
 //! | row | what it is |
 //! |---|---|
 //! | plain closure | what `fn(i64) -> i64 sync` lowers to: `impl Fn(i64) -> i64` |
 //! | boxed future | what `fn(i64) -> i64` lowers to, awaited by the same executor a program uses |
-//! | async closure | the shape D1 was written as having no stable spelling: `impl AsyncFn(i64) -> i64` |
+//! | async closure | what `fn(i64) -> i64` lowers to at a **run** parameter: `impl AsyncFn(i64) -> i64` |
 //! | plain closure, twice | the control. It must tie, and it bounds the difference above from below |
 //!
 //! **The third row is why this bench outlived its record**
-//! ([ADR-187](../../../../docs/specification/adr/adr-187.md) D1). D1 chose the
+//! ([ADR-187](../../../../docs/specification/adr/adr-187.md) D1,
+//! [ADR-192](../../../../docs/specification/adr/adr-192.md) D1). D1 chose the
 //! boxed future because *"Rust has no stable `async` closure"*, and that is
-//! false on this toolchain and was false when it was written. The row is here
-//! so the alternative is a number rather than an argument.
+//! false on this toolchain and was false when it was written. The row was added
+//! so the alternative would be a number rather than an argument; it is now what
+//! a run parameter costs, and the **second** row is what a kept one does.
 //!
 //! ```sh
 //! cargo run -p handler-bench --release --bin handler
 //! ```
 //!
 //! **What it is not.** It is not a claim about a handler that *does* pause:
-//! there the future is the only shape there is, so there is nothing to compare
-//! it against. The cost measured here is the one D1 imposes on the case that
-//! did not need it.
+//! there the plain closure is not a shape at all, so the floor is a reference
+//! point and not an alternative. What the three rows compare is the two shapes
+//! a pausing parameter can take against the one a `sync` parameter takes.
 
 use std::future::Future;
 use std::hint::black_box;

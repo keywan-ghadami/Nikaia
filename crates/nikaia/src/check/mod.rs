@@ -346,6 +346,19 @@ pub struct Checked {
     /// computed where it is known and looked up where it is needed. The same
     /// arrangement `lent_args` and `nullable_args` have.
     pub future_lambdas: BTreeSet<(usize, usize)>,
+    /// The lambda arguments whose parameter the callee **runs** rather than
+    /// keeps, so the closure is an `async` one and not a boxed future
+    /// ([ADR-192](../../docs/specification/adr/adr-192.md) D1).
+    ///
+    /// A subset of [`Checked::future_lambdas`], recorded beside it rather than
+    /// instead of it: the two shapes differ only at a *run* parameter, and the
+    /// emitter reads both keys at one position.
+    ///
+    /// **Run is the absence of `keeps`**, which is the column
+    /// [ADR-102](../../docs/specification/adr/adr-102.md) D3 already points at:
+    /// *the same analysis that decides whether a value is a view or kept, asked
+    /// of a parameter that is code*. Nothing new is derived for it.
+    pub run_lambdas: BTreeSet<(usize, usize)>,
     pub witnessed_sets: BTreeSet<usize>,
     /// The method calls that **pause**, keyed the same way and narrowed the same
     /// way ([ADR-055](../../docs/specification/adr/adr-055.md) D2).
@@ -1166,6 +1179,8 @@ pub struct Propagation {
     pub witnessed_sets: BTreeSet<usize>,
     /// [`Checked::future_lambdas`].
     pub future_lambdas: BTreeSet<(usize, usize)>,
+    /// [`Checked::run_lambdas`].
+    pub run_lambdas: BTreeSet<(usize, usize)>,
     /// [`Checked::narrowing_casts`].
     pub narrowing: BTreeMap<(usize, String), Narrowing>,
     /// [`Checked::nullable_sites`].
@@ -1337,6 +1352,7 @@ pub fn propagation_against(
         pausing_methods: checked.pausing_methods,
         witnessed_sets: checked.witnessed_sets,
         future_lambdas: checked.future_lambdas,
+        run_lambdas: checked.run_lambdas,
         narrowing: checked.narrowing_casts,
         nullable: checked.nullable_sites,
         flattened: checked.flattened_reaches,
@@ -4144,8 +4160,13 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|ty| ty::substitute(ty, &bound))
             .collect();
-        let found =
-            self.arguments_given(args, &expected, self.own.functions.contains_key(&key), span);
+        let found = self.arguments_given(
+            args,
+            &expected,
+            self.own.functions.contains_key(&key),
+            Some(contract),
+            span,
+        );
         self.a_set_that_reads_what_it_writes(&on, entry, &found, span);
         // **The source's own name and not the ledger's**, because what
         // `arguments` records is read back by the emitter off the line as it is
@@ -7306,6 +7327,7 @@ impl<'a> Checker<'a> {
             resolved
                 .as_ref()
                 .is_some_and(|(key, _)| self.own.functions.contains_key(key)),
+            resolved.as_ref().map(|(_, contract)| &**contract),
             span,
         );
         let passed: Vec<(String, Ty)> = config
@@ -12026,6 +12048,10 @@ impl<'a> Checker<'a> {
         args: &[Expr],
         expected: &[Ty],
         declared_here: bool,
+        // The callee's contract, where one was resolved. Read for one question:
+        // whether it **keeps** the parameter a lambda is landing in
+        // ([ADR-192](../../docs/specification/adr/adr-192.md) D1).
+        callee: Option<&FnContract>,
         span: &Span,
     ) -> Vec<Ty> {
         args.iter()
@@ -12054,6 +12080,28 @@ impl<'a> Checker<'a> {
                     // keyed the same way.
                     if !is_sync && declared_here {
                         self.checked.future_lambdas.insert((span.start, at));
+                        // **And an `async` closure where the callee *runs* it**
+                        // ([ADR-192](../../docs/specification/adr/adr-192.md)
+                        // D1). The box is what a **kept** parameter needs, and
+                        // a run parameter never did: `impl AsyncFn(A) -> R` is
+                        // 1.37 ns/call against the box's 11.99, on a 0.31
+                        // floor.
+                        //
+                        // **Run is the absence of `keeps`**, and a callee this
+                        // walk could not resolve is read as run - which agrees
+                        // with what the *declaration* writer does with the same
+                        // absent answer. The two reading one column the same
+                        // way is the whole of what keeps them from writing two
+                        // shapes for one parameter.
+                        let runs = callee.is_none_or(|c| {
+                            c.signature
+                                .as_ref()
+                                .and_then(|s| s.arguments().get(at).cloned())
+                                .is_none_or(|(name, _)| !c.keeps.contains(&name))
+                        });
+                        if runs {
+                            self.checked.run_lambdas.insert((span.start, at));
+                        }
                     }
                     self.lambda(
                         params,

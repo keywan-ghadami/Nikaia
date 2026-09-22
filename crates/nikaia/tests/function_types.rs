@@ -183,14 +183,14 @@ fn throws_on_the_type_is_the_result_a_throws_function_has() {
         plain.contains("impl Fn(Path) -> Result<Bytes, Box<dyn std::error::Error>>"),
         "{plain}"
     );
-    // Without it, the same `Result` is what the **future** hands back
-    // ([ADR-122](../../../docs/specification/adr/adr-122.md) D1).
-    let future = lowered("fn load(reader: fn(Path) -> Bytes throws) { }\nfn main() { }\n");
+    // Without it, the same `Result` is what the **async closure** hands back
+    // ([ADR-192](../../../docs/specification/adr/adr-192.md) D1). `load` does
+    // not keep `reader`, so it is a run parameter and takes the bound rather
+    // than the box.
+    let run = lowered("fn load(reader: fn(Path) -> Bytes throws) { }\nfn main() { }\n");
     assert!(
-        future.contains(
-            "Pin<Box<dyn std::future::Future<Output = Result<Bytes, Box<dyn std::error::Error>>>>>"
-        ),
-        "{future}"
+        run.contains("impl AsyncFn(Path) -> Result<Bytes, Box<dyn std::error::Error>>"),
+        "{run}"
     );
     let nothing = lowered("fn attempt(step: fn() sync throws) { }\nfn main() { }\n");
     assert!(
@@ -201,16 +201,14 @@ fn throws_on_the_type_is_the_result_a_throws_function_has() {
 
 /// **A lambda that pauses is an ordinary program now**
 /// ([ADR-122](../../../docs/specification/adr/adr-122.md) D2), where it used to
-/// be refused at the build, because the lowering had no shape for one. D1 *is*
-/// the shape — a closure returning a boxed future — so there is nothing left to
-/// refuse.
+/// be refused at the build, because the lowering had no shape for one.
 ///
-/// **The reason D1 gave for choosing that shape was false**: Rust's `async`
-/// closure is stable, `impl AsyncFn(A) -> R` costs 1.37 ns/call against the
-/// box's 11.99, and whether D1's one-spelling coherence is worth the difference
-/// is open ([ADR-187](../../../docs/specification/adr/adr-187.md) D1, D3). What
-/// this test asserts — that the program lowers rather than being refused — is
-/// D2 and does not depend on which shape wins.
+/// **And the shape is the one the body asks for**
+/// ([ADR-192](../../../docs/specification/adr/adr-192.md) D1): `run` calls `f`
+/// and does not keep it, so the parameter is `impl AsyncFn() -> String` and the
+/// lambda an `async` closure — 1.37 ns/call against the box's 11.99, on a
+/// 0.31 floor. What this test asserted before that record — that the program
+/// lowers rather than being refused — is D2 and holds either way.
 #[test]
 fn a_lambda_that_pauses_fits_a_parameter_that_allows_pausing() {
     let source = "use std::io\n\nfn run(f: fn() -> String) -> String { return f() }\n\
@@ -220,13 +218,67 @@ fn a_lambda_that_pauses_fits_a_parameter_that_allows_pausing() {
     // to return an error here rather than write anything.
     let rust = lowered(source);
     assert!(
-        rust.contains("|| Box::pin(async move {"),
-        "the lambda is a closure returning a future: {rust}"
+        rust.contains("fn run(f: impl AsyncFn() -> String)"),
+        "a run parameter takes the bound: {rust}"
+    );
+    // **No `move`**, which is Part I 5.4 A: a lambda handed to a parameter the
+    // body only calls borrows what it captures.
+    assert!(
+        rust.contains("run(async || {"),
+        "and the lambda is an `async` closure: {rust}"
     );
     assert!(
         rust.contains("io::read_to_string().await"),
         "and its body may await inside it: {rust}"
     );
+}
+
+/// **The declaration and the call read one column**
+/// ([ADR-192](../../../docs/specification/adr/adr-192.md) D3), and this is the
+/// test that would catch them drifting apart: the two disagreeing is one
+/// parameter with two shapes, which is `rustc`'s words about a file nobody
+/// wrote.
+///
+/// It **runs**, because the shape looking right is what the old lowering also
+/// did.
+#[test]
+fn a_run_parameter_that_pauses_compiles_and_runs() {
+    let printed = ran(
+        "async-run-parameter",
+        "use std::time\n\n\
+         fn twice(f: fn() -> i64) -> i64 { return f() + f() }\n\
+         fn main() {\n\
+         \x20   let said = twice(fn() {\n\
+         \x20       time::sleep(1.millis())\n\
+         \x20       return 21\n\
+         \x20   })\n\
+         \x20   println(f\"{said}\")\n\
+         }\n",
+    );
+    assert_eq!(printed.trim(), "42");
+}
+
+/// **A parameter the body *keeps* keeps the box**
+/// ([ADR-192](../../../docs/specification/adr/adr-192.md) D1), because
+/// `AsyncFn` is a **bound** and a value that outlives the call needs a type.
+///
+/// `spawn` is the one position that can keep a code parameter today — a field,
+/// a result and a `let` are all `NK1142` until
+/// [ADR-102](../../../docs/specification/adr/adr-102.md) D5 lands — so this is
+/// what holds the kept branch honest until then.
+#[test]
+fn a_kept_parameter_keeps_the_boxed_closure() {
+    let rust = lowered(
+        "fn holds(f: fn() -> String) {\n\
+         \x20   spawn fn { println(f()) }\n\
+         }\n\
+         fn main() { }\n",
+    );
+    assert!(
+        rust.contains("Pin<Box<dyn std::future::Future<Output = String>>>"),
+        "a kept parameter keeps the box: {rust}"
+    );
+    assert!(!rust.contains("impl AsyncFn"), "{rust}");
 }
 
 /// **`std`'s own entries are untouched** (D3), and this is the corpus case that

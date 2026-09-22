@@ -1076,6 +1076,10 @@ struct Emitter<'p> {
     /// file has none ([ADR-028](../../../docs/specification/adr/adr-028.md)) —
     /// the same arrangement `lent_args` and `nullable_args` arrive by.
     future_lambdas: std::collections::BTreeSet<(usize, usize)>,
+    /// Of those, the ones whose parameter the callee **runs**, which take an
+    /// `async` closure rather than a boxed future
+    /// (`check::Checked::run_lambdas`).
+    run_lambdas: std::collections::BTreeSet<(usize, usize)>,
     /// The method calls that **pause**, by the byte their statement starts at
     /// and the name written (`check::Checked::pausing_methods`).
     ///
@@ -1162,6 +1166,15 @@ struct Emitter<'p> {
     /// The field this unrolled turn stands at: the binding the `for` wrote, and
     /// the field's own name.
     at_field: std::cell::RefCell<Option<(String, String)>>,
+    /// Whether the code parameter being written is one the body **runs**
+    /// ([ADR-192](../../docs/specification/adr/adr-192.md) D1).
+    ///
+    /// Set around the one `ty_counted` call that writes a parameter's type, for
+    /// the reason `specialising` above is a cell: the type writer takes a type
+    /// and this is a fact about the **position**. Run is the absence of
+    /// `keeps`, read off the contract the declaration writer already has in
+    /// hand for `lends`.
+    code_parameter_runs: std::cell::RefCell<bool>,
     /// Part I 3.5: the `?.` reaches whose field is itself nullable and which
     /// therefore flatten (`check::Checked::flattened_reaches`).
     flattened_reaches: std::collections::BTreeSet<(usize, String)>,
@@ -2053,6 +2066,7 @@ impl<'p> Emitter<'p> {
             pausing_methods: propagation.pausing_methods,
             witnessed_sets: propagation.witnessed_sets,
             future_lambdas: propagation.future_lambdas,
+            run_lambdas: propagation.run_lambdas,
             narrowing_casts: propagation.narrowing,
             shared,
             nullable_sites: propagation.nullable,
@@ -2067,6 +2081,7 @@ impl<'p> Emitter<'p> {
             unrolled_calls: propagation.unrolled_calls,
             specialising: std::cell::RefCell::new(None),
             at_field: std::cell::RefCell::new(None),
+            code_parameter_runs: std::cell::RefCell::new(false),
             flattened_reaches: propagation.flattened,
             copied_reaches: propagation.copied,
             viewed_reaches: propagation.viewed,
@@ -3438,7 +3453,21 @@ impl<'p> Emitter<'p> {
                             .unwrap_or_else(|| "u8".to_string());
                     format!("[{element}; {length}]")
                 }
-                _ => self.ty_counted(&a.ty, how(a.name), self.count_at(&key, name)),
+                _ => {
+                    // **Run is the absence of `keeps`**, off the very contract
+                    // `lends` above was read from
+                    // ([ADR-192](../../docs/specification/adr/adr-192.md) D1,
+                    // [ADR-102](../../docs/specification/adr/adr-102.md) D3).
+                    // A contract this build does not have reads as run, which
+                    // is the same answer the *call* writer gives an unresolved
+                    // callee - the two have to agree or one parameter gets two
+                    // shapes.
+                    let runs = lent.is_none_or(|c| !c.keeps.iter().any(|k| k == name));
+                    let held = self.code_parameter_runs.replace(runs);
+                    let written = self.ty_counted(&a.ty, how(a.name), self.count_at(&key, name));
+                    *self.code_parameter_runs.borrow_mut() = held;
+                    written
+                }
             };
             format!("{}: {reference}{written}", escaped(name))
         }));
@@ -4512,16 +4541,44 @@ impl<'p> Emitter<'p> {
             // run parameter and a kept one, so a reader can tell what a
             // signature costs by reading it - and whether that is worth 8.7× is
             // a question on `docs/open-decisions.md`.
-            let shape = match code.is_sync {
-                true => match (&code.result, code.throws) {
+            // **A parameter that may pause takes the shape its body needs,
+            // and the body's answer is `keeps`**
+            // ([ADR-192](../../docs/specification/adr/adr-192.md) D1).
+            //
+            // A **run** parameter is `impl AsyncFn(A) -> R`: no box, no dynamic
+            // call, and 1.37 ns/call against the boxed future's 11.99 on a 0.31
+            // floor (`benches/handler`). A **kept** one keeps the boxed
+            // closure, because `AsyncFn` is a *bound* and a value stored in a
+            // field needs a type.
+            //
+            // **One written type, two representations, chosen by an analysis of
+            // the body** — which is what `Shared[T]` already does per value
+            // ([ADR-037](../../docs/specification/adr/adr-037.md) D7), what
+            // [ADR-008](../../docs/specification/adr/adr-008.md) D2 does per
+            // construction site, and what
+            // [Part I 5.4](../../docs/specification/10-nikaia-light.md) C
+            // already says about this very construct: *the context of such a
+            // parameter is inferred, not written*.
+            //
+            // **`sync` is untouched** and still writes the plain closure: the
+            // word is an assertion about what the code may do
+            // ([ADR-027](../../docs/specification/adr/adr-027.md)), and a
+            // parameter that cannot pause has no future to hand back either
+            // way.
+            if code.is_sync {
+                let shape = match (&code.result, code.throws) {
                     (None, false) => String::new(),
                     _ => format!(" -> {outcome}"),
-                },
-                false => {
-                    format!(" -> std::pin::Pin<Box<dyn std::future::Future<Output = {outcome}>>>")
-                }
-            };
-            return format!("impl Fn({}){shape}", params.join(", "));
+                };
+                return format!("impl Fn({}){shape}", params.join(", "));
+            }
+            if *self.code_parameter_runs.borrow() {
+                return format!("impl AsyncFn({}) -> {outcome}", params.join(", "));
+            }
+            return format!(
+                "impl Fn({}) -> std::pin::Pin<Box<dyn std::future::Future<Output = {outcome}>>>",
+                params.join(", ")
+            );
         }
 
         // **`Seen[T]` is erased**
@@ -8808,7 +8865,25 @@ impl<'p> Emitter<'p> {
                 ) => {
                     let names: Vec<String> =
                         params.iter().map(|p| self.name(*p).into_owned()).collect();
-                    out.push(&format!("|{}| Box::pin(async move ", names.join(", ")));
+                    // **An `async` closure where the callee runs the
+                    // parameter** ([ADR-192](../../docs/specification/adr/adr-192.md)
+                    // D1), and the boxed future where it keeps one. The two are
+                    // what the *declaration* writes at the same position, off
+                    // the same `keeps` column.
+                    //
+                    // **No `move` on the run shape**, which is
+                    // [Part I 5.4](../../docs/specification/10-nikaia-light.md)
+                    // A: a lambda handed to a parameter the body only calls
+                    // **borrows** what it captures, because the call is over
+                    // before the caller's frame is. The boxed shape keeps its
+                    // `move`, for the reason it always had - the future
+                    // outlives the closure body it is made in.
+                    let runs = self.run_lambdas.contains(&(flow.statement, i));
+                    let opened = match runs {
+                        true => format!("async |{}| ", names.join(", ")),
+                        false => format!("|{}| Box::pin(async move ", names.join(", ")),
+                    };
+                    out.push(&opened);
                     let mut changed: Vec<Symbol> = inside.changed.to_vec();
                     changed.extend(mutable.iter().copied());
                     let body_flow = Flow {
@@ -8817,7 +8892,9 @@ impl<'p> Emitter<'p> {
                         ..Flow::PLAIN
                     };
                     self.block(out, body, depth, body_flow, Tail::Return)?;
-                    out.push(")");
+                    if !runs {
+                        out.push(")");
+                    }
                 }
                 _ => self.expr(out, arg, depth, inside)?,
             }

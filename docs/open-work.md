@@ -862,12 +862,13 @@ closed. **D1, D2 and D3 are built.** A parameter whose type may pause is
 `impl Fn(A) -> Pin<Box<dyn Future<Output = R>>>`, a call to one carries an
 `.await`, and a lambda handed to one is `|a| Box::pin(async move { … })`.
 
-*The shape is reopened, and D1's reason for it was false*
-([ADR-187](specification/adr/adr-187.md) D3): *Rust has no stable `async`
-closure* is what chose the box, and `impl AsyncFn(A) -> R` costs 1.37 ns/call
-against the box's 11.99 on a 0.31 floor. What holds D1 up now is its coherence
-half alone, and whether that is worth 8.7× is on
-[`open-decisions.md`](open-decisions.md).
+*D1's **whether it runs or keeps it** is gone*
+([ADR-192](specification/adr/adr-192.md) D1, answering the question
+[ADR-187](specification/adr/adr-187.md) D3 filed). A **run** parameter is
+`impl AsyncFn(A) -> R` and only a **kept** one keeps the box, chosen by the
+`keeps` column [ADR-102](specification/adr/adr-102.md) D3 already put the answer
+in. The reason D1 gave for the box — *Rust has no stable `async` closure* — was
+false and was false when it was written.
 
 *The number is §3's:* **15.1 ns per call against 0.33 ns**, about ×45, with the
 control tying (`benches/handler`). Large as a ratio and small as a number, and
