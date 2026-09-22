@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.153] — 2026-09-22
+
+**Two servers, not one** — [ADR-194](docs/specification/adr/adr-194.md), the
+owner's answer, and it dissolved a conflict this session had built. No code
+changes: the ruling and the order.
+
+### The choice was false, and that is the decision
+
+- **The question forced a pick** between *the program decides what is exposed* and *the operator decides*, with four options to choose from. **They are not two designs for one product — they are two products**, and each is right about itself.
+- **A standard server** — `nikaia serve [dir]` — has no author present at run time, so everything it does is the **operator's**: the directory, the port, the limits, whether it leaves localhost.
+- **An application that serves** has an author who decided already, and it may read a configuration file of its own, hard-code what it likes, take its port from anywhere. A tool that overrode that would be taking away the reason to write the application.
+- **So the earlier framing was right about one product and reached into the other.** *Exposure is an operating property, so the operator names the routes* is [ADR-038](docs/specification/adr/adr-038.md) D5 applied where it belongs — the file server — and it had no business in a program's own routes.
+
+### The five decisions
+
+- **D1 — the socket is `std`'s, the protocol is the package's.** [ADR-069](docs/specification/adr/adr-069.md) D2's subtraction carried one item further: that record itemised what needs the compiler and pushed *the protocol and the framework* out, and a **socket** is neither — it is an OS resource of exactly the kind `fs` and `io` already own, and `rt::io`'s own words are *a socket is **not** a file; `epoll` answers a socket exactly*. The `http` package is Nikaia and cannot syscall.
+- **D2 — two products**, above.
+- **D3 — localhost, and wider is asked for.** The fail-closed default costs one flag to leave, and the flag is not silent: [ADR-108](docs/specification/adr/adr-108.md)'s shape — *recorded per site and listed by `nikaia --trust`* — is where such a thing belongs.
+- **D4 — an application routes with `.route(…)`**, no `@route`, and never *every `pub fn`*: `pub` is a **package** word ([ADR-047](docs/specification/adr/adr-047.md) D2), and reading it as *the network may call it* would give one word two meanings and make the dangerous one invisible at the declaration.
+- **D5 — the smallest protocol a microservice needs**, and **the parser is Rust until it is not**. `GET` and `POST`, bodies by `Content-Length`, `Connection: close`, no chunked and no TLS, with a body cap and a connection cap from the first commit — a server without them is a denial of service rather than a default. Moving the parser into a Nikaia grammar is step 4 of [ADR-038](docs/specification/adr/adr-038.md) §4.5: **self-hosting the protocol is a step deferred, not a step forgotten.**
+
+### Deferred on purpose, and written down so it is not mistaken for settled
+
+- **May a route be refused by what its handler `touches`?** The ledger knows, and no other language's `http.server` has that column. The owner has asked to be asked again, **with a fuller write-up than the one sentence it has**, when the work reaches it. [ADR-194](docs/specification/adr/adr-194.md) §4 carries it and [`open-decisions.md`](docs/open-decisions.md) says why it is not in that page's shape yet: putting a question in answerable form before there is a server to refuse anything is the kind of premature entry that page is worse for holding.
+
+### And `open-decisions.md` is empty again
+
+- **Two questions answered in one day**, both leaving the file for their record: the `threads` column → [ADR-193](docs/specification/adr/adr-193.md), and the microservice shape → [ADR-194](docs/specification/adr/adr-194.md).
+
 ## [0.0.152] — 2026-09-22
 
 **A package's type could not be constructed through the package that declares

@@ -391,6 +391,37 @@ readiness question at a time, which is what `worker::poll_one` does today — an
 then the server on top of it. That is work in this section and not a question
 for anybody.
 
+**And the MVP is decided** ([ADR-194](specification/adr/adr-194.md)), so what is
+left here is an order rather than a design:
+
+1. **A socket in `std`** — D1. [ADR-069](specification/adr/adr-069.md) D2's
+   subtraction carried one item further: a socket is an operating-system
+   resource of the kind `fs` and `io` already own, and the `http` package is
+   Nikaia and cannot syscall.
+2. **The socket layer that keeps registrations**, on
+   [ADR-121](specification/adr/adr-121.md)'s awaitable readiness.
+3. **A minimal HTTP/1.1 server in the `http` package** — D5: `GET` and `POST`,
+   bodies by `Content-Length`, `Connection: close`, no chunked and no TLS, with
+   a body cap and a connection cap from the first commit. **The parser is Rust
+   in `nikaia-std`**, and moving it into a Nikaia grammar is step 4 of
+   [ADR-038](specification/adr/adr-038.md) §4.5 — self-hosting the protocol is
+   deferred and not forgotten.
+4. **`nikaia serve [dir]`** — D2's other product: a file server with no program
+   behind it, where the directory, the port and the limits are the operator's.
+   Localhost unless asked otherwise (D3).
+
+*What an application writes needs no language change*, measured at 0.0.152 and
+run by `crates/nikaia/tests/project.rs`: `http::Server()` — **not**
+`Server::new()`, which `NK1149` refuses since
+[ADR-140](specification/adr/adr-140.md) D2 and which
+[ADR-018](specification/adr/adr-018.md)'s own example still prints — chained
+with `.route(…) fn(r) { … }` and ended with `.listen(…)`.
+
+*And one thing is deferred on purpose*: whether a route may be refused by what
+its handler **touches**. [ADR-194](specification/adr/adr-194.md) §4 carries it
+and the owner has asked to be asked again, with a fuller write-up, when the work
+reaches it.
+
 ### 2.7. There is no target that lets foreign code call in, and the record for one is written
 
 [ADR-062](specification/adr/adr-062.md). Nothing of it is built: `extern "C"` is
