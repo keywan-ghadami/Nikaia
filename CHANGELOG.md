@@ -4,6 +4,38 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.143] — 2026-09-22
+
+**A decision written at the wrong altitude** — the owner's critique of
+[`open-decisions.md`](docs/open-decisions.md)'s
+[ADR-122](docs/specification/adr/adr-122.md) entry, checked against the tree and
+upheld. No code changes; the question does.
+
+### The question was phrased as a backend ticket
+
+- **It asked *does it still lower to a boxed future now that `impl AsyncFn` exists?***, which reads like a bug report for the Stage-0 transpiler. The choice of Rust shape is downstream. What is actually being decided is whether **one written type may take two representations, chosen by an analysis of the callee's body**.
+
+### And the coherence argument it rested on is weaker than it looked
+
+Three places where this language already answers *yes*, read off the tree rather than argued:
+
+- **`Shared[T]` is `Rc<T>` or `Arc<T>`, and which one is decided *per value*** — the emitter's own words, citing [ADR-037](docs/specification/adr/adr-037.md) D7. Not per build: two values of one written type in one program get two representations.
+- **[ADR-008](docs/specification/adr/adr-008.md) D2 is titled *solved per construction site, not per type***, and D3 gives a struct up to three layouts for that reason.
+- **[Part I 5.4](docs/specification/10-nikaia-light.md) C says it about this very construct**: *the context of such a parameter is **inferred**, not written … there is no `@detached` to write.*
+
+And a fourth, built and shipped: **[ADR-094](docs/specification/adr/adr-094.md) D1** — the callee's body decides whether the caller's argument gains a `&`, and the caller writes nothing. *The body decides the caller's lowering* is not a rule this change would break; it is one the language already keeps.
+
+### Two places the critique overshot, and one it was missing
+
+- **The signature does not lie today.** The box is always paid, so *a reader can tell what a signature costs* is accurate. What D1 buys is **predictability**, not truth — and that is the thing actually being traded away.
+- **[ADR-102](docs/specification/adr/adr-102.md) D3's inference does not decide this lowering today**, measured off the emitted Rust: `fn() -> String` becomes `impl Fn() -> Pin<Box<dyn Future<…>>>` and `fn() -> String sync` becomes `impl Fn() -> String`. The distinction that exists is **declared**. So the change asks the existing inference to decide one thing more, not to be believed for the first time.
+- **What neither the entry nor the critique had is the answer to D1's real protection.** Under the change, a library author moving a body from *run* to *kept* silently moves every caller's cost — action at a distance, which [ADR-005](docs/specification/adr/adr-005.md) §3 rejected in-source annotations to avoid. This language's answer to that already exists and is used twice: the **ledger**. A `keeps` change is a `nikaia.contracts` diff in review, a tether state is one ([ADR-008](docs/specification/adr/adr-008.md) D6 — *the inverse tool is inspection, not assertion*), and `--locked` fails a build whose contracts moved unrecorded.
+
+### So the entry is rewritten and the recommendation is unchanged
+
+- **A, and on the precedents rather than on the number.** 38× is what makes it worth doing; *`Shared[T]` is decided per value* is what makes it consistent; the ledger is what answers the objection that decided it the other way in the first place.
+- **Option C is now named as the weakest of the three** rather than as a neutral third: a word in the surface language for a fact about the machine is what Part I 5.4 C explicitly refuses.
+
 ## [0.0.142] — 2026-09-22
 
 **`??` joins two views, and a `?.` takes one of a binding and not of a

@@ -14,15 +14,42 @@ question is, why it is the owner's, and what this file recommends.
 
 ## Open
 
-### Does a pausing function-typed parameter still lower to a boxed future, now that `impl AsyncFn` exists?
+### Does the body's **run-or-kept** answer decide a function-typed parameter's lowering, as the body's answer already decides three other representations?
 
 **What is blocked.** [ADR-122](specification/adr/adr-122.md) D1 — *a parameter
 whose type may pause lowers to a closure returning a boxed future, whether the
-callee runs it or keeps it*. [ADR-187](specification/adr/adr-187.md) D3 reopens
-it, because the reason D1 gave for the shape is false.
+callee runs it or keeps it*. [ADR-187](specification/adr/adr-187.md) D3
+reopened it, because the reason D1 gave for the shape turned out to be false.
 
-**Measured**, in the tree, by `benches/handler` — `cargo run -p handler-bench
---release --bin handler`, best of five, control tying:
+**This entry was first written as a backend question** — *does it still lower to
+a boxed future now that `impl AsyncFn` exists?* — and that was the wrong
+altitude. The choice of Rust shape is downstream. What is actually being decided
+is whether **one written type may take two representations, chosen by an
+analysis of the callee's body**, and that is a question about this language
+rather than about its backend.
+
+**Because the answer elsewhere is already yes, three times over**, which is what
+the first draft of this entry missed and what makes D1's *coherence* argument
+weaker than it looked:
+
+* **`Shared[T]` is `Rc<T>` or `Arc<T>`, and which one is decided *per value*** —
+  the emitter's own words, on [ADR-037](specification/adr/adr-037.md) D7. Not
+  per build: two values of one written type in one program get two
+  representations, and the analysis picks.
+* **[ADR-008](specification/adr/adr-008.md) D2 is titled *solved per
+  construction site, not per type***, and D3 gives a struct up to three layouts
+  for that reason.
+* **[Part I 5.4](specification/10-nikaia-light.md) C says it about this very
+  construct**: *the context of such a parameter is **inferred**, not written. A
+  parameter the body only calls is immediate and borrows. A parameter the body
+  keeps … is detached and moves.*
+
+And a fourth, built and shipped: **[ADR-094](specification/adr/adr-094.md) D1** —
+the *callee's* body decides whether the caller's argument gains a `&`, and the
+caller writes nothing. *The body decides the caller's lowering* is not a rule
+this language would be breaking; it is a rule it already keeps.
+
+**Measured.** `benches/handler`, best of five, control tying:
 
 | row | ns/call | × |
 | :--- | ---: | ---: |
@@ -30,48 +57,55 @@ it, because the reason D1 gave for the shape is false.
 | **boxed future** — D1's shape today | 11.99 | 38.3 |
 | **async closure** (`impl AsyncFn(A) -> R`) | 1.37 | 4.4 |
 
-The shape chosen *because it did not exist* costs **8.7×** what it does.
-`async |x: i32| -> i32 { … }`, `AsyncFn`, `AsyncFnMut`, `AsyncFnOnce` and
-`async move |…|` all compile on this repository's toolchain, stable, with no
-feature gate.
+And what the compiler does today, read off the lowering rather than off the
+record: a parameter written `fn() -> String` becomes
+`impl Fn() -> Pin<Box<dyn Future<…>>>` and one written `fn() -> String sync`
+becomes `impl Fn() -> String`. **So the distinction that exists today is
+*declared*, not inferred** — [ADR-102](specification/adr/adr-102.md) D3's
+run-or-kept answer feeds the `sync` column and not this shape. This question
+asks for it to decide one thing more, not to be believed for the first time.
 
-**Why it is the owner's.** D1 is not only a cost, it is a **coherence** rule:
-*one spelling for a run parameter and a kept one, so a reader can tell what a
-signature costs by reading it*. `impl AsyncFn` is a **bound** and not a type, so
-a *kept* parameter — one the callee stores in a struct — still needs a box or a
-type parameter of its own. Taking the cheap shape for the run case splits run
-from kept again, which is exactly what D1 joined. That is a trade between what a
-signature teaches and 8.7×, and this compiler has no way to pick between those
-two.
+**Why it is the owner's.** What D1 actually buys is not *truth* — the signature
+is accurate today, since the box is always paid — but **predictability**: a
+library author who changes a body from *run* to *kept* would, under the change,
+silently move every caller's cost. That is action at a distance, which
+[ADR-005](specification/adr/adr-005.md) §3 rejected in-source annotations to
+avoid.
+
+**And this language already has its answer to that**, which is the piece both
+the first draft of this entry and its critique were missing: the **ledger**. A
+`keeps` change is a `nikaia.contracts` diff in review
+([ADR-094](specification/adr/adr-094.md)), a tether state is one
+([ADR-008](specification/adr/adr-008.md) D6 — *the inverse tool is inspection,
+not assertion*), and `--locked` fails a build whose contracts moved unrecorded.
+The instrument for "the body decided something the caller pays for" exists and
+is used twice. Whether it is trusted a third time is the decision.
 
 **The options.**
 
-* **A — split by run-or-kept.** A *run* parameter becomes `impl AsyncFn(A) -> R`
-  and a *kept* one keeps the boxed closure. [ADR-102](specification/adr/adr-102.md)
-  D3 already infers run-or-kept, so nothing new is derived — what changes is that
-  the same written type lowers two ways again.
-* **B — leave D1 as it is.** One spelling, 38× on the case that did not need it,
-  and the record's own reason corrected to *coherence* rather than *the
-  language below cannot*. This is today plus honesty.
-* **C — the type says it.** A third word beside `sync` on the parameter's type,
-  so the author picks the shape. Costs a word in the surface language for a
-  question about a lowering, which is the trade
-  [ADR-102](specification/adr/adr-102.md) D2 already made once and may not want
-  to make twice.
+* **A — the inference decides.** A *run* parameter becomes
+  `impl AsyncFn(A) -> R` and a *kept* one keeps the boxed closure, with the
+  state in the ledger as `keeps` and the tether state already are.
+* **B — leave D1 as it is.** One spelling, 38× on the case that did not need
+  it, and the record's reason corrected from *the language below cannot* to
+  *predictability*. This is today plus honesty.
+* **C — the type says it.** A third word beside `sync`. This is the weakest of
+  the three: it puts a word in the surface language for a fact about the
+  machine, which is what [ADR-102](specification/adr/adr-102.md) D2 and
+  [ADR-008](specification/adr/adr-008.md) D1 both weighed and what
+  [Part I 5.4](specification/10-nikaia-light.md) C explicitly refuses —
+  *there is no `@detached` to write*.
 
-**What this page recommends: A.** Run-or-kept is already inferred and already
-decides things; the box on a *run* parameter is paid by every caller that hands
-over a lambda which does not pause, and 38× against a floor is the kind of
-number [ADR-009](specification/adr/adr-009.md) D4 exists to act on. D1's
-coherence is real but it is about what a **reader** can tell from a signature —
-and what a reader is told today is *this costs a box*, which for a run parameter
-would simply stop being true.
+**What this page recommends: A**, and on the precedents rather than on the
+number. 38× is what makes it worth doing; *`Shared[T]` is decided per value* is
+what makes it consistent. The ledger is what answers the objection that decided
+it the other way in the first place.
 
-**What it costs if wrong**: the same written type lowers two ways, so a
-signature no longer says what it costs on its own — the exact property D1 was
-buying. Against B: 38× on the common case, kept for a sentence that turned out
-to be false. Against C: a word in the language for a fact about the machine,
-which is the one this tree has been most careful not to add.
+**What it costs if wrong**: a reader can no longer tell a run parameter's cost
+from its signature alone, and has to read the ledger instead — which is the same
+trade `keeps` made, and the same one `--tethers` exists for. Against B: 38× kept
+for a property three other constructs do not have. Against C: a keyword for
+something the compiler already knows.
 
 ### Does a **described** foreign function say whether it puts its argument on a thread?
 
