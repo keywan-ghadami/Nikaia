@@ -4,6 +4,41 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.151] — 2026-09-22
+
+**The server's runtime blocker has been built since ADR-121, and the microservice
+question is asked** — the owner's *HTTP from the command line, like Python's*.
+No code changes.
+
+### §2.6 said the head of the list was blocked on the runtime. It is not.
+
+- **It read:** *`rt::io::wait` — the readiness half this would rest on — **cannot be awaited**, only blocked on … nothing here can be an `async fn` that actually pauses until it is answered*, and pointed at a question [`open-decisions.md`](docs/open-decisions.md) has never held.
+- **[ADR-121](docs/specification/adr/adr-121.md) answered it and is built.** D1 puts an always-armed `eventfd` on the ring so a worker's reply completes a ring job and the park returns; D4 says *the same is true of `rt::io::wait`, which is what the server's socket layer awaits*; and its §3 names this entry's own need outright: ***`rt::io::wait` is awaitable, which is the first thing the HTTP server's socket layer needs.*** `rt::io::waiting` is the future beside it.
+- **So the head of §2's order is not blocked on the runtime.** What it is short of is the socket layer itself — one that keeps registrations rather than asking one readiness question at a time — and then the server on top of it. That is work, not a question. **Fifth stale claim in that one entry**, and the one that mattered most.
+
+### And more of the ground is already there than the entry suggests
+
+- **The handler is decided** — [ADR-018](docs/specification/adr/adr-018.md) D1–D4: the request as an implicit first argument, what each return type becomes, a `Response` as an ordinary value, and the request's strings as views.
+- **A code parameter is sayable** — `fn route(path: ref String, handler: fn(Request) -> Response)` parses and lowers ([ADR-102](docs/specification/adr/adr-102.md) D1, [ADR-192](docs/specification/adr/adr-192.md) D1 for its shape).
+- **The ledger already knows** every `pub fn`'s signature, `throws`, `sync` and `touches` — which is what makes the tempting answer tempting.
+
+### The question, in the shape that page asks for
+
+**Who decides what is on the network?** Four options, and the recommendation is **D with C kept, and never A**:
+
+- **A — every `pub fn` is a route.** Recommended **against**. `pub` is a *package* word ([ADR-047](docs/specification/adr/adr-047.md) D2) — *a consumer of this package may call it*. Reading it as *the network may call it* gives one word two meanings and makes the dangerous one invisible at the declaration. `python -m http.server` is already a famous footgun for serving the working directory; this would be the same mistake over a call graph.
+- **B — a word on the declaration**, `@route("/total") pub fn total(…)`: explicit and next to what it exposes, the shape `@borrowed` and `@frame` have. Kept for the *suggestion*, not for the grant.
+- **C — the program routes**, as [ADR-018](docs/specification/adr/adr-018.md) writes it. No language change, and it stays for a program that wants control.
+- **D — the operator names the routes**, on the command line and in `nikaia-runtime.toml`.
+
+**Why D.** [ADR-038](docs/specification/adr/adr-038.md) D5 **moved `cleanup-deadline` out of the manifest** for exactly this reason: *how long a program waits at exit is an operating property, and a build-time key cannot be tuned by the operator — who is not the person who compiled it.* What is exposed to a network is an operating property in that same sense, and more sharply: the person who compiled a function and the person who decides it may be reached from outside are routinely not the same, and only the second knows what the network is.
+
+### Three smaller things it leaves, one of which no other language can do
+
+- **How arguments arrive.** D2 decides the *result* and says nothing about parameters. The narrow start is to route only onto a signature [ADR-018](docs/specification/adr/adr-018.md) D1 already describes, and refuse everything else with the signature it would need.
+- **What the ledger should refuse.** The ledger knows what a function **touches**. A route onto a function that touches the filesystem is a different object from one that computes, and the command can say so. No other `http.server` has that column.
+- **Where it binds.** Binding `0.0.0.0` is half of why Python's is a footgun. Localhost unless told otherwise is the fail-closed default, and it costs one flag to leave.
+
 ## [0.0.150] — 2026-09-22
 
 **Citing a question is not asking it** — the list's own cross-references

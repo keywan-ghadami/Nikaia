@@ -371,21 +371,25 @@ bench that decided it (`benches/sendfile/`) and the write-up
 been built ahead of the server and deliberately was not, because D3's measurement
 makes it the mechanism that loses at the sizes a server sends most.
 
-**And there is a runtime piece underneath all of it.** A server waits on
-sockets, and `rt::io::wait` — the readiness half this would rest on —
-**cannot be awaited**, only blocked on: on the completion path the executor
-parks on the ring, and a worker's reply does not reach it. The entry above about
-standard input is the small end of the same question, and nothing here can be an
-`async fn` that actually pauses until it is answered.
+**The runtime piece underneath it is built**, and this entry said otherwise for
+a long time. It read: *`rt::io::wait` — the readiness half this would rest on —
+**cannot be awaited**, only blocked on … nothing here can be an `async fn` that
+actually pauses until it is answered*, and pointed at a question on
+[`open-decisions.md`](open-decisions.md) that page has never held in its whole
+history.
 
-*And this entry has been saying that question is on
-[`open-decisions.md`](open-decisions.md), which it never was* — that page has
-held no entry about `rt::io::wait` in its whole history. **The head of this list
-therefore rests on a question nobody put in the shape that page asks for**,
-which is the file's own rule not followed: *the moment an item is blocked by a
-question, the question goes where questions go*. Citing a question is not asking
-it. Writing it is work of its own, because the options are the runtime's and
-this entry states only the symptom.
+[ADR-121](specification/adr/adr-121.md) answered it and is **built**. D1 puts an
+always-armed `eventfd` on the ring so a worker's reply completes a ring job and
+the park returns; D4 says *the same is true of `rt::io::wait`, which is what the
+server's socket layer awaits*; and §3 names this entry's own need outright:
+***`rt::io::wait` is awaitable, which is the first thing the HTTP server's
+socket layer needs.*** `rt::io::waiting` is the future beside it.
+
+*So the head of §2's order is not blocked on the runtime.* What it is short of
+is the socket layer itself — one that keeps registrations rather than asking one
+readiness question at a time, which is what `worker::poll_one` does today — and
+then the server on top of it. That is work in this section and not a question
+for anybody.
 
 ### 2.7. There is no target that lets foreign code call in, and the record for one is written
 
