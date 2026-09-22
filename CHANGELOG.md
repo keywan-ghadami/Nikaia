@@ -4,6 +4,30 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.155] — 2026-09-22
+
+**`nikaia describe` is a Nikaia program** —
+[ADR-195](docs/specification/adr/adr-195.md), the owner's answer, and the reason
+is not the one 0.0.154 led with. No code changes: the ruling and the order.
+
+### I put a measurement in front of a decision that does not rest on one
+
+- **0.0.154 recommended writing the grammar *first, as a measurement that would settle the question*.** It would not have. The owner's reason is **eat your own dog food**, and a number cannot move that: if the Nikaia version turns out slower, that is *a finding about this compiler and an amount of work owed* — not a reason to go back.
+- **So [ADR-009](docs/specification/adr/adr-009.md) D4 was over-applied.** *Measure before choosing a shape* reaches a choice where two shapes are genuinely on the table — `Rc` against `Arc`, a `match` against a perfect hash, a boxed future against `impl AsyncFn`. It does not reach a choice already made on a reason about the project.
+- **D5 is the rule that came out of it**, and it is written to outlive this record: **a measurement decides between options; where the choice rests on a project principle, a number is a diagnosis.** A measurement that cannot change the decision is still worth taking — calling it the *reason* for the decision is the error.
+
+### The decision
+
+- **D1 — written in Nikaia, because this language has to be written in.** Not as a slogan: a language whose own toolchain is written in another one has no user who is forced to live with its gaps, and every gap this tree has found was found by **running** something. `describe` is the first tool that can be written in Nikaia without anything else moving.
+- **D2 — nothing bootstraps through it**, and it ships by [ADR-002](docs/specification/adr/adr-002.md) D4's route unchanged: *the `.nika` kept beside the `.rs`*, pre-lowered at release, so a binary install needs no compiler. `nikaia lower-std` already does this for `std`.
+- **D3 — the reading half is a grammar**, replacing [ADR-193](docs/specification/adr/adr-193.md) D4's `syn` step **and nothing else** in it. All three of the scraper's named limits come from its being a scanner; the one that survives a real parser — a macro-generated item — survives `syn` too, and for a reason that is neither parser's.
+- **D4 — `std` gains a directory walk and a subprocess**, both the kind of operating-system resource [ADR-194](docs/specification/adr/adr-194.md) D1 just put the socket in `std` for.
+
+### Why `describe` is the right first one
+
+- **Its output is reviewed by a person** ([ADR-104](docs/specification/adr/adr-104.md) D5). A tool that stands between a program and a foreign crate is security-adjacent — that is [ADR-193](docs/specification/adr/adr-193.md) D3's whole asymmetry — and a reviewed draft is where that risk is bearable. A first self-hosted tool whose output nobody reads would not be.
+- **843 lines**, of which the scanner — `split_top_level`, `items_of`, `fields_at`, `line_starts`, `signature_at`, `matching` — is the part that has been wrong three named ways.
+
 ## [0.0.154] — 2026-09-22
 
 **Two things are called a parser, and only one of them was decided** — the

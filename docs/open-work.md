@@ -1311,12 +1311,15 @@ next:*
    (D3). This already carries the safe half on its own, and not as a heuristic:
    in safe Rust the `Send` bound is forced and surfaces in the signature.
 3. **A real parser and cargo metadata under it** (D4), which is what makes step
-   2 reliable rather than lucky. **Which parser is open**:
-   [ADR-193](specification/adr/adr-193.md) D4 says `syn`, and
-   [`open-decisions.md`](open-decisions.md) asks whether `nikaia describe`
-   should be a **Nikaia** program instead, with a grammar — a separate command
-   that nothing bootstraps through, shipped the way
-   [ADR-002](specification/adr/adr-002.md) D4 already ships `std`'s Nikaia half.
+   2 reliable rather than lucky. **The parser is a grammar, because the command
+   is a Nikaia program** ([ADR-195](specification/adr/adr-195.md) D1, D3): a
+   separate command that nothing bootstraps through, shipped the way
+   [ADR-002](specification/adr/adr-002.md) D4 already ships `std`'s Nikaia half
+   — the `.nika` kept beside the `.rs`, pre-lowered at release. This step
+   therefore carries two of its own first: `fs` gains a **directory walk** and
+   `std` a **subprocess** ([ADR-195](specification/adr/adr-195.md) D4), both of
+   which are the kind of operating-system resource
+   [ADR-194](specification/adr/adr-194.md) D1 put the socket in `std` for.
 4. **`unsafe impl Send`/`Sync` flagged** (D5) — cheap, sound, and independent of
    3.
 5. **the intra-crate call graph and the `use` table** (D4), for the row where an
