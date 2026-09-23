@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.167] — 2026-09-23
+
+**`@borrowed` is removed, and the word that allows a tether is `@tethers`** —
+[ADR-201](docs/specification/adr/adr-201.md), narrowing
+[ADR-008](docs/specification/adr/adr-008.md) D6's assertion half and leaving its
+inspection half standing.
+
+### Why the word was in the wrong place
+
+- **A reader had three questions and the source answered none of them.** Meeting `@borrowed` above a struct: *why is this here? is it needed? is it missing somewhere else?* Its whole job was to make a **silent** state change loud, so its presence and its absence looked identical on the page — a struct that should have carried it looked exactly like one that should not.
+- **And the polarity was backwards** ([ADR-010](docs/specification/adr/adr-010.md) D1: the dangerous reading is the loud one). The **expensive** state was the default. A tether keeps the whole buffer alive, not the part pointed at — Part I 6.6's own example is one short name out of a 13 GB mapping pinning all 13 GB — and it was what a program fell into by writing nothing, while the cheap predictable state cost a word.
+- **Meanwhile it forbade nothing.** Tethered is not built, so a program that would tether is refused by `NK2302` or `NK2303` either way, and the emitter wrote a comment into the generated Rust on each of the eight structs carrying it saying the check does not exist. A decoration that reads as a decision.
+
+### What was removed
+
+- The grammar rule, the AST's `is_borrowed`, the ledger's `borrowed` column, the emitter's comment, and the word from thirteen structs across `examples/`, `benches/`, `crates/nikaia-std/src/tools/` and the fixtures. `NK2302`'s help no longer writes it into the shape it suggests, and the editor grammar and its scope test no longer colour it.
+- **Removed and not left parsing**, which is the decision rather than a tidy-up: leaving it would leave the three questions in place for whoever reads a program written before today.
+- **Nothing a program can observe changed**, and there is a test that says so rather than a sentence claiming it: `taking_the_word_away_took_no_refusal_away` builds the shape `NK2303` refuses, without the word, and gets the refusal.
+- **A `.contracts` file written before this is refused** — *unknown key `borrowed` on a type* — and the answer is to rebuild, because the file is derived and every build rewrites it. The `version` key is not raised for it: nothing reads that key to decide anything, and raising it would claim a compatibility story this project has not written.
+
+### What replaces it
+
+- **`@tethers`, above the struct**: *this struct may keep its buffer alive*. Without it, a value that would outlive the buffer it points into is an error — which is what happens today, so the default is not a new refusal but the one already standing, given a reason a reader can act on.
+- **It is a permission and it reads as one**, which is the whole of the change. A grant is a thing a reader can check at the declaration: *the author allowed this*. An assertion is not, because what it asserts is invisible. That is [ADR-124](docs/specification/adr/adr-124.md)'s shape for `unsafe` and [ADR-009](docs/specification/adr/adr-009.md) D1's for `unchecked`, which `editors/`'s own grammar already separates out as *an assertion you make rather than a question you ask*.
+- **And it is not in the grammar** ([ADR-201](docs/specification/adr/adr-201.md) D3): the state it permits does not exist, and removing a construct for doing nothing while adding another the same day is the same mistake with the opposite polarity ([ADR-084](docs/specification/adr/adr-084.md): a keyword is the most expensive thing a language adds). What is decided now is the **word and its polarity**, so [`open-work.md`](docs/open-work.md) §2.42's remaining items have a target instead of a question. `the_word_that_will_allow_a_tether_is_not_built_yet` is the test that fails on the day the state arrives — which is the day the word should.
+
+### What a reader meets
+
+- **Part I 6.6's `tokenize` example changed**, and it is the part of this a reader will actually hit. It said the returned tokens tether with *no annotations*. The annotation is the point: they tether because `Token` says `@tethers`, and a `Token` that does not say it is refused with the buffer and the escape named.
+- **The three examples that explained the word explain the silence instead.** `1brc.nika`'s `Reading` writes nothing above it, and the comment says why that is the promise: a later edit that let one escape would be refused there.
+- **`--tethers` is untouched and turns out to be the better half of D6.** It prints the solved state of every view and changes nothing; a change of state is a ledger diff in review. That is the tool for *which state is this in*, and it never needed an assertion beside it.
+- **`docs/stored-views.md` gets a postscript** rather than an edit, which is what a dated laboratory note gets: its transcripts stand as they were taken, and one sentence says which spelling in them has since left the language.
+
 ## [0.0.166] — 2026-09-23
 
 **The HTTP server, and `nikaia serve` is cut** —

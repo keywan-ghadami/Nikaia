@@ -301,3 +301,35 @@ wanted, it wants its own decision, and the one thing to carry across from here i
 that the reach must not arrive before the solver.
 
 [ADR-008]: specification/adr/adr-008.md
+
+---
+
+## Postscript, 2026-09-23: `@borrowed` is gone, and the word is `@tethers`
+
+Nothing above is withdrawn, and nothing above is edited — the transcripts and the
+measurement stand as they were taken. One spelling in them has since left the
+language, which is worth saying here so a reader copying a block out of §1 does
+not get a parse error for it.
+
+`@borrowed` above a struct asserted *no value of this type ever tethers*, and it
+is removed ([ADR-201] D1). The word that stands there now is `@tethers`, and it
+is the opposite: a **permission**, written where a struct may keep its buffer
+alive, with an error where it is missing. Three things made the swap:
+
+* **A reader could not check it.** Its whole job was to make a *silent* state
+  change loud, so its presence and its absence looked identical on the page —
+  *why is this here, is it needed, is it missing somewhere else* had no answer in
+  the source.
+* **The polarity was backwards.** The expensive state was the default. This
+  note's own §1 is the shape: a view kept past its call is the thing that costs,
+  and it is the thing silence used to allow.
+* **It forbade nothing**, which is this note's finding read from the other end:
+  the lattice is not built, so every program that would tether is refused
+  already. The assertion had no transition to refuse.
+
+The two blocks in §1 lower today with the line taken off; `@tethers` is not in
+the grammar either ([ADR-201] D3), because the state it permits does not exist
+yet. **The recommendation at the end of this note is unchanged**: the reach must
+not arrive before the solver, and neither must the word.
+
+[ADR-201]: specification/adr/adr-201.md

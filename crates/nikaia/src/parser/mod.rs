@@ -1549,10 +1549,14 @@ grammar! {
 
         // --- Structs ---
         //
-        // ADR-008 D6: `@borrowed` is an assertion about escape, so it is part
-        // of the item, not a comment.
+        // **No attribute stands here** ([ADR-201](../../docs/specification/adr/adr-201.md)
+        // D1). `@borrowed` used to, asserting that no value of this type ever
+        // tethers, and it forbade nothing: the transition it refused does not
+        // exist. D2 names `@tethers` as the word that will stand here — a
+        // **permission** and not an assertion — and D3 keeps it out of this
+        // grammar until the state it permits is built, so a program that writes
+        // it gets the parse error listing what is possible.
         rule struct_item -> Item =
-            borrowed:at_borrowed?
             vis:kw_pub?
             KW_STRUCT
             name:NAME
@@ -1566,11 +1570,8 @@ grammar! {
                     generics: generics.unwrap_or_default(),
                     fields: fields.unwrap_or_default(),
                     is_public: vis.is_some(),
-                    is_borrowed: borrowed.is_some(),
                 }
             }
-
-        rule at_borrowed -> () = "@borrowed" -> { () }
 
         // Kap 4.4. The three shapes the specification shows and no others: a
         // name, a name with positional types, a name with named fields.

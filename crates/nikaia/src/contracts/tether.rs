@@ -611,10 +611,12 @@ fn carries_a_view(parsed: &Parsed, ty: &Type, borrowing: &BTreeSet<String>) -> b
 /// `--tethers`: what the analysis solved, per function
 /// ([ADR-008](../../../../docs/specification/adr/adr-008.md) D6).
 ///
-/// *The inverse tool is inspection, not assertion* — `@borrowed` forbids a
-/// transition and this shows what was chosen without being asked. Read off the
-/// ledger the build produced rather than computed again here, so that what a
-/// person reads is what the file records.
+/// *The inverse tool is inspection, not assertion*, and it is the half of D6
+/// that survived: the assertion beside it is gone
+/// ([ADR-201](../../../../docs/specification/adr/adr-201.md) D1) and this shows
+/// what was chosen without being asked. Read off the ledger the build produced
+/// rather than computed again here, so that what a person reads is what the file
+/// records.
 pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
     // **This file's own entries**, because a report is about one file and the
     // ledger is the package's. A key names a function of this unit exactly when

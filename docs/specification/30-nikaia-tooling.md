@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.166 (Draft)
+**Version:** 0.0.167 (Draft)
 **Date:** 2026-09-23
 
 ---
@@ -331,7 +331,6 @@ error[NK2401]: a change in `longest` broke its caller `report`
 | `throws` | fn | Part I 7.1: it may fail, and **with what**: `throws = ["ConfigError", "IoError"]`, the set inferred over the call graph ([ADR-023](adr/adr-023.md) D1). The set names error **types** and never one of their variants, on either side of D4's two axes ([ADR-157](adr/adr-157.md) D4). A member written `"?"` is *something this compiler cannot name* — an unresolved call, or a call into code no ledger describes. **`std`'s own entries all name what they throw** ([ADR-158](adr/adr-158.md) D1): `io::IoError` for the seven that read, write or check text, `Overtaken` for the lock's two doors. Where the set has exactly one member and the member is a type **any ledger describes** — the unit's own, or `std`'s ([ADR-159](adr/adr-159.md) D1) — the **failure channel is that type**; where it has two or more, the channel is a **generated sum** over them ([ADR-160](adr/adr-160.md) D1). Either way a `catch` matches on the members' variants ([ADR-157](adr/adr-157.md) D1). A set with a `"?"` in it travels in one opaque error, which is what *something this compiler cannot name* leaves |
 | `returns` | fn | what the result may point into: `borrows(a \| b)` |
 | `signature` | fn | its parameters, its **options** and its result, as the source writes them: `"(path: ?, data: ?; append: bool = false, create: bool = true)"`. An option carries its default, because a call that leaves one out still passes a value and only the declaration knows which (Part I, 5.1). A method's receiver is the first parameter, so a caller reads the arguments off one list either way. A generic parameter is recorded as a **variable**, `$T`, so a caller binds it from what it passes and reads the result off the same signature ([ADR-074](adr/adr-074.md) D2): `hand` records `"(x: $T) -> $T"`, and a call that passes an `i64` gets one back. `Self` is `?`, because no call site binds it. Shared mutable state is written `SharedMut[T]`, the one name the language has for it ([ADR-039](adr/adr-039.md) D9) |
-| `borrowed` | type | ADR-008 D6: `@borrowed` was asserted in the source |
 | `fields` | type | every field with its type: `["name: ref String", "temp: i32"]` |
 | `tethered` | type | the fields that hold a view, directly or through another type that does |
 | `doc` | fn, type | the run of `///` lines standing in front of the declaration, with its line breaks kept and no markup the ledger has to agree about ([ADR-139](adr/adr-139.md) D2). **Only on a `pub` entry**: the ledger records what a consumer may reach, and a private item's prose is the source's. Derived like every other column, so a hand-edited one is overwritten by the package's own build. The compiler does not read it — what it does is travel, and it is the one line in this file that is for a person |
@@ -392,7 +391,7 @@ The check on an asserted `sync` and the inference of `sync` are conservative in 
 
 **What counts as resolvable is the type checker's answer** ([ADR-028](adr/adr-028.md)). A call by name, such as `helper(x)` or `io::read_to_string()`, is looked up directly. A method call needs the receiver's type. The compiler has one module that infers types; it records where each method call went, and the `sync` inference reads that record. What the two analyses can see grows whenever the type checker can name more, and neither changes when it does.
 
-The gap between the two polarities is where a program writes `sync` by hand: *this cannot pause, hold me to it*, the same move `@borrowed` makes in Part I 6.6, checked the same way. A ledger that describes more (ADR-024, ADR-028) shrinks the gap, because more functions earn the promise on their own.
+The gap between the two polarities is where a program writes `sync` by hand: *this cannot pause, hold me to it*, checked against the body. A ledger that describes more (ADR-024, ADR-028) shrinks the gap, because more functions earn the promise on their own.
 
 A method with no entry is an unknown, and an unknown costs every function that calls it its inferred promise. A library that ships thin contracts therefore makes its consumers' code unusable inside `access` and `par_iter`, however pure that code is.
 

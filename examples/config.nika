@@ -73,16 +73,14 @@ grammar Config {
         sections:section* -> { sections }
 }
 
-@borrowed
 pub struct Setting {
     key: ref String,
     value: ref String,
 }
 
-// `Section` never says `&`, and is tied to the input all the same: it holds a
-// `Vec[Setting]`, and a `Setting` holds views. That is the transitive half of
-// Part II, 10.6, and it is inferred rather than declared.
-@borrowed
+// `Section` never writes a view type, and is tied to the input all the same: it
+// holds a `Vec[Setting]`, and a `Setting` holds views. That is the transitive
+// half of Part II, 10.6, and it is inferred rather than declared.
 pub struct Section {
     name: ref String,
     settings: Vec[Setting],

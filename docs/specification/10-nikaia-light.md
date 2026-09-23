@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.166 (Draft)
+**Version:** 0.0.167 (Draft)
 **Date:** 2026-09-23
 
 ---
@@ -2091,34 +2091,42 @@ Two rules keep this cheap on large data:
   slices outlives its buffer, the *map* holds one handle, and its keys stay
   positions. Filling it costs no handle traffic.
 
+**A struct tethers only where it says so** ([ADR-201](adr/adr-201.md) D2). The
+word is `@tethers`, it stands above the declaration, and it reads as what it is:
+*this struct may keep its buffer alive.*
+
 ```nika
+@tethers
 struct Token {
     text: ref String,   // a view into someone else's buffer
 }
 
 fn tokenize(source: String) -> Vec[Token] {
     // The returned tokens outlive `source`'s scope, so the list is tethered:
-    // it keeps `source` alive. No annotations, no copies of the text,
-    // no dangling references — and one handle for the whole list.
+    // it keeps `source` alive. No lifetimes, no copies of the text, no dangling
+    // references — and one handle for the whole list.
     ...
 }
 ```
 
-There is no struct with lifetime parameters in Nikaia; the concept does not
-exist in the language.
+**Without the word, an escape is a compile error** that names the buffer, the
+escape and the ways out. That is the polarity the rest of this language has: a
+tether keeps the *whole* buffer alive — see the last paragraph of this section —
+so it is the reading that is written down, and the cheap one is what silence
+means.
 
-**A struct marked `@borrowed` never tethers.** In a hot loop, a program that
-wants to be told if a value ever starts tethering rather than borrowing marks
-the struct:
+A struct built and consumed inside the scope that owns its buffer therefore says
+nothing at all:
 
 ```nika
-@borrowed
 struct Reading { name: ref String, temp: i32 }
 ```
 
-Nothing about the program changes, except that an escape is a compile error
-that names the place where it happens. `nikaia explain --tethers` prints the
-state of every view and changes nothing.
+`nikaia explain --tethers` prints the solved state of every view and changes
+nothing; a change of state is a ledger diff in review.
+
+There is no struct with lifetime parameters in Nikaia; the concept does not
+exist in the language.
 
 **An escape whose buffer cannot be shared is refused.** Where a slice escapes
 and its buffer lives on the stack or came from a foreign library, no tether is
@@ -2138,7 +2146,6 @@ subject, into a struct it hands back, or into a task, is refused with `NK2302`
 struct:
 
 ```nika
-@borrowed
 struct Reading { name: ref String, temp: i32 }
 
 impl Summary {
@@ -2173,8 +2180,14 @@ changes rather than the body.
 > [ADR-008](adr/adr-008.md) D5 names rather than the state beside it — on the
 > Nikaia line since [ADR-156](adr/adr-156.md) D4, where a function hands back a
 > view of a buffer its own body made (`NK2303`, Part III C.3);
-> `@borrowed` is parsed and forbids nothing, because there is no transition yet
-> to forbid. `docs/open-work.md` carries what the missing state would take.
+> `@tethers` is **not built**, which follows: the state it permits does not
+> exist, so a program that would tether is refused whether or not a word allows
+> it, and the grammar takes no attribute above a `struct`
+> ([ADR-201](adr/adr-201.md) D3). What it replaced — `@borrowed`, the opposite
+> word, asserting that a struct never tethers — was parsed and forbade nothing,
+> and was removed rather than kept parsing: a word whose presence and absence
+> look identical on the page is one a reader cannot check.
+> `docs/open-work.md` carries what the missing state would take.
 >
 > The rule below is built for a
 > method of a struct that holds a view. Three cases are refused with `NK2302`:

@@ -227,7 +227,6 @@ fn split_at_the_first_statement(code: &str) -> Option<(String, String)> {
         "const ",
         "comptime ",
         "pub ",
-        "@borrowed",
     ];
     let lines: Vec<&str> = code.trim_end().split('\n').collect();
     let mut head = 0;

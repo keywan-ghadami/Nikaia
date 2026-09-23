@@ -195,7 +195,6 @@ const VIEWING: &str = "grammar Stock {\n\
                        \x20   pub rule file -> Vec[Entry] = entries:ENTRY* -> { entries }\n\
                        }\n\
                        \n\
-                       @borrowed\n\
                        pub struct Entry { pub category: ref String, pub count: i64 }\n";
 
 const COUNTING: &str = "grammar Calc {\n\
@@ -279,5 +278,76 @@ fn nothing_in_the_corpus_needs_a_tether() {
     assert!(
         tethering.is_empty(),
         "no program in the tree needs the state that is not built, and these do: {tethering:#?}"
+    );
+}
+
+// --- The word above a struct ---
+
+/// **`@borrowed` is gone, and no attribute stands above a `struct`**
+/// ([ADR-201](../../../docs/specification/adr/adr-201.md) D1).
+///
+/// Removed rather than left parsing, which is the decision and not a tidy-up: a
+/// word whose presence and absence look identical on the page is one a reader
+/// cannot check, and leaving it parsing would leave that in place for whoever
+/// reads a program written before today.
+#[test]
+fn no_attribute_stands_above_a_struct() {
+    let said = format!(
+        "{:#}",
+        parse_to_ast("@borrowed\nstruct Reading { name: ref String }\n")
+            .expect_err("the word is not in the grammar")
+    );
+    assert!(
+        said.contains("unexpected token `@`"),
+        "the parser stops at the `@`: {said}"
+    );
+    // **And the error lists what is possible there**, which is the whole of what
+    // a reader is owed for a word that left. The list no longer names it — asked
+    // of that line and not of the message, because the message quotes the source
+    // and the source is the thing that wrote the word.
+    let possible = said
+        .lines()
+        .find(|l| l.starts_with("note: also possible here:"))
+        .expect("the parser says what is possible there");
+    assert!(!possible.contains("@borrowed"), "{possible}");
+}
+
+/// **And `@tethers` is not in the grammar either**
+/// ([ADR-201](../../../docs/specification/adr/adr-201.md) D3).
+///
+/// It is the word that will **allow** a tether, and the state it permits does
+/// not exist — so it takes no attribute today rather than parsing and permitting
+/// something nothing can reach, which is the mistake D1 removed with the
+/// opposite polarity. This test is what fails on the day the state is built,
+/// which is the day the word should arrive.
+#[test]
+fn the_word_that_will_allow_a_tether_is_not_built_yet() {
+    assert!(
+        parse_to_ast("@tethers\nstruct Token { text: ref String }\n").is_err(),
+        "the state it permits is not built, so neither is the word"
+    );
+}
+
+/// **A struct that would tether is still refused, with or without a word**
+/// ([ADR-201](../../../docs/specification/adr/adr-201.md) D1: nothing a program
+/// can observe changes).
+///
+/// The refusal is `NK2303`'s and it was never the attribute's: `@borrowed`
+/// forbade a transition that does not exist, so taking it away takes nothing
+/// away. This is the test that says so rather than a sentence claiming it.
+#[test]
+fn taking_the_word_away_took_no_refusal_away() {
+    let source = "struct Token { text: ref String }\n\n\
+                  fn first() -> ref String {\n\
+                  \x20   let held = \"a b\".to_string()\n\
+                  \x20   return held.trim()\n\
+                  }\n";
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std ships a ledger");
+    let found = nikaia::contracts::tether::check(&parsed, &own, &library);
+    assert!(
+        found.iter().any(|f| f.code == "NK2303"),
+        "a view of a buffer the body owns is refused: {found:?}"
     );
 }

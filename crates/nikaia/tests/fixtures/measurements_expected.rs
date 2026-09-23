@@ -34,8 +34,6 @@ grammar! {
     }
 }
 
-// @borrowed (ADR-008 D6): asserted in the source; the check that no
-// value of this type escapes its buffer is not implemented yet.
 #[derive(Debug, Clone)]
 pub struct Reading<'a> {
     name: &'a str,

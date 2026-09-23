@@ -73,10 +73,9 @@ grammar Log {
 }
 
 // The `_ip` is parsed and dropped: the grammar has to consume it, the report
-// does not need it. Marked `@borrowed` because `path` is a slice of the mapped
-// file and never a copy - at a million lines that is the difference between a
-// report and a second copy of the log.
-@borrowed
+// does not need it. `path` is a slice of the mapped file and never a copy - at a
+// million lines that is the difference between a report and a second copy of the
+// log - and nothing above the struct says otherwise, which is what keeps it one.
 pub struct Hit {
     path: ref String,
     status: i32,

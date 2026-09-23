@@ -29,9 +29,9 @@
 // Part II 12.2 makes safe by demanding a `sync` lambda - could call almost
 // nothing. The restrictive side of the language was the unusable one, and the
 // way out was to annotate a chain of pure helpers by hand. Now a body that
-// provably cannot pause says so on its own, and `sync` in the source becomes
-// what `@borrowed` is in Part I 6.6: an **assertion you write where you want it
-// held**, checked against the body, rather than a mode you have to enter.
+// provably cannot pause says so on its own, and `sync` in the source becomes an
+// **assertion you write where you want it held**, checked against the body,
+// rather than a mode you have to enter.
 
 use std::collections::{BTreeMap, BTreeSet};
 

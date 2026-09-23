@@ -2616,15 +2616,8 @@ impl<'p> Emitter<'p> {
                 generics,
                 fields,
                 is_public,
-                is_borrowed,
                 ..
             } => {
-                if *is_borrowed {
-                    out.push(
-                        "// @borrowed (ADR-008 D6): asserted in the source; the check that no\n\
-                         // value of this type escapes its buffer is not implemented yet.\n",
-                    );
-                }
                 out.push("#[derive(Debug, Clone)]\n");
                 let vis = if *is_public { "pub " } else { "" };
                 // The input lifetime first and the type parameters after it,

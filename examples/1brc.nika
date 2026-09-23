@@ -126,14 +126,13 @@ grammar Measurements {
                  Summary::merge)
 }
 
-// `@borrowed` is the assertion, not the mechanism: a `Reading` is built and
-// consumed inside the fold, so its name stays a plain reference into the input
-// buffer and costs nothing (Part I, 6.6). The marker makes that a compile-time
-// promise instead of an expectation - if a later edit ever let a `Reading`
-// escape the buffer's scope, the compiler would say so here rather than quietly
-// putting a shared handle on a struct that is built a billion times
-// (ADR-008, D6).
-@borrowed
+// Nothing is written above this struct, and that is the promise: a `Reading` is
+// built and consumed inside the fold, so its name stays a plain reference into
+// the input buffer and costs nothing (Part I, 6.6). A later edit that let one
+// escape the buffer's scope would be refused here - keeping a buffer alive is
+// what `@tethers` allows, and nothing that does not say it may quietly grow a
+// shared handle on a struct built a billion times
+// ([ADR-201](../docs/specification/adr/adr-201.md) D2).
 pub struct Reading {
     name: ref String,
     temp: i32,

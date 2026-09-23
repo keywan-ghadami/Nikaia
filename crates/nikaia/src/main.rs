@@ -119,10 +119,13 @@ pub struct Cli {
     /// Print which of Part I 6.6's states each view in a signature is in
     /// ([ADR-008](../../../docs/specification/adr/adr-008.md) D6).
     ///
-    /// **The inverse of `@borrowed`, and the reason the state lands in the
-    /// ledger** (D7): the assertion forbids a transition, and this shows what
-    /// the compiler solved without being asked. A change in a representation is
-    /// then a ledger diff in review rather than a surprise in a profile.
+    /// **The half of D6 that survived, and the reason the state lands in the
+    /// ledger** (D7). The assertion beside it — a word a struct wrote to forbid
+    /// a transition — is gone
+    /// ([ADR-201](../../../docs/specification/adr/adr-201.md) D1); this shows
+    /// what the compiler solved without being asked, so a change in a
+    /// representation is a ledger diff in review rather than a surprise in a
+    /// profile.
     ///
     /// Like `--trust`, `--overlaps` and `--sharing`, it explains a decision
     /// rather than changing one — and today it explains one that changes no

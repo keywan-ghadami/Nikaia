@@ -62,10 +62,9 @@ grammar Stock {
     pub rule file -> Vec[Entry] = entries:ENTRY* -> { entries }
 }
 
-// The name and the category are slices of the file, never copies. `@borrowed`
-// asserts that no `Entry` outlives the buffer, which is true here: the page is
-// built while the file is still mapped.
-@borrowed
+// The name and the category are slices of the file, never copies. No `Entry`
+// outlives the buffer, which is true here - the page is built while the file is
+// still mapped - and a struct that says nothing may not outlive one.
 pub struct Entry {
     category: ref String,
     item: ref String,

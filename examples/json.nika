@@ -38,8 +38,9 @@ use std::fs
 use std::cli
 
 // Six variants, and `Text` carries a view - so `Json` is tied to the input it
-// was parsed from, and so is `Member`, through the `Json` it holds. Neither
-// says `@borrowed`: the analysis reaches both through the cycle.
+// was parsed from, and so is `Member`, through the `Json` it holds. Neither says
+// anything about it: the analysis reaches both through the cycle, which is what
+// makes *being* a view a thing a declaration never has to state.
 enum Json {
     Null,
     Bool(bool),
@@ -51,7 +52,6 @@ enum Json {
 
 // A member is a pair with names, which is what a struct is for. The key is a
 // raw body like any other string.
-@borrowed
 pub struct Member {
     key: ref String,
     value: Json,

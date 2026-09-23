@@ -1952,8 +1952,7 @@ fn a_grammar_at_build_time_reaches_a_project_build() {
     let dir = a_project(
         "project-grammar",
         "[package]\nname = \"settings\"\nversion = \"0.1.0\"\n",
-        "@borrowed\n\
-         pub struct Setting {\n\
+        "pub struct Setting {\n\
          \x20   key: ref String,\n\
          \x20   value: ref String,\n\
          }\n\

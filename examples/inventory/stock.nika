@@ -22,7 +22,6 @@ grammar Stock {
 // `pub`, because this is part of what the package offers: a consumer that reads
 // a stock list gets `Entry` back. Inside the package `main.nika` could see it
 // either way.
-@borrowed
 pub struct Entry {
     pub category: ref String,
     pub item: ref String,

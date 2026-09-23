@@ -206,10 +206,8 @@ fn a_run_this_body_owns_is_refused_by_name() {
 #[test]
 fn an_action_that_fills_a_view_names_the_vec() {
     let found = findings(
-        "@borrowed\n\
-         pub struct Setting { key: ref String, value: ref String }\n\
+        "pub struct Setting { key: ref String, value: ref String }\n\
          \n\
-         @borrowed\n\
          pub struct Section { name: ref String, settings: ref Array[Setting] }\n\
          \n\
          grammar Cfg {\n\

@@ -3,16 +3,12 @@
 
 use winnow_grammar::grammar;
 
-// @borrowed (ADR-008 D6): asserted in the source; the check that no
-// value of this type escapes its buffer is not implemented yet.
 #[derive(Debug, Clone)]
 pub struct Part<'a> {
     pub name: &'a str,
     pub ty: &'a str,
 }
 
-// @borrowed (ADR-008 D6): asserted in the source; the check that no
-// value of this type escapes its buffer is not implemented yet.
 #[derive(Debug, Clone)]
 pub struct Fun<'a> {
     pub name: &'a str,
@@ -24,8 +20,6 @@ pub struct Fun<'a> {
     pub result: &'a str,
 }
 
-// @borrowed (ADR-008 D6): asserted in the source; the check that no
-// value of this type escapes its buffer is not implemented yet.
 #[derive(Debug, Clone)]
 pub struct Rec<'a> {
     pub what: &'a str,
@@ -33,8 +27,6 @@ pub struct Rec<'a> {
     pub parts: Vec<Part<'a>>,
 }
 
-// @borrowed (ADR-008 D6): asserted in the source; the check that no
-// value of this type escapes its buffer is not implemented yet.
 #[derive(Debug, Clone)]
 pub struct Group<'a> {
     pub what: &'a str,

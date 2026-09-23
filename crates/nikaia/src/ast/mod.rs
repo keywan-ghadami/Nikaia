@@ -109,9 +109,6 @@ pub enum Item {
         generics: Vec<GenericParam>,
         fields: Vec<FieldDef>,
         is_public: bool,
-        // ADR-008, D6: `@borrowed` asserts that no value of this type escapes
-        // the buffer it points into.
-        is_borrowed: bool,
     },
 
     // Kap 4.2: impl User { ... }

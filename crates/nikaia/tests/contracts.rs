@@ -572,15 +572,16 @@ fn a_result_that_is_a_view_records_what_it_may_point_into() {
 #[test]
 fn a_type_records_what_ties_it_to_the_input() {
     let l = ledger(
-        "@borrowed\n\
-         pub struct Hit { path: ref String, bytes: i64 }\n\
+        "pub struct Hit { path: ref String, bytes: i64 }\n\
          pub struct Report { hits: Vec[Hit], total: i64 }\n\
          pub struct Counts { n: i64 }",
     );
 
-    let hit = &l.types["Hit"];
-    assert!(hit.borrowed);
-    assert_eq!(hit.tethered, ["path"]);
+    // **`tethered` is the whole of it**, and the column that used to stand beside
+    // it is gone ([ADR-201](../../../docs/specification/adr/adr-201.md) D1):
+    // `borrowed = true` recorded that a struct had written `@borrowed`, shipped
+    // across a package boundary, and was read by nothing.
+    assert_eq!(l.types["Hit"].tethered, ["path"]);
 
     // `Report` says no `&` anywhere and is tied to the input all the same.
     assert_eq!(l.types["Report"].tethered, ["hits"]);

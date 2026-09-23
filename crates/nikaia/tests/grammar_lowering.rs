@@ -377,7 +377,6 @@ fn a_tuple_is_a_type_a_value_and_a_field_access() {
 #[test]
 fn a_tuple_of_views_ties_its_struct_to_the_input() {
     let source = concat!(
-        "@borrowed\n",
         "pub struct Pair {\n",
         "    both: (ref String, i64),\n",
         "}\n"
@@ -567,7 +566,7 @@ fn one_brc_grammar_half() -> String {
     let mut out = String::new();
     let mut inside = false;
     for line in source.lines() {
-        if line.starts_with("grammar Measurements {") || line.starts_with("@borrowed") {
+        if line.starts_with("grammar Measurements {") || line.starts_with("pub struct Reading") {
             inside = true;
         }
         if inside {

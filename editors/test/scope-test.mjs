@@ -398,9 +398,13 @@ const cases = [
     ],
   },
   {
-    name: "`@borrowed` is part of the item (ADR-008 D6)",
-    src: `@borrowed\npub struct Reading { name: &str }\n`,
-    expect: [["@borrowed", "storage.modifier.attribute.nika"]],
+    // `@borrowed` stood here and is gone (ADR-201 D1). `@frame` is the same
+    // scope on a word the language still has and a program still writes, so
+    // what this holds is the rule - an attribute is coloured as one - rather
+    // than a word that left.
+    name: "an attribute is a modifier (ADR-009 D1)",
+    src: `grammar Log {\n    @frame(boundary: "\\n")\n    rule LINE -> i64 = n:dec[i64](digit+) -> { n }\n}\n`,
+    expect: [["@frame", "storage.modifier.attribute.nika"]],
   },
   {
     name: "a grammar's rule names say lexical from syntactic",

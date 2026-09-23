@@ -194,7 +194,7 @@
       "patterns": [
         {
           "name": "storage.modifier.attribute.nika",
-          "match": "@(borrowed|frame|detached|immediate)\\b"
+          "match": "@(frame|detached|immediate)\\b"
         },
         {
           "name": "storage.modifier.attribute.nika",

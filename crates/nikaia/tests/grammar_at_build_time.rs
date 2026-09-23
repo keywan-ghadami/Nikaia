@@ -87,8 +87,7 @@ fn run(dir: &Path, reads: &Reads, source: &str) -> String {
 }
 
 /// A grammar whose result **crosses**: a list of structs whose fields are text.
-const SETTINGS: &str = "@borrowed\n\
-     pub struct Setting {\n\
+const SETTINGS: &str = "pub struct Setting {\n\
      \x20   key: ref String,\n\
      \x20   value: ref String,\n\
      }\n\

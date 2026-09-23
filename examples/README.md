@@ -296,10 +296,11 @@ in the program actually escapes, so the right answer costs nothing at all.
 [ADR-008](../docs/specification/adr/adr-008.md) settles it: view types stay (`ref String` is a view
 marker, not a lifetime), the rule is restated over **escape** rather than storage, a view has
 three inferred states (Borrowed ⊑ Tethered ⊑ Owned), the shared handle sits on the *container*
-rather than on each slice, and `.to_owned()` is never inserted for you. `@borrowed` turns "this
-stays a plain reference" into a compile-time assertion for hot structs — used in `1brc.nika` on
-`Reading`. Under those rules the program allocates nothing per row and does no refcount work in
-the parallel section.
+rather than on each slice, and `.to_owned()` is never inserted for you. **A struct writes nothing
+to stay a plain reference**, and the word that would let one keep its buffer alive is `@tethers`
+([ADR-201](../docs/specification/adr/adr-201.md) D2) — not built, because the state it permits is
+not. Under those rules the program allocates nothing per row and does no refcount work in the
+parallel section.
 
 **G4 — chunking a buffer for `par_iter`.** `par_iter` is specified over a collection.
 Splitting a buffer at line boundaries into one chunk per core, with each chunk a slice of the

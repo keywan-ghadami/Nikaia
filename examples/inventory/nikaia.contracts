@@ -12,7 +12,7 @@ toolchain = "nikaia 0.1.0"
 inference = "stage0-signatures+sync-bodies+throws-bodies+sharing-bodies"
 
 [sources]
-"stock.nika" = "da24bfe270d8db54ac628a9e4fe7892122da11fc7ab947c4a6abe9966fcfc08b"
+"stock.nika" = "06db350a766e61575806ce11102259a35f9f24aa8d0f824dfab253aedaf33cf7"
 
 [fn."Stock::file"]
 pub = true
@@ -47,6 +47,5 @@ signature = "(entry: ref Entry) -> i64"
 
 [type."Entry"]
 pub = true
-borrowed = true
 fields = ["pub category: ref String", "pub item: ref String", "pub count: i64"]
 tethered = ["category", "item"]

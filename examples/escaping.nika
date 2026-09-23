@@ -30,7 +30,6 @@
 
 use std::html
 
-@borrowed
 pub struct Row {
     name: ref String,
     note: ref String,

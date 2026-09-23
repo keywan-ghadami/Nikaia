@@ -771,8 +771,6 @@ pub struct TypeContract {
     /// The compiler does not read it (D3). What it does is travel: it is the
     /// one thing `nikaia.contracts` ships that is for a person.
     pub doc: Option<String>,
-    /// ADR-008 D6: `@borrowed` was asserted in the source.
-    pub borrowed: bool,
     /// Every field, with its type - what a checker needs to say that `r.nmae`
     /// is not a field of `Row`.
     pub fields: Vec<FieldContract>,
@@ -1323,7 +1321,6 @@ impl Ledger {
                         generics,
                         fields,
                         is_public,
-                        is_borrowed,
                         ..
                     } => {
                         let parameters: BTreeSet<String> = generics
@@ -1348,7 +1345,6 @@ impl Ledger {
                             TypeContract {
                                 public: *is_public,
                                 doc: item.doc.clone().filter(|_| *is_public),
-                                borrowed: *is_borrowed,
                                 fields: field_types,
                                 // Never inferred: a `struct` declared here records
                                 // its fields, and `contracts::send` walks those.
@@ -1920,9 +1916,6 @@ impl Ledger {
             if contract.public {
                 out.push_str("pub = true\n");
             }
-            if contract.borrowed {
-                out.push_str("borrowed = true\n");
-            }
             if !contract.fields.is_empty() {
                 out.push_str(&format!(
                     "fields = [{}]\n",
@@ -2132,7 +2125,6 @@ impl Ledger {
                     let entry = ledger.types.entry(name.clone()).or_default();
                     match key {
                         "pub" => entry.public = value == "true",
-                        "borrowed" => entry.borrowed = value == "true",
                         // Refused rather than guessed at, for `iterates`'
                         // reason: a third spelling is a claim somebody meant to
                         // make, and reading it as either of the two would put a

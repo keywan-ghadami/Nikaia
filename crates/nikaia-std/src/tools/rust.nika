@@ -80,13 +80,11 @@
 
 // A named part: a parameter, a field, an enum variant. `ty` is the text of the
 // type as it was written, which is what the translation step reads.
-@borrowed
 pub struct Part {
     pub name: ref String,
     pub ty: ref String,
 }
 
-@borrowed
 pub struct Fun {
     pub name: ref String,
     // The crate's own type parameters, as the text between the angle brackets
@@ -126,7 +124,6 @@ pub struct Fun {
 
 // A named type with parts: a `struct` or an `enum`. `what` says which, because
 // the two differ in what a part means and nothing else here cares.
-@borrowed
 pub struct Rec {
     pub what: ref String,
     pub name: ref String,
@@ -139,7 +136,6 @@ pub struct Rec {
 // scope. It is kept apart from `name` because they answer different questions:
 // the methods inside belong to the *type*, and `unsafe impl Send for X` is a
 // claim about the *trait* - which is the one ADR-193 D4's flag is after.
-@borrowed
 pub struct Group {
     pub what: ref String,
     pub name: ref String,

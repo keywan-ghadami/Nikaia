@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.166 (Draft)
+**Version:** 0.0.167 (Draft)
 **Date:** 2026-09-23
 
 ---
@@ -746,9 +746,8 @@ counter.access fn(n) { xs.map fn(x) { fs::read("log") } } // the lambda does I/O
 User code writes nothing for this. Without it no iterator method could appear
 inside `access` or `par_iter`, whatever its lambda did.
 
-**What the keyword is for.** A written `sync` does what `@borrowed` does in
-Part I 6.6: it states a property so that losing it is an error rather than a
-silent change. A body written `sync` is held to it, and a call inside it that
+**What the keyword is for.** A written `sync` states a property so that losing
+it is an error rather than a silent change. A body written `sync` is held to it, and a call inside it that
 can pause is refused with `NK2202`. A body without the word that qualifies still
 gets the benefit; a body that stops qualifying stops at the call that now needs
 it.

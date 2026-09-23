@@ -1366,9 +1366,16 @@ Nikaia line, which is the one thing Part III C.1 says may not happen.
 6. **The lint and the cleanup** (D8): a small extract pinning a large buffer,
    and a `Cleanup` that runs at the last tether rather than at the end of the
    mapping's scope.
-7. **`@borrowed`** (D6), which is **vacuous until the rest exists**: it forbids
-   a state transition, and today there is no transition to forbid. The emitter
-   writes a comment saying so on every `@borrowed` struct.
+7. **`@tethers`** ([ADR-201](specification/adr/adr-201.md) D2), the word a
+   struct writes to **allow** a tether — and it is not vacuous, it is what the
+   six items above are for: without it a value that would outlive its buffer is
+   an error, which is what `NK2302` and `NK2303` already say. It is **not in the
+   grammar** (D3), because a construct that permits a state nothing can reach is
+   the mistake this replaced. `@borrowed` stood here and was the opposite word —
+   *this never tethers* — asserting something the compiler could not check and
+   forbidding a transition that does not exist; it is removed at 0.0.167, and
+   what a reader met on each of the eight structs carrying it was three
+   questions the source answered none of.
 
 *So it is not one change package.* It was at least four — the type, the
 analysis, the representation, the ledger — and **the analysis is done**. What is

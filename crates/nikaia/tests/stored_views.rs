@@ -109,7 +109,6 @@ fn a_view_inside_a_struct_is_not_a_finding() {
         r#"
 use std::collections
 
-        @borrowed
         struct Reading { name: ref String, temp: i32 }
         struct Summary { stations: collections::HashMap[ref String, i32] }
         impl Summary {
@@ -206,7 +205,6 @@ fn a_naked_view_handed_back_from_a_method_is_refused() {
 #[test]
 fn a_naked_view_put_into_a_struct_that_is_handed_back_is_refused() {
     let finding = one(r#"
-        @borrowed
         struct Reading { name: ref String, temp: i32 }
         struct Factory { n: i32 }
         impl Factory {

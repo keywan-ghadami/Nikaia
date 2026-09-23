@@ -272,7 +272,6 @@ fn finding(stored: &Stored) -> Finding {
         help: Some(format!(
             "put the view in a struct and take the struct: the struct's declaration says which \
              buffer, the way `Reading` does in `examples/1brc.nika`:\n\
-             \x20          @borrowed\n\
              \x20          struct Held {{ {param}: {ty} }}\n\
              \x20          …\n\
              \x20          fn {function}(…, held: Held) {{ … held.{param} … }}\n\

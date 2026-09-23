@@ -55,9 +55,9 @@
 10-nikaia-light.md #55 lowered (as written) [sketch]  struct FileHandle {
 10-nikaia-light.md #56 lowered (as written)  impl Cleanup for BufferedFile {
 10-nikaia-light.md #57 refused (as written) [sketch NK1135,NK2605]  use std::fs
-10-nikaia-light.md #58 fragment (as written) [sketch]  struct Token {
-10-nikaia-light.md #59 lowered (as written)  @borrowed
-10-nikaia-light.md #60 fragment (as written) [sketch]  @borrowed
+10-nikaia-light.md #58 fragment (as written) [sketch]  @tethers
+10-nikaia-light.md #59 lowered (as written)  struct Reading { name: ref String, temp: i32 }
+10-nikaia-light.md #60 fragment (as written) [sketch]  struct Reading { name: ref String, temp: i32 }
 10-nikaia-light.md #61 lowered (a body)  let mut users = load_users()
 10-nikaia-light.md #62 lowered (as written)  use std::fs
 10-nikaia-light.md #63 refused (as written) [NK1135]  enum ConfigError {

@@ -43,7 +43,6 @@ grammar Measurements {
                  Summary::merge)
 }
 
-@borrowed
 pub struct Reading {
     name: ref String,
     temp: i32,

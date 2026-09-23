@@ -273,7 +273,6 @@ const STOCK: &str = "grammar Stock {\n\
                      \x20   pub rule file -> Vec[Entry] = entries:ENTRY* -> { entries }\n\
                      }\n\
                      \n\
-                     @borrowed\n\
                      pub struct Entry { pub category: ref String, pub count: i64 }\n\
                      \n\
                      pub fn read(data: ref String) -> Vec[Entry] throws {\n\
