@@ -47,23 +47,23 @@ grammar Fasta {
     // newline is the structure. Defining `WS` as empty is what says so - the
     // skip the backend puts between the elements of a syntactic rule would
     // otherwise eat the very line endings this grammar is made of.
-    rule WS = "" -> { }
+    rule WS = "" { }
 
     pub rule file -> Vec[Section] =
-        sections:section* -> { sections }
+        sections:section* { sections }
 
     // A header, then every line that does not start a new one. `not(">")`
     // consumes nothing: it is the test that ends the body, and writing it here
     // means the repetition needs no terminator of its own.
     rule section -> Section =
-        ">" header:LINE body:body_line* -> { Section { header, lines: body } }
+        ">" header:LINE body:body_line* { Section { header, lines: body } }
 
-    rule body_line -> ref String = not(">") l:LINE -> { l }
+    rule body_line -> ref String = not(">") l:LINE { l }
 
     // `until` stops before the terminator, so the line ending is consumed
     // explicitly. A file that does not end in one is not FASTA, and saying so
     // here is better than accepting it and losing the last line silently.
-    rule LINE -> ref String = s:until(line_ending) line_ending -> { s }
+    rule LINE -> ref String = s:until(line_ending) line_ending { s }
 }
 
 pub struct Section {

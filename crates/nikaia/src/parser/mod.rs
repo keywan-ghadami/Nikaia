@@ -1917,12 +1917,33 @@ grammar! {
 
         rule g_alt_tail -> GrammarAlt = "|" a:g_alt -> { a }
 
+        // **The action is the block after the pattern, with no second arrow**
+        // ([ADR-120](../../../../docs/specification/adr/adr-120.md) D2, Part II
+        // 10.8). The one `->` a rule writes is its result type, as a function's
+        // is; the arrow in front of the action was a wart from the days when the
+        // two sat on one line.
+        //
         // An action block is required today (Part II, 10.1, note) - with one
         // exception that is not an omission: a `par_fold` must be the whole
         // body of its rule (ADR-009 D2), so there is nothing for an action to
         // add. The emitter supplies the binding such a rule needs.
+        //
+        // **The old form is refused by name and not by *expected `{`***, which
+        // is what a reader of a program written a version ago would otherwise
+        // get. The arrow alternative stands first, so it is what matches when
+        // the arrow is there, and the `fail` stands **at** the arrow rather than
+        // after the block, so the caret is on the character to delete.
         rule g_alt -> GrammarAlt =
-            p:g_seq "->" action:block -> {
+            p:g_seq "->" fail(
+                "an action is the block after the pattern, with no arrow in front \
+                 of it (ADR-120 D2, Part II 10.8): write `pattern { action }`. The \
+                 one `->` a rule writes is its result type, as a function's is."
+            ) -> {
+                // Never reached: `fail` has already ended the alternative. The
+                // binding is here because the action has to be well-typed.
+                GrammarAlt { pattern: p, action: None }
+            }
+          | p:g_seq action:block -> {
                 GrammarAlt { pattern: p, action: Some(action) }
             }
           | f:g_fold -> {
@@ -1975,12 +1996,21 @@ grammar! {
 
         // A brace group is a bound only when its content starts with a digit,
         // which is the rule the backend states for the same ambiguity
-        // (SYNTAX.md, "Braces"). Without the lookahead, `n:digit1 { n }` - an
-        // action block someone forgot the `->` in front of - is read as a
-        // bound and reported as `expected digits`, which is true of the parser
-        // and no help to the reader.
+        // (SYNTAX.md, "Braces").
+        //
+        // **And *immediately* starts with one**, which is what makes
+        // [ADR-120](../../../../docs/specification/adr/adr-120.md) D2's sentence
+        // true rather than nearly true. Since the action is the block after the
+        // pattern, `digit { 1 }` is a rule that matches a digit and yields `1`,
+        // and it is indistinguishable from a bound of one by *a digit follows the
+        // brace* alone. `G_BOUND_START` is **lexical**, so nothing is skipped
+        // inside it: `digit{1}` is a bound and `digit { 1 }` is an action, which
+        // is the one place in a grammar where a space decides something and is
+        // written down on the page for that reason.
         rule g_bounds -> Repeat =
-            peek(("{" digit)) "{" b:g_bound_body "}" -> { b }
+            peek(G_BOUND_START) "{" b:g_bound_body "}" -> { b }
+
+        rule G_BOUND_START -> () = "{" digit -> { () }
 
         rule g_bound_body -> Repeat =
             n:number "," m:number -> { Repeat::Between(n, m) }

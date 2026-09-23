@@ -186,20 +186,20 @@ fn the_column_renders_and_parses_back() {
 /// below: `Stock::file` hands back `Vec[Entry]` and `Entry` holds a
 /// `ref String`; `Calc::expr` hands back an `i64` and holds nothing.
 const VIEWING: &str = "grammar Stock {\n\
-                       \x20   rule FIELD -> ref String = s:until(\";\" | frame_end) -> { s }\n\
-                       \x20   rule COUNT -> i64 = n:dec[i64](digit+) -> { n }\n\
+                       \x20   rule FIELD -> ref String = s:until(\";\" | frame_end) { s }\n\
+                       \x20   rule COUNT -> i64 = n:dec[i64](digit+) { n }\n\
                        \x20   @frame(boundary: \"\\n\")\n\
                        \x20   rule ENTRY -> Entry =\n\
                        \x20       category:FIELD \";\" => count:COUNT frame_end\n\
-                       \x20       -> { Entry { category, count } }\n\
-                       \x20   pub rule file -> Vec[Entry] = entries:ENTRY* -> { entries }\n\
+                       \x20       { Entry { category, count } }\n\
+                       \x20   pub rule file -> Vec[Entry] = entries:ENTRY* { entries }\n\
                        }\n\
                        \n\
                        pub struct Entry { pub category: ref String, pub count: i64 }\n";
 
 const COUNTING: &str = "grammar Calc {\n\
-                        \x20   rule NUM -> i64 = n:dec[i64](digit+) -> { n }\n\
-                        \x20   pub rule expr -> i64 = n:NUM -> { n }\n\
+                        \x20   rule NUM -> i64 = n:dec[i64](digit+) { n }\n\
+                        \x20   pub rule expr -> i64 = n:NUM { n }\n\
                         }\n";
 
 /// **A parse hands back views into the text it was given**

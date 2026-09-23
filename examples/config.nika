@@ -44,20 +44,20 @@ grammar Config {
     // grammar useless: two alternatives at the same position, so the real
     // expectation lost the comparison and was discarded. Fixed upstream, and
     // this file is where a Nikaia program would have met it.
-    rule WSE = multispace1 -> { }
-    rule WS = (WSE | COMMENT)* -> { }
-    rule COMMENT = "#" until(line_ending) -> { }
+    rule WSE = multispace1 { }
+    rule WS = (WSE | COMMENT)* { }
+    rule COMMENT = "#" until(line_ending) { }
 
     // A header and everything under it. The repetition stops on its own at
     // the next `[`, because a setting has to start with a name and `[` is not
     // one - no lookahead, no terminator, nothing to state.
     rule section -> Section =
-        "[" name:NAME "]" settings:setting* -> { Section { name, settings } }
+        "[" name:NAME "]" settings:setting* { Section { name, settings } }
 
     rule setting -> Setting =
-        key:NAME "=" value:VALUE -> { Setting { key, value } }
+        key:NAME "=" value:VALUE { Setting { key, value } }
 
-    rule NAME -> ref String = s:raw_ident -> { s }
+    rule NAME -> ref String = s:raw_ident { s }
 
     // Lexical: a value may contain blanks, dots and colons, so the only things
     // that end it are the end of the line and a comment. Naming both in the
@@ -67,10 +67,10 @@ grammar Config {
     //
     // The price, stated rather than hidden: a `#` inside a value is a comment
     // here. A format that needs one needs quoting, and quoting is a rule.
-    rule VALUE -> ref String = s:until("#" | line_ending) -> { s.trim() }
+    rule VALUE -> ref String = s:until("#" | line_ending) { s.trim() }
 
     pub rule file -> Vec[Section] =
-        sections:section* -> { sections }
+        sections:section* { sections }
 }
 
 pub struct Setting {

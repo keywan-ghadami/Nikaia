@@ -61,7 +61,8 @@ grammar scopes:
 * **Repetition** `* + ?` and a brace bound, **alternation** `|`, and the
   `# "expression"` label of Part II 10.6.
 
-An **action block** (`-> { … }`) is ordinary Nikaia and is highlighted as such,
+An **action block** (the `{ … }` after a pattern) is ordinary Nikaia and is
+highlighted as such,
 which is also what lets the grammar body find its own closing brace: every `{`
 inside it is consumed by a matching `}`.
 

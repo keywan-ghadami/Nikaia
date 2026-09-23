@@ -67,7 +67,7 @@ grammar Measurements {
     // be said: a plain `until(";")` would run through a newline, and the
     // compiler rejects that under a frame rather than quietly fixing it
     // (ADR-009 D1). Either way it is one machine-word-at-a-time scan.
-    rule NAME -> ref String = s:until(";" | frame_end) -> { s }
+    rule NAME -> ref String = s:until(";" | frame_end) { s }
 
     // Temperatures always carry exactly one decimal, so they are parsed as
     // tenths and the whole aggregation stays in integer arithmetic. Floating
@@ -79,7 +79,7 @@ grammar Measurements {
     // parse error, as it should be (ADR-009 D5).
     rule TENTHS -> i32 =
         neg:"-"? whole:digit{1,2} "." frac:digit
-        -> {
+        {
             let mut value = 0
             for d in whole.chars() { value = value * 10 + text::digit_value(d) }
             value = value * 10 + text::digit_value(frac)
@@ -102,7 +102,7 @@ grammar Measurements {
     @frame(boundary: "\n")
     rule MEASUREMENT -> Reading =
         name:NAME ";" => temp:TENTHS frame_end
-        -> { Reading { name, temp } }
+        { Reading { name, temp } }
 
     // The entry rule *is* the file.
     //

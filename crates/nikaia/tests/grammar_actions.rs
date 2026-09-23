@@ -35,7 +35,7 @@ fn ledger_for(source: &str) -> Ledger {
 fn a_pausing_call_in_an_action_is_refused() {
     let found: Vec<_> = findings(
         "use std::io\n\ngrammar Nums {\n\
-         \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { let t = io::read_to_string() return d }\n\
+         \x20   pub rule number -> i64 = d:dec[i64](digit+) { let t = io::read_to_string() return d }\n\
          }\n\
          fn read(text: ref String) -> i64 { return Nums::number(text) catch { 0 } }\n",
     )
@@ -59,7 +59,7 @@ fn a_pausing_call_in_an_action_is_refused() {
 fn a_pausing_call_in_a_folds_step_is_refused() {
     let found: Vec<_> = findings(
         "use std::io\n\ngrammar Nums {\n\
-         \x20   rule N -> i64 = d:dec[i64](digit+) -> { d }\n\
+         \x20   rule N -> i64 = d:dec[i64](digit+) { d }\n\
          \x20   pub rule file -> i64 = fold(N, zero, fn(acc, m) { io::read_to_string() acc })\n\
          }\n\
          fn zero() -> i64 { return 0 }\n",
@@ -78,7 +78,7 @@ fn a_pausing_call_in_a_folds_step_is_refused() {
 fn an_ordinary_action_and_a_pausing_caller_are_left_alone() {
     let found: Vec<_> = findings(
         "use std::io\n\ngrammar Nums {\n\
-         \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d + 1 }\n\
+         \x20   pub rule number -> i64 = d:dec[i64](digit+) { d + 1 }\n\
          }\n\
          fn read() -> i64 throws {\n\
          \x20   let text = io::read_to_string()\n\
@@ -94,7 +94,7 @@ fn an_ordinary_action_and_a_pausing_caller_are_left_alone() {
 fn an_entry_is_sync_in_the_ledger() {
     let ledger = ledger_for(
         "grammar Nums {\n\
-         \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d }\n\
+         \x20   pub rule number -> i64 = d:dec[i64](digit+) { d }\n\
          }\n",
     );
     assert_eq!(ledger.functions["Nums::number"].sync, Sync::Asserted);
@@ -112,7 +112,7 @@ fn an_entry_is_sync_in_the_ledger() {
 fn a_function_that_parses_stays_sync() {
     let ledger = ledger_for(
         "grammar Nums {\n\
-         \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d }\n\
+         \x20   pub rule number -> i64 = d:dec[i64](digit+) { d }\n\
          }\n\
          fn read(text: ref String) -> i64 { return Nums::number(text) catch { 0 } }\n",
     );

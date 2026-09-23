@@ -2729,8 +2729,75 @@ impl<'a> Checker<'a> {
     /// down is the rule's **return type**, and an action that builds something
     /// else is the mistake worth catching: a rule is where a struct literal is
     /// most often typed out in full.
+    /// **Two names the engine has and a grammar may not write** (`NK1187`,
+    /// [ADR-120](../../docs/specification/adr/adr-120.md) D3).
+    ///
+    /// `tag("x")` is `"x"` and `digit1` is `digit+`: each is the engine's
+    /// spelling for something the grammar can already say, and D1 makes Part II
+    /// 10.8 the whole vocabulary — *an element that is not on the page is not in
+    /// the language*. Refused **with the spelling**, because the alternative is
+    /// what the reader used to get: `digit1` reached the engine, worked, and the
+    /// page it is not on said nothing.
+    ///
+    /// The surface and the engine's own spelling are allowed to differ, as they
+    /// already do for `dec[i64]`; what this closes is a second way to write one
+    /// thing.
+    fn a_name_the_page_does_not_have(&mut self, pattern: &ast::Spanned<ast::Pattern>) {
+        const INSTEAD: &[(&str, &str, &str)] = &[
+            ("tag", "`\"x\"`", "a literal is written as itself"),
+            (
+                "digit1",
+                "`digit+`",
+                "a run of a character class is the class and a `+`, and it yields \
+                 the text it matched",
+            ),
+        ];
+        match &pattern.node {
+            ast::Pattern::Ref {
+                name,
+                args,
+                generics,
+            } => {
+                let written = self.parsed.text(*name);
+                if let Some((_, instead, why)) =
+                    INSTEAD.iter().find(|(banned, ..)| *banned == written)
+                {
+                    self.checked.findings.push(Finding {
+                        severity: Severity::Error,
+                        span: pattern.span.clone(),
+                        code: "NK1187",
+                        message: format!("`{written}` is not a name a grammar writes"),
+                        notes: vec![format!(
+                            "Part II 10.8 is every element a grammar may write, and it does \
+                             not name this one (ADR-120 D1, D3) - {why}"
+                        )],
+                        help: Some(format!("write {instead}")),
+                    });
+                }
+                let _ = generics;
+                for arg in args {
+                    self.a_name_the_page_does_not_have(arg);
+                }
+            }
+            ast::Pattern::Seq(parts) | ast::Pattern::Choice(parts) => {
+                for part in parts {
+                    self.a_name_the_page_does_not_have(part);
+                }
+            }
+            ast::Pattern::Bind { pat, .. }
+            | ast::Pattern::Repeat { pat, .. }
+            | ast::Pattern::Group(pat) => self.a_name_the_page_does_not_have(pat),
+            ast::Pattern::Literal(_) | ast::Pattern::Cut | ast::Pattern::Fold(_) => {}
+        }
+    }
+
     fn grammar(&mut self, grammar: &ast::GrammarDef) {
         let named = self.parsed.text(grammar.name).to_string();
+        for rule in &grammar.rules {
+            for alt in &rule.alts {
+                self.a_name_the_page_does_not_have(&alt.pattern);
+            }
+        }
         for rule in &grammar.rules {
             let expected = rule.ret_type.as_ref().map(|t| Ty::from_ast(self.parsed, t));
             // **The rule's own key, so its answers land in its own entry.**

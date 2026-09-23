@@ -50,7 +50,7 @@ grammar Calc {
     // between the elements of the sequence. That is the whole of why
     // "2+3", "2 + 3" and "2  +  3" all parse and nothing here mentions blanks.
     pub rule expr -> i64 =
-        head:term tail:add_tail* -> {
+        head:term tail:add_tail* {
             let mut value = head
             for t in tail { value = value + t }
             value
@@ -59,8 +59,8 @@ grammar Calc {
     // Subtraction is addition of a negation, so both alternatives can yield a
     // number and the fold above needs no operator at all.
     rule add_tail -> i64 =
-          "+" t:term -> { t }
-        | "-" t:term -> { -t }
+          "+" t:term { t }
+        | "-" t:term { -t }
 
     // Division cannot be folded that way - it is neither commutative nor
     // recoverable from a sign - so the operator has to travel with the operand.
@@ -72,7 +72,7 @@ grammar Calc {
     // said `match step.0` and then `step.1` in each arm until the shape existed,
     // and naming the parts twice is how a reader loses which is which.
     rule term -> i64 =
-        head:factor tail:mul_tail* -> {
+        head:factor tail:mul_tail* {
             let mut value = head
             for step in tail {
                 match step {
@@ -84,11 +84,11 @@ grammar Calc {
         }
 
     rule mul_tail -> (Op, i64) =
-        op:mul_op f:factor -> { (op, f) }
+        op:mul_op f:factor { (op, f) }
 
     rule mul_op -> Op =
-          "*" -> { Op::Times }
-        | "/" -> { Op::Divide }
+          "*" { Op::Times }
+        | "/" { Op::Divide }
 
     // The recursion. `expr` is reached again inside the parentheses, and the
     // whole precedence climb starts over there - which is why `(10 - 4)` is a
@@ -100,9 +100,9 @@ grammar Calc {
     // It applies only at the rule's own starting position: `(1` got past the
     // `(`, and the message naming the missing `)` says more (Part II, 10.6).
     rule factor -> i64 # "expression" =
-          "(" e:expr ")" -> { e }
-        | "-" f:factor -> { -f }
-        | n:NUMBER -> { n }
+          "(" e:expr ")" { e }
+        | "-" f:factor { -f }
+        | n:NUMBER { n }
 
     // Uppercase, so this is *lexical*: no whitespace between the digits.
     // Without that, "1 2" would be one number - the implicit skip of a
@@ -111,7 +111,7 @@ grammar Calc {
     // `dec[i64](…)` reads the digits the pattern matched as a number, and a
     // value `i64` cannot hold is a parse error rather than a silent wrap.
     rule NUMBER -> i64 =
-        n:dec[i64](digit+) -> { n }
+        n:dec[i64](digit+) { n }
 }
 
 fn main() throws {

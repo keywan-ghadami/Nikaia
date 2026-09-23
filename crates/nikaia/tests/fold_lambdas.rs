@@ -40,7 +40,7 @@ fn program(rule: &str) -> String {
         .expect("`pub rule <name> -> …`");
     format!(
         "grammar Nums {{\n\
-         \x20   rule N -> i64 = d:dec[i64](digit+) -> {{ d }}\n\
+         \x20   rule N -> i64 = d:dec[i64](digit+) {{ d }}\n\
          \x20   {rule}\n\
          }}\n\
          \n\
@@ -121,7 +121,7 @@ fn what_the_examples_write_is_left_alone() {
 #[test]
 fn a_sibling_binding_reaches_into_the_lambda() {
     let rule = "pub rule mixed -> i64 = \
-                head:N rest:fold(N, zero, fn(acc, m) { acc + m + head }) -> { rest }";
+                head:N rest:fold(N, zero, fn(acc, m) { acc + m + head }) { rest }";
     assert!(
         codes(rule).is_empty(),
         "`head` is bound by this rule's own pattern: {:#?}",

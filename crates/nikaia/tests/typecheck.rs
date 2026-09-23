@@ -243,7 +243,7 @@ fn a_grammar_action_is_checked_against_its_rule() {
     let (code, message) = one("struct Reading { name: ref String, temp: i32 }\n\
          grammar Measurements {\n\
          \x20   rule LINE -> Reading = name:until(\";\") \";\" temp:digit\n\
-         \x20       -> { Reading { nmae: name, temp: temp } }\n\
+         \x20       { Reading { nmae: name, temp: temp } }\n\
          }");
     assert_eq!(code, "NK1107");
     assert_eq!(message, "`Reading` has no field `nmae`");
@@ -253,7 +253,7 @@ fn a_grammar_action_is_checked_against_its_rule() {
 #[test]
 fn a_grammar_action_of_the_wrong_type_is_reported() {
     let (code, message) = one("grammar Measurements {\n\
-         \x20   rule COUNT -> i32 = s:until(\";\") -> { \"one\" }\n\
+         \x20   rule COUNT -> i32 = s:until(\";\") { \"one\" }\n\
          }");
     assert_eq!(code, "NK1104");
     assert_eq!(

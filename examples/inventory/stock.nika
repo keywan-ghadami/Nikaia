@@ -7,16 +7,16 @@
 
 grammar Stock {
 
-    rule FIELD -> ref String = s:until(";" | frame_end) -> { s }
+    rule FIELD -> ref String = s:until(";" | frame_end) { s }
 
-    rule COUNT -> i64 = n:dec[i64](digit+) -> { n }
+    rule COUNT -> i64 = n:dec[i64](digit+) { n }
 
     @frame(boundary: "\n")
     rule ENTRY -> Entry =
         category:FIELD ";" => item:FIELD ";" count:COUNT frame_end
-        -> { Entry { category, item, count } }
+        { Entry { category, item, count } }
 
-    pub rule file -> Vec[Entry] = entries:ENTRY* -> { entries }
+    pub rule file -> Vec[Entry] = entries:ENTRY* { entries }
 }
 
 // `pub`, because this is part of what the package offers: a consumer that reads

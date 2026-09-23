@@ -222,8 +222,8 @@ fn a_sysroot_module_is_checked_before_it_is_lowered() {
          }\n\
          \n\
          grammar G {\n\
-             pub rule all -> Vec[ref String] = ps:piece* -> { flat(ps) }\n\
-             rule piece -> Piece = s:raw_ident -> { Piece::Nothing } | any -> { Piece::Nothing }\n\
+             pub rule all -> Vec[ref String] = ps:piece* { flat(ps) }\n\
+             rule piece -> Piece = s:raw_ident { Piece::Nothing } | any { Piece::Nothing }\n\
          }\n\
          \n\
          fn flat(ps: Vec[Piece]) -> Vec[ref String] {\n\

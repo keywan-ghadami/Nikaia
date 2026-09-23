@@ -264,13 +264,13 @@ fn std_says_which_of_its_own_functions_keep() {
 /// The parse [ADR-186](../../../docs/specification/adr/adr-186.md) was written
 /// about, and the caller whose columns it took away.
 const STOCK: &str = "grammar Stock {\n\
-                     \x20   rule FIELD -> ref String = s:until(\";\" | frame_end) -> { s }\n\
-                     \x20   rule COUNT -> i64 = n:dec[i64](digit+) -> { n }\n\
+                     \x20   rule FIELD -> ref String = s:until(\";\" | frame_end) { s }\n\
+                     \x20   rule COUNT -> i64 = n:dec[i64](digit+) { n }\n\
                      \x20   @frame(boundary: \"\\n\")\n\
                      \x20   rule ENTRY -> Entry =\n\
                      \x20       category:FIELD \";\" => count:COUNT frame_end\n\
-                     \x20       -> { Entry { category, count } }\n\
-                     \x20   pub rule file -> Vec[Entry] = entries:ENTRY* -> { entries }\n\
+                     \x20       { Entry { category, count } }\n\
+                     \x20   pub rule file -> Vec[Entry] = entries:ENTRY* { entries }\n\
                      }\n\
                      \n\
                      pub struct Entry { pub category: ref String, pub count: i64 }\n\
@@ -304,8 +304,8 @@ fn a_caller_of_a_parse_keeps_what_it_hands_over() {
 #[test]
 fn a_parse_that_views_nothing_keeps_nothing() {
     let source = "grammar Calc {\n\
-                  \x20   rule NUM -> i64 = n:dec[i64](digit+) -> { n }\n\
-                  \x20   pub rule expr -> i64 = n:NUM -> { n }\n\
+                  \x20   rule NUM -> i64 = n:dec[i64](digit+) { n }\n\
+                  \x20   pub rule expr -> i64 = n:NUM { n }\n\
                   }\n";
     assert!(keeps(source, "Calc::expr").is_empty());
 }
@@ -317,8 +317,8 @@ fn a_parse_that_views_nothing_keeps_nothing() {
 #[test]
 fn a_parse_whose_record_this_walk_cannot_see_keeps_the_text() {
     let source = "grammar Wire {\n\
-                  \x20   rule NUM -> i64 = n:dec[i64](digit+) -> { n }\n\
-                  \x20   pub rule frame -> Vec[Packet] = n:NUM -> { [] }\n\
+                  \x20   rule NUM -> i64 = n:dec[i64](digit+) { n }\n\
+                  \x20   pub rule frame -> Vec[Packet] = n:NUM { [] }\n\
                   }\n";
     assert_eq!(keeps(source, "Wire::frame"), ["input"]);
 }

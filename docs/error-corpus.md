@@ -105,7 +105,7 @@ any ranking, so no label helps.
 | # | input | the reader needs | before | today |
 | :-- | :--- | :--- | :--- | :--- |
 | C1 | `struct S { name ref String }` | `:` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `:` `` |
-| C2 | `rule A -> i32 = n:digit1 { n }` | `->` | ⚠️ `` `//`, whitespace `` | ✅ ``expected `->` `` |
+| C2 | `rule A -> i32 = n:digit+ -> { n }` | *the arrow is gone* | ⚠️ `` `//`, whitespace `` | ✅ the sentence, naming `pattern { action }` |
 | C3 | `fn main( {` | `)` or a parameter | ⚠️ `` `//`, whitespace `` | ✅ ``expected `)` `` |
 | C4 | `let 5 = x` | a name | ○ **parses** | ⚠️ refused, ``expected `mut` `` |
 | C5 | `impl S { struct T {} }` | a method | ⚠️ `` `//`, whitespace `` | ✅ ``expected `}` ``, `fn`/`pub` in the note, and `struct` named as reserved |
@@ -114,15 +114,25 @@ C1 is the best row in the corpus and worth keeping as the example: `expected ':'
 is exactly what a reader can act on.
 
 C2 was a grammar question *and* a message question, and needed both answered.
-`{ n }` is an action block whose `->` was forgotten, and the grammar read it as
-a repetition bound - so `digits` was true of the parser and no help. A brace
-group is a bound only when its content starts with a digit, which is the rule
-the backend already states for the same ambiguity, and `peek(("{" digit))` is
-how a grammar says it. That alone reported `expected a digit` for every brace
-group that is not a bound, because a failing lookahead was recorded like any
-other error and won on progress - so the second half is upstream: a lookahead
-demands nothing, and what fails inside one is not an expectation
-(winnow-grammar#10).
+Its input was `rule A -> i32 = n:digit1 { n }` — an action block whose `->` was
+forgotten — and the grammar read the brace as a repetition bound, so `digits`
+was true of the parser and no help. A brace group is a bound only when its
+content starts with a digit, which is the rule the backend already states for
+the same ambiguity, and `peek(("{" digit))` is how a grammar says it. That alone
+reported `expected a digit` for every brace group that is not a bound, because a
+failing lookahead was recorded like any other error and won on progress - so the
+second half is upstream: a lookahead demands nothing, and what fails inside one
+is not an expectation (winnow-grammar#10).
+
+**And the input changed at 0.0.169**, which is the one row in this table whose
+question moved rather than being answered:
+[ADR-120](specification/adr/adr-120.md) D2 makes the block after the pattern
+*the* action, so `n:digit1 { n }` is no longer a forgotten arrow — it is the
+form. The row asks the same reader question from the other side now: somebody
+who writes a program the old way is told what the new one is, by name, instead
+of *expected `{`*. The lookahead stayed and got stricter: `G_BOUND_START` is
+**lexical**, so `digit{1}` is a bound and `digit { 1 }` is an action, which is
+what makes D2's *a bound starts with an integer* true rather than nearly true.
 
 C3 now names `)`. An empty parameter list is a real alternative, and the `(`
 was already matched, so the parameter list had begun — its missing `)` is a

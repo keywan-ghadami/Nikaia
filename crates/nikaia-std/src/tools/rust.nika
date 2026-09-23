@@ -214,12 +214,12 @@ grammar Rust {
     //
     // A nested `/* /* */ */` is one comment in Rust and two here. That is a
     // stated limit and not a silent one - see the header.
-    rule WSE = multispace1 -> { }
-    rule WS = (WSE | LINE | BLOCK)* -> { }
-    rule LINE = "//" until(line_ending) -> { }
-    rule BLOCK = "/*" until("*/") "*/" -> { }
+    rule WSE = multispace1 { }
+    rule WS = (WSE | LINE | BLOCK)* { }
+    rule LINE = "//" until(line_ending) { }
+    rule BLOCK = "/*" until("*/") "*/" { }
 
-    pub rule file -> Vec[Item] = items:public eof -> { items }
+    pub rule file -> Vec[Item] = items:public eof { items }
 
     // ---- the two bodies ------------------------------------------------
     //
@@ -229,45 +229,45 @@ grammar Rust {
     // alternative and it is the whole of the visibility rule.
 
     rule public -> Vec[Item] =
-        found:found* -> { kept(found) }
+        found:found* { kept(found) }
 
     rule exposed -> Vec[Item] =
-        found:found_exposed* -> { kept(found) }
+        found:found_exposed* { kept(found) }
 
     rule found -> Found =
-          i:item -> { Found::One(i) }
-        | f:method -> { Found::One(Item::Hidden(f)) }
-        | JUNK -> { Found::Skip }
+          i:item { Found::One(i) }
+        | f:method { Found::One(Item::Hidden(f)) }
+        | JUNK { Found::Skip }
 
     rule found_exposed -> Found =
-          f:method -> { Found::One(Item::Fun(f)) }
-        | i:item -> { Found::One(i) }
-        | JUNK -> { Found::Skip }
+          f:method { Found::One(Item::Fun(f)) }
+        | i:item { Found::One(i) }
+        | JUNK { Found::Skip }
 
     rule item -> Item =
-          f:function -> { Item::Fun(f) }
-        | r:record -> { Item::Rec(r) }
-        | g:group -> { Item::Group(g) }
-        | e:export -> { Item::Export(e) }
-        | u:import -> { Item::Used(u) }
+          f:function { Item::Fun(f) }
+        | r:record { Item::Rec(r) }
+        | g:group { Item::Group(g) }
+        | e:export { Item::Export(e) }
+        | u:import { Item::Used(u) }
 
     // `pub use …;` and nothing else: a plain `use` brings a name into this
     // file's scope and makes nothing reachable from outside it, and
     // `pub(crate) use` is refused by `PUB` itself.
-    rule export -> ref String = PUB USE t:USE_TEXT ";" -> { t }
+    rule export -> ref String = PUB USE t:USE_TEXT ";" { t }
 
-    rule import -> ref String = USE t:USE_TEXT ";" -> { t }
+    rule import -> ref String = USE t:USE_TEXT ";" { t }
 
-    rule USE_TEXT -> ref String = s:text(USE_RUN) -> { s.trim() }
-    rule USE_RUN = USE_PIECE+ -> { }
-    rule USE_PIECE = not(";") (BRACES | LINE | BLOCK | ANY) -> { }
+    rule USE_TEXT -> ref String = s:text(USE_RUN) { s.trim() }
+    rule USE_RUN = USE_PIECE+ { }
+    rule USE_PIECE = not(";") (BRACES | LINE | BLOCK | ANY) { }
 
     // ---- functions -----------------------------------------------------
 
-    rule function -> Fun = PUB f:method -> { f }
+    rule function -> Fun = PUB f:method { f }
 
     rule method -> Fun =
-        pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result w:where_clause c:tail -> {
+        pauses:qualifiers FN name:IDENT g:generics parts:parameters result:result w:where_clause c:tail {
             Fun { name, generics: g, wheres: w, calls: c, pauses, parts, result }
         }
 
@@ -275,29 +275,29 @@ grammar Rust {
     // only one of them is a question the ledger asks: whether the function
     // pauses.
     rule qualifiers -> bool =
-        qs:qualifier* -> {
+        qs:qualifier* {
             let mut pauses = false
             for q in qs.drain() { if q { pauses = true } }
             pauses
         }
 
     rule qualifier -> bool =
-          ASYNC -> { true }
-        | CONST -> { false }
-        | UNSAFE -> { false }
-        | EXTERN abi -> { false }
+          ASYNC { true }
+        | CONST { false }
+        | UNSAFE { false }
+        | EXTERN abi { false }
 
-    rule abi = string -> { } | empty -> { }
+    rule abi = string { } | empty { }
 
     // A body, or the semicolon a trait's own declaration ends with.
     // A body, or the semicolon a trait's own declaration ends with - and what
     // the body **calls**, at every depth.
-    rule tail -> Vec[ref String] = cs:inside -> { cs } | ";" -> { Vec() }
+    rule tail -> Vec[ref String] = cs:inside { cs } | ";" { Vec() }
 
-    rule inside -> Vec[ref String] = "{" cs:inside_run "}" -> { cs }
+    rule inside -> Vec[ref String] = "{" cs:inside_run "}" { cs }
 
     rule inside_run -> Vec[ref String] =
-        pieces:inside_piece* -> { joined(pieces) }
+        pieces:inside_piece* { joined(pieces) }
 
     // What one piece turned out to be. **Three variants and not a list**: a
     // piece that is one call would otherwise build a list of one, which the
@@ -316,13 +316,13 @@ grammar Rust {
     // group is descended into so a call inside a closure is not lost, and a
     // call is taken before the character it starts with would be.
     rule inside_piece -> Called =
-          not("}") STRING -> { Called::Nothing }
-        | not("}") CHAR -> { Called::Nothing }
-        | not("}") LINE -> { Called::Nothing }
-        | not("}") BLOCK -> { Called::Nothing }
-        | not("}") inner:inside -> { Called::Many(inner) }
-        | not("}") p:CALL -> { Called::One(p) }
-        | not("}") ANY -> { Called::Nothing }
+          not("}") STRING { Called::Nothing }
+        | not("}") CHAR { Called::Nothing }
+        | not("}") LINE { Called::Nothing }
+        | not("}") BLOCK { Called::Nothing }
+        | not("}") inner:inside { Called::Many(inner) }
+        | not("}") p:CALL { Called::One(p) }
+        | not("}") ANY { Called::Nothing }
 
     // A path immediately followed by `(`. Lexical, so the `(` has to be the
     // next character: `match (a, b) {` is not a call to `match`, and `f (x)` is
@@ -330,134 +330,134 @@ grammar Rust {
     // expression grammar, and a price worth naming.
     //
     // A turbofish is read past: `spawn::<T>(…)` is a call to `spawn`.
-    rule CALL -> ref String = p:text(PATH) TURBOFISH "(" -> { p }
+    rule CALL -> ref String = p:text(PATH) TURBOFISH "(" { p }
 
-    rule PATH = raw_ident (PATH_TAIL)* -> { }
-    rule PATH_TAIL = "::" raw_ident -> { }
-    rule TURBOFISH = "::" ANGLES -> { } | empty -> { }
+    rule PATH = raw_ident (PATH_TAIL)* { }
+    rule PATH_TAIL = "::" raw_ident { }
+    rule TURBOFISH = "::" ANGLES { } | empty { }
 
-    rule parameters -> Vec[Part] = "(" ps:parameter_list ")" -> { ps }
+    rule parameters -> Vec[Part] = "(" ps:parameter_list ")" { ps }
 
     rule parameter_list -> Vec[Part] =
-          head:parameter tail:parameter_tail* COMMA -> {
+          head:parameter tail:parameter_tail* COMMA {
               let mut all = Vec()
               all.push(head)
               for p in tail.drain() { all.push(p) }
               all
           }
-        | empty -> { Vec() }
+        | empty { Vec() }
 
-    rule parameter_tail -> Part = "," p:parameter -> { p }
+    rule parameter_tail -> Part = "," p:parameter { p }
 
     // The receiver keeps the text it was written as, so `&mut self` and `self`
     // stay different without a type for either.
     rule parameter -> Part =
-          t:text(receiver) -> { Part { name: "self", ty: t.trim() } }
-        | MUT n:IDENT ":" t:PARAM_TYPE -> { Part { name: n, ty: t } }
-        | n:IDENT ":" t:PARAM_TYPE -> { Part { name: n, ty: t } }
-        | n:HOLE ":" t:PARAM_TYPE -> { Part { name: n, ty: t } }
+          t:text(receiver) { Part { name: "self", ty: t.trim() } }
+        | MUT n:IDENT ":" t:PARAM_TYPE { Part { name: n, ty: t } }
+        | n:IDENT ":" t:PARAM_TYPE { Part { name: n, ty: t } }
+        | n:HOLE ":" t:PARAM_TYPE { Part { name: n, ty: t } }
 
     // Longest first: a PEG takes the first alternative that matches, so
     // `&mut self` has to be tried before `&self`.
     rule receiver =
-          "&" LIFETIME MUT SELF -> { }
-        | "&" LIFETIME SELF -> { }
-        | "&" MUT SELF -> { }
-        | "&" SELF -> { }
-        | MUT SELF -> { }
-        | SELF -> { }
+          "&" LIFETIME MUT SELF { }
+        | "&" LIFETIME SELF { }
+        | "&" MUT SELF { }
+        | "&" SELF { }
+        | MUT SELF { }
+        | SELF { }
 
     // ---- structs, enums ------------------------------------------------
 
     rule record -> Rec =
-          PUB STRUCT name:IDENT generics where_clause "{" fs:field_list "}" -> {
+          PUB STRUCT name:IDENT generics where_clause "{" fs:field_list "}" {
               Rec { what: "struct", name, parts: fs }
           }
-        | PUB STRUCT name:IDENT generics tuple_body where_clause ";" -> {
+        | PUB STRUCT name:IDENT generics tuple_body where_clause ";" {
               Rec { what: "struct", name, parts: Vec() }
           }
-        | PUB ENUM name:IDENT generics where_clause "{" vs:variant_list "}" -> {
+        | PUB ENUM name:IDENT generics where_clause "{" vs:variant_list "}" {
               Rec { what: "enum", name, parts: vs }
           }
 
-    rule tuple_body = "(" TUPLE_INNER ")" -> { } | empty -> { }
+    rule tuple_body = "(" TUPLE_INNER ")" { } | empty { }
 
     rule field_list -> Vec[Part] =
-          head:field tail:field_tail* COMMA -> {
+          head:field tail:field_tail* COMMA {
               let mut all = Vec()
               all.push(head)
               for f in tail.drain() { all.push(f) }
               all
           }
-        | empty -> { Vec() }
+        | empty { Vec() }
 
-    rule field_tail -> Part = "," f:field -> { f }
+    rule field_tail -> Part = "," f:field { f }
 
     rule field -> Part =
-          PUB n:IDENT ":" t:FIELD_TYPE -> { Part { name: n, ty: t } }
-        | n:IDENT ":" t:FIELD_TYPE -> { Part { name: n, ty: t } }
+          PUB n:IDENT ":" t:FIELD_TYPE { Part { name: n, ty: t } }
+        | n:IDENT ":" t:FIELD_TYPE { Part { name: n, ty: t } }
 
     rule variant_list -> Vec[Part] =
-          head:variant tail:variant_tail* COMMA -> {
+          head:variant tail:variant_tail* COMMA {
               let mut all = Vec()
               all.push(head)
               for v in tail.drain() { all.push(v) }
               all
           }
-        | empty -> { Vec() }
+        | empty { Vec() }
 
-    rule variant_tail -> Part = "," v:variant -> { v }
+    rule variant_tail -> Part = "," v:variant { v }
 
     // A variant's payload is kept as the text it was written as, which is the
     // same answer a field's type gets and for the same reason.
     rule variant -> Part =
-          n:IDENT t:text(payload) -> { Part { name: n, ty: t.trim() } }
+          n:IDENT t:text(payload) { Part { name: n, ty: t.trim() } }
 
     rule payload =
-          "(" TUPLE_INNER ")" -> { }
-        | "{" BRACE_INNER "}" -> { }
-        | empty -> { }
+          "(" TUPLE_INNER ")" { }
+        | "{" BRACE_INNER "}" { }
+        | empty { }
 
     // ---- scopes --------------------------------------------------------
 
     rule group -> Group =
-          UNSAFE IMPL generics v:IMPL_TYPE FOR t:IMPL_TYPE where_clause "{" items:exposed "}" -> {
+          UNSAFE IMPL generics v:IMPL_TYPE FOR t:IMPL_TYPE where_clause "{" items:exposed "}" {
               Group { what: "unsafe impl", name: t, via: v, visible: true, items }
           }
-        | UNSAFE IMPL generics t:IMPL_TYPE where_clause "{" items:public "}" -> {
+        | UNSAFE IMPL generics t:IMPL_TYPE where_clause "{" items:public "}" {
               Group { what: "unsafe impl", name: t, via: "", visible: true, items }
           }
-        | IMPL generics v:IMPL_TYPE FOR t:IMPL_TYPE where_clause "{" items:exposed "}" -> {
+        | IMPL generics v:IMPL_TYPE FOR t:IMPL_TYPE where_clause "{" items:exposed "}" {
               Group { what: "impl", name: t, via: v, visible: true, items }
           }
-        | IMPL generics t:IMPL_TYPE where_clause "{" items:public "}" -> {
+        | IMPL generics t:IMPL_TYPE where_clause "{" items:public "}" {
               Group { what: "impl", name: t, via: "", visible: true, items }
           }
-        | PUB TRAIT name:IDENT generics where_clause "{" items:exposed "}" -> {
+        | PUB TRAIT name:IDENT generics where_clause "{" items:exposed "}" {
               Group { what: "trait", name, via: "", visible: true, items }
           }
-        | PUB MOD name:IDENT "{" items:public "}" -> {
+        | PUB MOD name:IDENT "{" items:public "}" {
               Group { what: "mod", name, via: "", visible: true, items }
           }
-        | PUB MOD name:IDENT ";" -> {
+        | PUB MOD name:IDENT ";" {
               Group { what: "mod", name, via: "", visible: true, items: Vec() }
           }
         // A `mod` that is not `pub`. Read for what a `pub use` may reach
         // through it, and marked so that nobody mistakes it for an offer.
-        | MOD name:IDENT "{" items:public "}" -> {
+        | MOD name:IDENT "{" items:public "}" {
               Group { what: "mod", name, via: "", visible: false, items }
           }
-        | MOD name:IDENT ";" -> {
+        | MOD name:IDENT ";" {
               Group { what: "mod", name, via: "", visible: false, items: Vec() }
           }
 
     rule generics -> ref String =
-          "<" g:text(ANGLE_INNER) ">" -> { g.trim() }
-        | empty -> { "" }
+          "<" g:text(ANGLE_INNER) ">" { g.trim() }
+        | empty { "" }
 
     rule where_clause -> ref String =
-          WHERE w:text(WHERE_RUN) -> { w.trim() }
-        | empty -> { "" }
+          WHERE w:text(WHERE_RUN) { w.trim() }
+        | empty { "" }
 
     // ---- what a type looks like, where it stops ------------------------
     //
@@ -466,76 +466,76 @@ grammar Rust {
     // Which delimiter that is, is the only thing that differs between the
     // three.
 
-    rule PARAM_TYPE -> ref String = s:text(PARAM_RUN) -> { s.trim() }
-    rule PARAM_RUN = PARAM_PIECE+ -> { }
-    rule PARAM_PIECE = not(",") not(")") SPAN -> { }
+    rule PARAM_TYPE -> ref String = s:text(PARAM_RUN) { s.trim() }
+    rule PARAM_RUN = PARAM_PIECE+ { }
+    rule PARAM_PIECE = not(",") not(")") SPAN { }
 
-    rule FIELD_TYPE -> ref String = s:text(FIELD_RUN) -> { s.trim() }
-    rule FIELD_RUN = FIELD_PIECE+ -> { }
-    rule FIELD_PIECE = not(",") not("}") SPAN -> { }
+    rule FIELD_TYPE -> ref String = s:text(FIELD_RUN) { s.trim() }
+    rule FIELD_RUN = FIELD_PIECE+ { }
+    rule FIELD_PIECE = not(",") not("}") SPAN { }
 
     // `where` ends a result as surely as a brace does - and `not(WHERE)` says
     // so about the *word*, so a result of type `Wherever` is still a result.
-    rule result -> ref String = "->" t:RESULT_TYPE -> { t } | empty -> { "" }
+    rule result -> ref String = "->" t:RESULT_TYPE { t } | empty { "" }
 
-    rule RESULT_TYPE -> ref String = s:text(RESULT_RUN) -> { s.trim() }
-    rule RESULT_RUN = RESULT_PIECE+ -> { }
-    rule RESULT_PIECE = not("{") not(";") not(WHERE) SPAN -> { }
+    rule RESULT_TYPE -> ref String = s:text(RESULT_RUN) { s.trim() }
+    rule RESULT_RUN = RESULT_PIECE+ { }
+    rule RESULT_PIECE = not("{") not(";") not(WHERE) SPAN { }
 
-    rule WHERE_RUN = WHERE_PIECE+ -> { }
-    rule WHERE_PIECE = not("{") not(";") SPAN -> { }
+    rule WHERE_RUN = WHERE_PIECE+ { }
+    rule WHERE_PIECE = not("{") not(";") SPAN { }
 
-    rule IMPL_TYPE -> ref String = s:text(IMPL_RUN) -> { s.trim() }
-    rule IMPL_RUN = IMPL_PIECE+ -> { }
-    rule IMPL_PIECE = not("{") not(WHERE) not(FOR) SPAN -> { }
+    rule IMPL_TYPE -> ref String = s:text(IMPL_RUN) { s.trim() }
+    rule IMPL_RUN = IMPL_PIECE+ { }
+    rule IMPL_PIECE = not("{") not(WHERE) not(FOR) SPAN { }
 
     // One unit of text that is not a delimiter: a bracket group, a literal, a
     // comment, or one character. Everything above is this with a different
     // thing in front of it.
-    rule SPAN = (ANGLES | PARENS | BRACKETS | STRING | CHAR | LINE | BLOCK | ANY) -> { }
+    rule SPAN = (ANGLES | PARENS | BRACKETS | STRING | CHAR | LINE | BLOCK | ANY) { }
 
     // ---- the skipper ---------------------------------------------------
     //
     // `not("}")` is what keeps a scope's own closing brace for the rule that
     // opened it, and is the reason `public` and `exposed` terminate.
 
-    rule JUNK = not("}") (STRING | CHAR | LINE | BLOCK | BRACES | ANY) -> { }
+    rule JUNK = not("}") (STRING | CHAR | LINE | BLOCK | BRACES | ANY) { }
 
-    rule BRACES = "{" BRACE_INNER "}" -> { }
-    rule BRACE_INNER = BRACE_PIECE* -> { }
-    rule BRACE_PIECE = not("}") (STRING | CHAR | LINE | BLOCK | BRACES | ANY) -> { }
+    rule BRACES = "{" BRACE_INNER "}" { }
+    rule BRACE_INNER = BRACE_PIECE* { }
+    rule BRACE_PIECE = not("}") (STRING | CHAR | LINE | BLOCK | BRACES | ANY) { }
 
-    rule PARENS = "(" TUPLE_INNER ")" -> { }
-    rule TUPLE_INNER = PAREN_PIECE* -> { }
-    rule PAREN_PIECE = not(")") (STRING | CHAR | LINE | BLOCK | PARENS | BRACES | BRACKETS | ANGLES | ANY) -> { }
+    rule PARENS = "(" TUPLE_INNER ")" { }
+    rule TUPLE_INNER = PAREN_PIECE* { }
+    rule PAREN_PIECE = not(")") (STRING | CHAR | LINE | BLOCK | PARENS | BRACES | BRACKETS | ANGLES | ANY) { }
 
-    rule BRACKETS = "[" BRACKET_INNER "]" -> { }
-    rule BRACKET_INNER = BRACKET_PIECE* -> { }
-    rule BRACKET_PIECE = not("]") (STRING | CHAR | LINE | BLOCK | PARENS | BRACES | BRACKETS | ANGLES | ANY) -> { }
+    rule BRACKETS = "[" BRACKET_INNER "]" { }
+    rule BRACKET_INNER = BRACKET_PIECE* { }
+    rule BRACKET_PIECE = not("]") (STRING | CHAR | LINE | BLOCK | PARENS | BRACES | BRACKETS | ANGLES | ANY) { }
 
     // Angle brackets are the one pair that is not a delimiter in Rust's
     // grammar, only in its types - so this is used inside a type and nowhere
     // else, and a `>` that closes nothing is one character like any other.
-    rule ANGLES = "<" ANGLE_INNER ">" -> { }
-    rule ANGLE_INNER = ANGLE_PIECE* -> { }
-    rule ANGLE_PIECE = not(">") (STRING | CHAR | LINE | BLOCK | PARENS | BRACKETS | ANGLES | ANY) -> { }
+    rule ANGLES = "<" ANGLE_INNER ">" { }
+    rule ANGLE_INNER = ANGLE_PIECE* { }
+    rule ANGLE_PIECE = not(">") (STRING | CHAR | LINE | BLOCK | PARENS | BRACKETS | ANGLES | ANY) { }
 
     // A string literal, crossed rather than read. A raw string (`r"…"`) is not
     // here: it is a stated limit, like the nested comment.
-    rule STRING = "\"" (SESC | SPLAIN)* "\"" -> { }
-    rule SESC = "\\" any -> { }
-    rule SPLAIN = not("\"") not("\\") any -> { }
+    rule STRING = "\"" (SESC | SPLAIN)* "\"" { }
+    rule SESC = "\\" any { }
+    rule SPLAIN = not("\"") not("\\") any { }
 
     // A character literal, and the reason it is written this exactly: `'a` in
     // Rust is a *lifetime*, and a rule that read `'` and then anything would
     // swallow the `'static` in `Box<dyn Any + 'static>` and everything after
     // it up to the next quote. Requiring the closing quote is what makes a
     // lifetime fall through to `ANY`.
-    rule CHAR = "'" (CESC | CPLAIN) "'" -> { }
-    rule CESC = "\\" any -> { }
-    rule CPLAIN = not("'") not("\\") any -> { }
+    rule CHAR = "'" (CESC | CPLAIN) "'" { }
+    rule CESC = "\\" any { }
+    rule CPLAIN = not("'") not("\\") any { }
 
-    rule ANY = any -> { }
+    rule ANY = any { }
 
     // ---- words ---------------------------------------------------------
     //
@@ -543,31 +543,31 @@ grammar Rust {
     // and not the first three letters of `publish`. A scanner that matched the
     // text alone found `publish` and `republish` both.
 
-    rule PUB = "pub" not(WORD) not("(") -> { }
-    rule FN = "fn" not(WORD) -> { }
-    rule ASYNC = "async" not(WORD) -> { }
-    rule CONST = "const" not(WORD) -> { }
-    rule UNSAFE = "unsafe" not(WORD) -> { }
-    rule EXTERN = "extern" not(WORD) -> { }
-    rule STRUCT = "struct" not(WORD) -> { }
-    rule ENUM = "enum" not(WORD) -> { }
-    rule TRAIT = "trait" not(WORD) -> { }
-    rule IMPL = "impl" not(WORD) -> { }
-    rule MOD = "mod" not(WORD) -> { }
-    rule FOR = "for" not(WORD) -> { }
-    rule WHERE = "where" not(WORD) -> { }
-    rule MUT = "mut" not(WORD) -> { }
-    rule USE = "use" not(WORD) -> { }
-    rule SELF = "self" not(WORD) -> { }
+    rule PUB = "pub" not(WORD) not("(") { }
+    rule FN = "fn" not(WORD) { }
+    rule ASYNC = "async" not(WORD) { }
+    rule CONST = "const" not(WORD) { }
+    rule UNSAFE = "unsafe" not(WORD) { }
+    rule EXTERN = "extern" not(WORD) { }
+    rule STRUCT = "struct" not(WORD) { }
+    rule ENUM = "enum" not(WORD) { }
+    rule TRAIT = "trait" not(WORD) { }
+    rule IMPL = "impl" not(WORD) { }
+    rule MOD = "mod" not(WORD) { }
+    rule FOR = "for" not(WORD) { }
+    rule WHERE = "where" not(WORD) { }
+    rule MUT = "mut" not(WORD) { }
+    rule USE = "use" not(WORD) { }
+    rule SELF = "self" not(WORD) { }
 
-    rule WORD = alpha1 -> { } | digit -> { } | "_" -> { }
+    rule WORD = alpha1 { } | digit { } | "_" { }
 
-    rule IDENT -> ref String = s:raw_ident -> { s }
-    rule HOLE -> ref String = s:text("_") -> { s }
-    rule LIFETIME = "'" raw_ident -> { }
+    rule IDENT -> ref String = s:raw_ident { s }
+    rule HOLE -> ref String = s:text("_") { s }
+    rule LIFETIME = "'" raw_ident { }
 
     // A trailing comma, allowed everywhere Rust allows one.
-    rule COMMA = "," -> { } | empty -> { }
+    rule COMMA = "," { } | empty { }
 }
 
 // Every call one body's pieces found, in order.

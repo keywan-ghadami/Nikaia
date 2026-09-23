@@ -6,7 +6,7 @@
 
 grammar Digits {
     pub rule pair -> Pair =
-        left:i32 "," right:i32 -> { Pair { left, right } }
+        left:i32 "," right:i32 { Pair { left, right } }
 }
 
 pub struct Pair {

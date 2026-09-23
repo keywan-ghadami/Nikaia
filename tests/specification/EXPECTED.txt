@@ -76,7 +76,7 @@
 10-nikaia-light.md #76 refused (as written) [NK1135]  // file: src/main.nika
 10-nikaia-light.md #77 lowered (as written)  use http
 10-nikaia-light.md #78 lowered (as written)  // file: network.nika
-20-nikaia-advance.md #1 fragment (as written)  grammar Json {
+20-nikaia-advance.md #1 refused (as written) [NK1135]  grammar Json {
 20-nikaia-advance.md #2 refused (as written) [NK1175]  // The compiler runs the Json grammar at build time.
 20-nikaia-advance.md #3 lowered (as written)  fn parse_input(input: String) throws {
 20-nikaia-advance.md #4 lowered (as written)  comptime ROUTES: Fixed[ref String, i64] = [("get", 1), …

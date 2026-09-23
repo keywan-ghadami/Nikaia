@@ -13,10 +13,10 @@ grammar Measurements {
 
     rule NAME -> ref String =
         s:until(";")
-        -> { s }
+        { s }
 
     @frame(boundary: "\n")
     pub rule MEASUREMENT -> ref String =
         name:NAME ";" frame_end
-        -> { name }
+        { name }
 }

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.168 (Draft)
+**Version:** 0.0.169 (Draft)
 **Date:** 2026-09-23
 
 ---
@@ -544,7 +544,7 @@ and `rule WS = "" { }` skips nothing.
 | `p => q` | the **cut**: after `p`, `q` must follow; a failure in `q` is an error and no enclosing alternative is retried | as `p q` |
 | `p?` | `p` or nothing | a `T?` |
 | `p*`, `p+` | zero or more, one or more `p` | a list of what `p` yields, or the text matched where `p` is a character class |
-| `p{n}`, `p{n,}`, `p{n,m}` | exactly, at least, between `n` and `m` times; greedy and never giving one back | as `p*` |
+| `p{n}`, `p{n,}`, `p{n,m}` | exactly, at least, between `n` and `m` times; greedy and never giving one back — written with the brace against the digit, since `p { 1 }` is `p` with an action | as `p*` |
 | `( p )` | grouping | as `p` |
 | `[ p ]`, `{ p }`, `paren( p )` | the delimiter around `p` in the **input**: `[`, `{`, `(` | as `p` |
 | `not(p)` | succeeds where `p` does not match, consuming nothing | nothing |
@@ -584,10 +584,17 @@ it consumes the boundary in the middle (10.7, [ADR-009](adr/adr-009.md)).
 the spelling to use. A further built-in of the engine underneath joins this page
 when a program needs it, and not before.
 
-> **Implementation status:** Partially implemented. The vocabulary above is what
-> the examples use and the engine provides. The action block without the arrow
-> and the two refusals of `tag` and `digit1` are not implemented; today a grammar
-> writes `-> { … }` ([ADR-120](adr/adr-120.md) §5).
+> **Implementation status:** Implemented ([ADR-120](adr/adr-120.md)). The action
+> is the block after the pattern; the old `-> { … }` is refused by name, with the
+> new form in the message, rather than with *expected `{`*. `tag` and `digit1`
+> are `NK1187`, each carrying the spelling to use. The emitter keeps writing the
+> engine's arrow, which is what the surface and the engine's own spelling being
+> allowed to differ means — as they already do for `dec[i64]`.
+>
+> **One place in a grammar where a space decides something**, and it is the
+> residual of *a brace bound starts with an integer*: `digit{1}` is a bound and
+> `digit { 1 }` is an action, because the bound's lookahead is lexical. Without
+> that, an action whose value is a number would be read as a repetition.
 
 ## Chapter 11: Running Your Code at Once
 

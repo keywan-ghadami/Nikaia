@@ -67,48 +67,48 @@ grammar Json_ {
     // to come before `[` value-list `]`, or the empty array reaches a rule
     // that requires a value and fails on the `]`.
     pub rule value -> Json =
-          "null" -> { Json::Null }
-        | "true" -> { Json::Bool(true) }
-        | "false" -> { Json::Bool(false) }
-        | n:NUMBER -> { Json::Number(n) }
-        | s:TEXT -> { Json::Text(s) }
-        | "[" "]" -> { Json::Array(Vec()) }
-        | "[" items:values "]" -> { Json::Array(items) }
-        | "{" "}" -> { Json::Object(Vec()) }
-        | "{" members:members "}" -> { Json::Object(members) }
+          "null" { Json::Null }
+        | "true" { Json::Bool(true) }
+        | "false" { Json::Bool(false) }
+        | n:NUMBER { Json::Number(n) }
+        | s:TEXT { Json::Text(s) }
+        | "[" "]" { Json::Array(Vec()) }
+        | "[" items:values "]" { Json::Array(items) }
+        | "{" "}" { Json::Object(Vec()) }
+        | "{" members:members "}" { Json::Object(members) }
 
     // A comma-separated list, written the way `calc.nika` writes its operand
     // tails: a head and a repetition, collected in the action. A PEG cannot
     // say `values = values "," value` - that does not terminate - and this is
     // the standard repair.
     rule values -> Vec[Json] =
-        head:value tail:value_tail* -> {
+        head:value tail:value_tail* {
             let mut all = Vec()
             all.push(head)
             for v in tail.drain() { all.push(v) }
             all
         }
 
-    rule value_tail -> Json = "," v:value -> { v }
+    rule value_tail -> Json = "," v:value { v }
 
     rule members -> Vec[Member] =
-        head:member tail:member_tail* -> {
+        head:member tail:member_tail* {
             let mut all = Vec()
             all.push(head)
             for m in tail.drain() { all.push(m) }
             all
         }
 
-    rule member_tail -> Member = "," m:member -> { m }
+    rule member_tail -> Member = "," m:member { m }
 
-    rule member -> Member = k:TEXT ":" v:value -> { Member { key: k, value: v } }
+    rule member -> Member = k:TEXT ":" v:value { Member { key: k, value: v } }
 
     // Uppercase, so this is lexical and the sign, the digits and the fraction
     // are one run with nothing allowed between them. `dec[f64](…)` reads the
     // text the pattern matched, so the number is parsed once, by the same code
     // that would have to check it anyway.
     rule NUMBER -> f64 =
-        n:dec[f64](text("-"? digit+ ("." digit+)? )) -> { n }
+        n:dec[f64](text("-"? digit+ ("." digit+)? )) { n }
 
     // The body between the quotes, raw. Two things can appear in it and both
     // consume at least one character, which is what keeps the repetition from
@@ -117,10 +117,10 @@ grammar Json_ {
     //
     // `text(…)` hands back the input the repetition covered instead of a list
     // of what it matched - a view, one slice, no allocation.
-    rule TEXT -> ref String = "\"" s:text((ESC | PLAIN)*) "\"" -> { s }
+    rule TEXT -> ref String = "\"" s:text((ESC | PLAIN)*) "\"" { s }
 
-    rule ESC = "\\" any -> { }
-    rule PLAIN = not("\"") not("\\") any -> { }
+    rule ESC = "\\" any { }
+    rule PLAIN = not("\"") not("\\") any { }
 }
 
 // The document, printed back with two spaces per level.

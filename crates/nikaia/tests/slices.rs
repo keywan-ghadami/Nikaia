@@ -211,11 +211,11 @@ fn an_action_that_fills_a_view_names_the_vec() {
          pub struct Section { name: ref String, settings: ref Array[Setting] }\n\
          \n\
          grammar Cfg {\n\
-         \x20   rule WS = multispace0 -> { }\n\
-         \x20   rule NAME -> ref String = s:raw_ident -> { s }\n\
-         \x20   rule setting -> Setting = key:NAME \"=\" value:NAME -> { Setting { key, value } }\n\
+         \x20   rule WS = multispace0 { }\n\
+         \x20   rule NAME -> ref String = s:raw_ident { s }\n\
+         \x20   rule setting -> Setting = key:NAME \"=\" value:NAME { Setting { key, value } }\n\
          \x20   pub rule section -> Section =\n\
-         \x20       \"[\" name:NAME \"]\" settings:setting* -> { Section { name, settings } }\n\
+         \x20       \"[\" name:NAME \"]\" settings:setting* { Section { name, settings } }\n\
          }\n\
          \n\
          fn main() { println(\"x\") }\n",

@@ -187,8 +187,8 @@ fn an_items_refusal_names_the_item() {
 #[test]
 fn a_grammar_entry_that_is_not_there_names_its_line() {
     let source = "grammar Tiny {\n\
-                  \x20   rule NUM -> i64 = n:dec[i64](digit+) -> { n }\n\
-                  \x20   pub rule one -> i64 = n:NUM -> { n }\n\
+                  \x20   rule NUM -> i64 = n:dec[i64](digit+) { n }\n\
+                  \x20   pub rule one -> i64 = n:NUM { n }\n\
                   }\n\
                   \n\
                   fn main() {\n\

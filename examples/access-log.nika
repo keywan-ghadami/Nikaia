@@ -45,14 +45,14 @@ grammar Log {
     // The second alternative is what makes this safe inside a frame: a line
     // missing its last field stops at the newline instead of eating the line
     // after it.
-    rule FIELD -> ref String = s:until(" " | frame_end) -> { s }
+    rule FIELD -> ref String = s:until(" " | frame_end) { s }
 
     // Three digits, exactly. The format says a status is three digits, so the
     // grammar says it too - and a line carrying "20" fails here, where the
     // reader can see why, instead of somewhere downstream.
-    rule STATUS -> i32 = n:dec[i32](digit{3}) -> { n }
+    rule STATUS -> i32 = n:dec[i32](digit{3}) { n }
 
-    rule SIZE -> i64 = n:dec[i64](digit+) -> { n }
+    rule SIZE -> i64 = n:dec[i64](digit+) { n }
 
     // A request can be found from any offset by scanning to the next newline,
     // which is what `@frame` says and what makes the parse parallel. Lexical
@@ -62,7 +62,7 @@ grammar Log {
     @frame(boundary: "\n")
     rule ENTRY -> Hit =
         _ip:FIELD " " => method:FIELD " " path:FIELD " " status:STATUS " " bytes:SIZE frame_end
-        -> { Hit { path, status, bytes } }
+        { Hit { path, status, bytes } }
 
     // The entry rule is the file. A fold rather than `ENTRY*`: a log is
     // append-only and unbounded, and a report is small, so nothing is

@@ -42,9 +42,9 @@ grammar Stock {
     // The second alternative is what makes this safe inside a frame: a line
     // missing its last field stops at the newline instead of eating the line
     // after it.
-    rule FIELD -> ref String = s:until(";" | frame_end) -> { s }
+    rule FIELD -> ref String = s:until(";" | frame_end) { s }
 
-    rule COUNT -> i64 = n:dec[i64](digit+) -> { n }
+    rule COUNT -> i64 = n:dec[i64](digit+) { n }
 
     // An entry can be found from any offset by scanning to the next newline,
     // which is what `@frame` says. Lexical (uppercase), because the implicit
@@ -53,13 +53,13 @@ grammar Stock {
     @frame(boundary: "\n")
     rule ENTRY -> Entry =
         category:FIELD ";" => item:FIELD ";" count:COUNT frame_end
-        -> { Entry { category, item, count } }
+        { Entry { category, item, count } }
 
     // Collected rather than folded: a stock file is a page's worth of rows and
     // the page needs all of them. `1brc.nika` makes the other choice with
     // `par_fold`, for input that does not fit in memory - the two are worth
     // seeing side by side.
-    pub rule file -> Vec[Entry] = entries:ENTRY* -> { entries }
+    pub rule file -> Vec[Entry] = entries:ENTRY* { entries }
 }
 
 // The name and the category are slices of the file, never copies. No `Entry`

@@ -192,7 +192,7 @@ fn arithmetic() {
 const WITH_DSL: &str = r#"
 grammar Measurements {
     @frame(boundary: "\n")
-    rule MEASUREMENT -> i32 = t:i32 frame_end -> { t }
+    rule MEASUREMENT -> i32 = t:i32 frame_end { t }
 
     pub rule file -> i64 =
         par_fold(MEASUREMENT, zero, fn(acc, m) { acc + m }, add)
@@ -325,8 +325,8 @@ fn a_rule_label_is_lowered_where_the_backend_expects_it() {
     let source = concat!(
         "grammar G {\n",
         "    rule atom -> i32 # \"expression\" =\n",
-        "        n:digit1 -> { 1 }\n",
-        "      | \"(\" e:atom \")\" -> { e }\n",
+        "        n:digit+ { 1 }\n",
+        "      | \"(\" e:atom \")\" { e }\n",
         "}\n"
     );
     let emitted = emit(source, Build::default());
@@ -339,7 +339,7 @@ fn a_rule_label_is_lowered_where_the_backend_expects_it() {
 /// A rule without one is emitted exactly as it was.
 #[test]
 fn a_rule_without_a_label_gains_nothing() {
-    let source = "grammar G {\n    rule atom -> i32 = n:digit1 -> { 1 }\n}\n";
+    let source = "grammar G {\n    rule atom -> i32 = n:digit+ { 1 }\n}\n";
     let emitted = emit(source, Build::default());
     assert!(emitted.contains("rule atom -> i32 ="), "{emitted}");
     // The preamble's `#[allow(unused_imports)]` is not part of the grammar, and
@@ -638,9 +638,9 @@ fn a_type_argument_is_written_with_brackets_and_emitted_with_angles() {
     // the two meet - the source never writes the backend's spelling.
     let source = r#"
 grammar Ids {
-    rule N -> i32 = n:dec[i32](digit{1,2}) -> { n }
-    rule T -> ref String = t:text(alpha1 digit*) -> { t }
-    pub rule entry -> i32 = n:N -> { n }
+    rule N -> i32 = n:dec[i32](digit{1,2}) { n }
+    rule T -> ref String = t:text(alpha1 digit*) { t }
+    pub rule entry -> i32 = n:N { n }
 }
 "#;
     let emitted = emit(source, Build::default());
@@ -663,11 +663,11 @@ fn a_grammar_with_two_public_rules_is_entered_by_either() {
     let source = r#"
 grammar Two {
     @frame(boundary: "\n")
-    rule M -> i32 = t:i32 frame_end -> { t }
-    rule N -> i64 = d:dec[i64](digit+) -> { d }
+    rule M -> i32 = t:i32 frame_end { t }
+    rule N -> i64 = d:dec[i64](digit+) { d }
 
     pub rule both -> i64 = par_fold(M, zero, fn(acc, m) { acc + m }, add)
-    pub rule one -> i64 = n:N -> { n }
+    pub rule one -> i64 = n:N { n }
 }
 
 fn zero() -> i64 { return 0 }
@@ -694,7 +694,7 @@ fn single() { let s = Two::one(data) }
 #[test]
 fn a_rule_reached_through_a_dot_is_refused() {
     let source = "grammar Nums {\n\
-                  \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d }\n\
+                  \x20   pub rule number -> i64 = d:dec[i64](digit+) { d }\n\
                   }\n\
                   \n\
                   fn read(text: ref String) { let n = Nums.number(text) catch { 0 } }\n";
@@ -718,7 +718,7 @@ fn a_rule_reached_through_a_dot_is_refused() {
 #[test]
 fn a_method_on_a_value_is_not_a_grammar_entry() {
     let source = "grammar Nums {\n\
-                  \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d }\n\
+                  \x20   pub rule number -> i64 = d:dec[i64](digit+) { d }\n\
                   }\n\
                   \n\
                   fn read(text: String) -> i64 { return text.len() }\n";
@@ -742,8 +742,8 @@ fn a_method_on_a_value_is_not_a_grammar_entry() {
 fn a_private_rule_is_not_an_entry() {
     let source = r#"
 grammar Two {
-    rule N -> i64 = d:dec[i64](digit+) -> { d }
-    pub rule one -> i64 = n:N -> { n }
+    rule N -> i64 = d:dec[i64](digit+) { d }
+    pub rule one -> i64 = n:N { n }
 }
 
 fn reach() { let s = Two::N(data) }
@@ -765,7 +765,7 @@ fn reach() { let s = Two::N(data) }
 #[test]
 fn the_old_from_form_is_refused_with_the_call_in_the_message() {
     let source = "grammar Nums {\n\
-                  \x20   pub rule number -> i64 = d:dec[i64](digit+) -> { d }\n\
+                  \x20   pub rule number -> i64 = d:dec[i64](digit+) { d }\n\
                   }\n\
                   \n\
                   fn read() { let n = dsl Nums from text }\n";

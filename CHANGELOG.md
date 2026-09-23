@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.169] — 2026-09-23
+
+**A grammar's action is the block after the pattern, and two borrowed names go**
+— [ADR-120](docs/specification/adr/adr-120.md), built whole, which closes
+[`open-work.md`](docs/open-work.md) §2.29.
+
+### The action
+
+- **`rule NAME -> Type = pattern { action }`.** The one `->` a rule writes is its result type, as a function's is; the arrow in front of the action was a wart from the days when the two sat on one line (D2).
+- **219 arrows went** — 57 in `examples/`, 153 in `crates/nikaia-std/src/tools/rust.nika`, the rest in the fixtures and the error corpus — plus 87 more in the grammars the tests embed as source strings.
+- **The old form is refused by name**, with the new one in the message and the caret on the character to delete, rather than with *expected `{`*: what a reader of a program written a version ago gets is a sentence and not a token.
+- **The emitter keeps writing the engine's arrow**, which is the record's third consequence and is now a measured fact rather than a plan: `fixtures/measurements_expected.rs` is **byte-for-byte unchanged** across this whole package. The surface and the engine's own spelling are allowed to differ, as they already do for `dec[i64]`.
+- **And Part II 10.1's own grammar block stopped being a fragment.** It wrote the new form and could not parse; it parses now and is `NK1135` for the type it names and does not declare, which is the honest answer for a fragment.
+
+### One place in a grammar where a space decides something
+
+- **`digit{1}` is a bound and `digit { 1 }` is an action.** D2's *a brace bound starts with an integer* was nearly right and is now true: with the action being the block after the pattern, a rule that yields a number is indistinguishable from a repetition by *a digit follows the brace* alone. `G_BOUND_START` is **lexical**, so nothing is skipped inside the lookahead.
+- Written down on the page rather than left to be met, because it is the one place in the grammar where whitespace is load-bearing.
+
+### `tag` and `digit1` are `NK1187`
+
+- Each is the engine's spelling for something the grammar can already say: `tag("x")` is `"x"`, and `digit1` is `digit+`, which yields the text it matched as every character-class repetition does.
+- **Refused with the spelling**, because the alternative is what a reader used to get: `digit1` reached the engine, worked, and the page it is not on said nothing. D1 makes Part II 10.8 the whole vocabulary — *an element that is not on the page is not in the language* — and a second way to write one thing is what that rule exists to stop.
+
+### The error corpus keeps its row and changes its question
+
+`C2` was `rule A -> i32 = n:digit1 { n }` — an action block whose arrow was forgotten, read as a repetition bound, answered with *expected a digit*. That input is now **the form**. The row asks the same reader question from the other side: it is the old arrow now, and what comes back names `pattern { action }`. [`docs/error-corpus.md`](docs/error-corpus.md) carries both halves, because the finding that produced the lookahead is still the finding.
+
 ## [0.0.168] — 2026-09-23
 
 **`use std::<anything>` is refused here and not by `rustc`** — `NK1186`, which
