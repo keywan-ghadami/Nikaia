@@ -77,8 +77,11 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**One entry is open**, §1.9, found at 0.0.171 by building a package whose own
-generic function has a bound. §1.7 closed at 0.0.168 — `use std::<anything>` is
+**Two entries are open**, §1.10 and §1.11 — and both are things §1.9's fix
+**revealed** rather than made,
+and which is the shape this section's method produces: a thing becomes writable,
+so the next question about it becomes askable. §1.9 closed at 0.0.172, the
+package after the one that found it. §1.7 closed at 0.0.168 — `use std::<anything>` is
 `NK1186` now, and the list it is answered from is what `std`'s ledger declares
 joined with what a page or a record names and the compiler has not built. §1.8
 closed at 0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132,
@@ -93,59 +96,108 @@ got a number, by trying the same change twice and getting two answers: a hand
 edit to a `contracts/<crate>.contracts` did not reach the build cache's key, and
 failed **open** while it did not.
 
-### 1.9. A package's own bound is refused when the package is a dependency
-
-A `pub fn` of a **package** whose parameter carries a bound is refused with
-`NK1126` — *nothing says it has a method* — when the package is built **as a
-dependency**, and compiles when the same code is built on its own.
+### 1.10. A call into a **dependency's** generic function is not checked against its bound
 
 ```nika
 // handler/src/main.nika
-pub struct Answer { pub text: String }
-
-pub trait Handler {
-    fn handle(ref self) -> Answer
-}
+pub trait Handler { fn handle(ref self) -> Answer }
 
 pub fn dispatch[H: Handler](h: H) -> String {
     return h.handle().text
 }
 ```
 
-`nikaia build` in a program that writes `use handler` refuses **the package's
-own line**:
+```nika
+// app/src/main.nika
+use handler
 
-```text
-error[NK1126]: `H` stands for a type the caller picks, and nothing says it has a method `handle`
-  --> handler/src/main.nika:10:5
+struct Bare { n: i64 }
+
+fn main() {
+    println(handler::dispatch(Bare { n: 1 }))   // NK1164's shape, and it is not raised
+}
 ```
 
-and the same source as a single program lowers. **The consumer does not have to
-call it**: a program that only names one of the package's types is enough,
-because every unit of the build is checked.
+What comes back is `rustc`'s, on the author's line:
 
-*What it is:* a dependency's unit is checked against the **program's** ledger,
-whose keys were qualified while it was absorbed — `handler::Handler` — and the
-dependency's own file writes the name unqualified, as its author must. So the
-trait the bound names is not found, and `NK1126` fires on a correct program,
-which is [Part III C.4](specification/30-nikaia-tooling.md).
+```text
+error: app/src/main.nika:6:5: the trait bound `Bare: Handler` is not satisfied
+     = the trait `Handler` is not implemented for `Bare`
+     = the trait `Handler` is implemented for `Static`
+```
 
-*What it is not:* it is **not** the path in a bound, which is built
-([ADR-106](specification/adr/adr-106.md) D1) — reproduced with that change
-stashed, and the refusal is identical. `implementations` already keeps **both**
-spellings for this reason and `traits` keeps only the qualified one, which is
-where the asymmetry shows.
+The **position** is right — [ADR-005](specification/adr/adr-005.md) D7's
+translation puts the caret where the program is — and the **words** are the
+backend's, which is [Part III
+C.1](specification/30-nikaia-tooling.md). `Handler` is written without the path
+the program must write, and `Static` is a name this program never mentions.
 
-*And the cheap fix is the wrong one.* Giving `traits` both spellings too would
-make the *program's* `[T: Handler]` resolve to a dependency's trait — a second
-spelling of a name [ADR-046](specification/adr/adr-046.md) D2 says must carry its
-path, accepted silently. What the case wants is a dependency's unit checked in
-**its own** namespace, which is a question about how `program.units` are walked
-and not about bounds.
+*What it is:* `Checker::declared_bounds` is built from the **AST of the unit
+being checked**, under the key a call resolves to (`dispatch`), and the call
+writes `handler::dispatch`. Every unit of the build is walked, so the `fn` is
+seen — under the wrong key, in the wrong file's pass.
 
-*Found by* writing the shape [ADR-106](specification/adr/adr-106.md) D1 had just
-made writable and building it from the other side, which is this section's
-method.
+*What it needs, and it is a **decision** rather than a patch:* **the ledger has
+no column for a bound.** A signature writes `(h: $H) -> String` and the
+`: Handler` is nowhere in it, which is exactly what
+[ADR-024](specification/adr/adr-024.md) D1 says a ledger is for — *what a caller
+has to know about a function it cannot see the body of*. Whether that is a new
+key or a widening of the `signature` language is
+[ADR-106](specification/adr/adr-106.md) D3's table to extend, and no record does
+it. Filing the bounds under the qualified key from the AST instead would work
+for a **path** dependency and for nothing else, which is the wrong shape to
+build first.
+
+*Why it is here and not below:* the program is refused, and refused in the
+backend's words. Nothing is miscompiled.
+
+*Found by* fixing §1.9 and then handing the now-writable function a type that
+implements nothing — the same method one step further on.
+
+### 1.11. A field handed back out of a lent parameter is `rustc`'s to refuse
+
+Four lines:
+
+```nika
+pub struct Answer { pub text: String }
+
+pub fn say(answer: Answer) -> String {
+    return answer.text
+}
+```
+
+lowers to `pub fn say(answer: &Answer) -> String { answer.text }` and `rustc`
+says
+
+```text
+error: cannot move out of `answer.text` which is behind a shared reference
+     = consider cloning the value if the performance cost is acceptable
+```
+
+about a file the author never opened, which is [Part III
+C.1](specification/30-nikaia-tooling.md).
+
+*What it is:* the `keeps` column ([ADR-094](specification/adr/adr-094.md) D1) is
+inferred from what a body does with each parameter, and `hand_over` reads a bare
+name — `return answer` keeps, `return answer.text` does not. So the parameter is
+**lent**, the declaration is written `&Answer`, and the body takes a piece out of
+a loan.
+
+*It is `NK1131` one position over.* That refusal says exactly this sentence about
+a **`ref self`** subject — *`self` is borrowed here, so `text` cannot be returned
+by value* — and it asks it of `self` alone, because until [ADR-094](specification/adr/adr-094.md)
+D1 nothing else was lent without the word.
+
+*What it needs, and the direction matters:* **not a refusal.** The program is
+correct — a caller that hands its `Answer` over and never uses it again is
+exactly what `keeps` is for — so the answer is to **widen the inference**: a
+`return` or an assignment of `param.field`, where the field's type **moves**,
+keeps the parameter, and the declaration is written by value as it already is for
+`return answer`. A field that **copies** must not, or a parameter would be taken
+away from its caller for an `i64`. The field's type is readable from the
+declaration, which is what makes the narrow version possible.
+
+*Found by* writing a fixture for §1.9 and having it refused for something else.
 
 **Every entry this section has ever held was found by *running* something** —
 the specification's own programs, the corpus at both settings, a two-file

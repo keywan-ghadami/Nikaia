@@ -486,6 +486,25 @@ pub struct Program {
     /// One ledger for the project (Part III, 13.5), with every module's entries
     /// under the name a caller writes.
     pub contracts: crate::contracts::Ledger,
+    /// **Each dependency's ledger as that package itself wrote it**, before
+    /// `absorb` qualified its keys and the types inside them.
+    ///
+    /// `contracts` above is the right ledger for the *program's* files and the
+    /// wrong one for a package's own: absorbing turns `Request` into
+    /// `http::Request`, in the key and in every signature that names it, and the
+    /// package's own file writes the bare word as its author must
+    /// ([ADR-046](../../../docs/specification/adr/adr-046.md) D2 gives no import
+    /// to write). Checked against the absorbed one, a package's `[H: Handler]`
+    /// found no trait and `answer(connection, handler)` was told its own
+    /// `fn(Request) -> Response` is not a `fn(http::Request) -> http::Response` —
+    /// a correct program refused, twice over
+    /// ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **Kept rather than reconstructed.** Un-qualifying the absorbed ledger
+    /// would be `absorb` run backwards, and an inverse that is nearly right is
+    /// worse than none: this is the very ledger the package was inferred with, so
+    /// there is nothing to get wrong.
+    pub as_its_own: std::collections::BTreeMap<String, crate::contracts::Ledger>,
 }
 
 impl Program {
@@ -514,6 +533,8 @@ impl Program {
 
     fn of(units: Vec<Unit>, dependencies: &[Dependency]) -> Result<Program> {
         let mut contracts = crate::contracts::Ledger::empty();
+        let mut as_its_own: std::collections::BTreeMap<String, crate::contracts::Ledger> =
+            std::collections::BTreeMap::new();
 
         // **A package at a time, not a file at a time.** `absorb` qualifies the
         // types *inside* an entry with the package's name, and it can only do
@@ -558,6 +579,7 @@ impl Program {
                 // second-best answer and D1 prefers the one it shipped.
                 &crate::contracts::std_library(),
             );
+            as_its_own.insert(package.clone(), own.clone());
             library.absorb_renaming(Some(&package), &renames, own.clone());
             contracts.absorb_renaming(Some(&package), &renames, own);
         }
@@ -572,7 +594,11 @@ impl Program {
             contracts.absorb_renaming(None, &renames, own);
         }
 
-        Ok(Program { units, contracts })
+        Ok(Program {
+            units,
+            contracts,
+            as_its_own,
+        })
     }
 
     /// The **packages** this program reaches, by the name a `use` writes.

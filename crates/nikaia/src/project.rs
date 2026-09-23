@@ -715,10 +715,24 @@ pub fn lower_reading(
                 beside: &beside,
                 reads: &reads,
             };
+            // **A dependency's unit is checked as its own package writes it**
+            // ([`open-work.md`](../../docs/open-work.md) §1.9). The program's
+            // contracts are the right ledger for the program's own files and the
+            // wrong one for a package's: absorbing qualified its keys *and the
+            // types inside them*, and the package's file writes the bare word.
+            // `Program::as_its_own` is the ledger that package was inferred
+            // with, kept rather than reconstructed.
             for unit in &program.units {
+                let contracts = match &unit.package {
+                    Some(package) => program
+                        .as_its_own
+                        .get(package)
+                        .unwrap_or(&program.contracts),
+                    None => &program.contracts,
+                };
                 check(
                     &unit.parsed,
-                    &program.contracts,
+                    contracts,
                     &modules,
                     around,
                     &unit.path,

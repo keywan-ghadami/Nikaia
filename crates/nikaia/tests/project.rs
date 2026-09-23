@@ -2347,3 +2347,73 @@ fn a_type_that_implements_nothing_is_refused_at_a_path_bound() {
         "the message names the type the caller picked: {said}"
     );
 }
+
+/// **A package's own bound is answered in the package's own namespace**
+/// ([`open-work.md`](../../../docs/open-work.md) §1.9, closed).
+///
+/// `pub fn dispatch[H: Handler](h: H)` compiled on its own and was `NK1126` —
+/// *nothing says it has a method* — the moment a program depended on the
+/// package, **without the program calling it**: every unit of a build is
+/// checked, and a dependency's was checked against the *program's* ledger, whose
+/// keys `absorb` had qualified. The package's own file writes the bare word, as
+/// its author must ([ADR-046](../../../docs/specification/adr/adr-046.md) D2
+/// gives no import to write).
+///
+/// **And the first fix was wrong in a way this test would not have caught**, so
+/// the second claim below is here on purpose: un-qualifying the *keys* left the
+/// types **inside** each signature qualified, and `examples/http`'s own
+/// `answer(connection, handler)` was told that its `fn(Request) -> Response` is
+/// not a `fn(http::Request) -> http::Response`. What the checker gets now is the
+/// ledger that package was inferred with, kept rather than reconstructed.
+#[test]
+fn a_packages_own_bound_and_its_own_types_are_answered_in_its_own_namespace() {
+    let dir = a_program_and_a_package(
+        "own-namespace",
+        "handler",
+        &[
+            (
+                "handler/src/main.nika",
+                "pub struct Answer {\n\
+                 \x20   pub text: String,\n\
+                 }\n\
+                 \n\
+                 pub trait Handler {\n\
+                 \x20   fn handle(ref self) -> Answer\n\
+                 }\n\
+                 \n\
+                 pub struct Static {\n\
+                 \x20   pub what: String,\n\
+                 }\n\
+                 \n\
+                 impl Handler for Static {\n\
+                 \x20   fn handle(ref self) -> Answer {\n\
+                 \x20       return Answer { text: self.what.clone() }\n\
+                 \x20   }\n\
+                 }\n\
+                 \n\
+                 // The bound is the package's own, written without a path\n\
+                 pub fn dispatch[H: Handler](h: H) -> String {\n\
+                 \x20   return say(h.handle())\n\
+                 }\n\
+                 \n\
+                 // And a parameter whose type is the package's own, which is\n\
+                 // what the first fix broke: the key was bare and the type was\n\
+                 // not.\n\
+                 pub fn say(answer: Answer) -> String {\n\
+                 \x20   return answer.text.clone()\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use handler\n\n\
+                 fn main() {\n\
+                 \x20   let s = handler::Static { what: \"its own\".to_string() }\n\
+                 \x20   println(handler::dispatch(s))\n\
+                 }\n",
+            ),
+        ],
+    );
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "its own");
+}

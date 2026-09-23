@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.172] — 2026-09-23
+
+**A dependency's unit is checked in its own namespace** — [`open-work.md`](docs/open-work.md)
+§1.9 closed, one package after the one that found it.
+
+### The defect
+
+`pub fn dispatch[H: Handler](h: H)` in a package compiled on its own and was
+`NK1126` — *nothing says it has a method* — the moment a program depended on it,
+**without the program calling it**. Every unit of a build is checked, and a
+dependency's was checked against the **program's** ledger, whose keys `absorb`
+had qualified: `Handler` had become `handler::Handler`, and the package's own
+file writes the bare word, as its author must
+([ADR-046](docs/specification/adr/adr-046.md) D2 gives no import to write). A
+correct program refused, which is [Part III C.4](docs/specification/30-nikaia-tooling.md).
+
+### The fix, and the one that was wrong first
+
+- **`Program::as_its_own`** keeps each package's ledger as that package was inferred with it, and the checker reads it while that package's units are walked. Kept rather than reconstructed.
+- **The first attempt un-qualified the absorbed ledger's keys** and left the types **inside** each signature qualified — so `examples/http`'s own `answer(connection, handler)` was told that its `fn(Request) -> Response` is not a `fn(http::Request) -> http::Response`, and `render(answered)` that a `Response` is not a `ref http::Response`. The suite caught it. An inverse of `absorb` that is nearly right is worse than none, which is why the ledger is kept and not rebuilt.
+- The regression test asserts **both** claims, because the second is the one a bound-only test would have missed.
+
+### And two the fix revealed rather than made
+
+- **§1.10: a call into a *dependency's* generic function is not checked against its bound.** `handler::dispatch(Bare { n: 1 })` comes back as `` the trait bound `Bare: Handler` is not satisfied `` — `rustc`'s words on the author's line, naming `Handler` without the path the program must write and `Static`, a name the program never mentions. `Checker::declared_bounds` is built from the AST of the unit being checked, under the key a call resolves to (`dispatch`), and the call writes `handler::dispatch`. **The ledger has no column for a bound**, and whether that is a new key or a widening of the `signature` language is [ADR-106](docs/specification/adr/adr-106.md) D3's table to extend — a decision, not a patch.
+- **§1.11: a field handed back out of a lent parameter is `rustc`'s to refuse.** `pub fn say(answer: Answer) -> String { return answer.text }` lowers to `&Answer` and *cannot move out of `answer.text` which is behind a shared reference*. It is `NK1131` one position over: that refusal says this exact sentence about a `ref self` subject and asks it of `self` alone, because until [ADR-094](docs/specification/adr/adr-094.md) D1 nothing else was lent without the word. **The answer is not a refusal** — the program is correct — but a widening of the `keeps` inference: `hand_over` reads a bare name, so `return answer` keeps and `return answer.text` does not.
+
+Both were found by building what the package before this one had just made writable, and then by writing a fixture for it. §1 holds two entries and §2 holds 33.
+
 ## [0.0.171] — 2026-09-23
 
 **A bound takes a path, and the ledger records traits and `impl`s** —
