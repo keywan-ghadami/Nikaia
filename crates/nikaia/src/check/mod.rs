@@ -2647,6 +2647,73 @@ impl<'a> Checker<'a> {
     /// The key is built the way `function` builds its own, the anonymous
     /// constructor included - two spellings of one name would make this table
     /// silently miss whichever the call site used.
+    /// The bounds a **ledger** records for this key, read off the `signature`.
+    ///
+    /// Both ledgers, because a package's entries and `std`'s arrive the same way
+    /// and a call resolves to one key either way. `std` declares no bound today,
+    /// so this is a package's answer in practice — and it is the same answer the
+    /// source gives one file over, which is what
+    /// [ADR-028](../../docs/specification/adr/adr-028.md) D5 says the ledger is
+    /// for.
+    ///
+    /// **A parameter with no bound is not an entry here**, which keeps the map
+    /// and this reader agreeing: `bounds_declared_by` skips one too, so a
+    /// signature that records `[T]` for a bare parameter answers `None` rather
+    /// than an empty claim.
+    fn bounds_in_a_signature(&self, key: &str) -> Option<BTreeMap<String, Vec<String>>> {
+        let contract = self
+            .own
+            .functions
+            .get(key)
+            .or_else(|| self.library.lookup(key).map(|(_, c)| c).as_ref().copied())?;
+        let bounds: BTreeMap<String, Vec<String>> = contract
+            .signature
+            .as_ref()?
+            .bounds
+            .iter()
+            .filter(|(_, traits)| !traits.is_empty())
+            .map(|(name, traits)| {
+                let traits = traits.iter().map(|one| self.as_this_program_says(key, one));
+                (name.clone(), traits.collect())
+            })
+            .collect();
+        match bounds.is_empty() {
+            true => None,
+            false => Some(bounds),
+        }
+    }
+
+    /// A trait a package's signature names, spelled the way **this** program
+    /// writes it.
+    ///
+    /// A package writes its own names bare — `[H: Handler]` inside `handler` —
+    /// and a consumer writes `handler::Handler`, because privacy and naming are
+    /// per package ([ADR-047](../../docs/specification/adr/adr-047.md) D1). So
+    /// the bound arrives in the *declaring* package's namespace and has to be
+    /// read in the consumer's, or [`Checker::answers_for`] fails open on a trait
+    /// it has under another spelling and the refusal never lands.
+    ///
+    /// **Only a spelling this program actually has.** Every prefix of the entry's
+    /// own key is tried and the first one the trait map knows wins; where none
+    /// does, the name stands as written and the fail-open line below it does what
+    /// it always did ([Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md)). It is the same
+    /// *under both spellings* arrangement `absorb_renaming` already uses for the
+    /// `implementations` map, asked from the reading side.
+    fn as_this_program_says(&self, key: &str, trait_name: &str) -> String {
+        if self.own.traits.contains_key(trait_name) {
+            return trait_name.to_string();
+        }
+        let segments: Vec<&str> = key.split("::").collect();
+        for take in (1..segments.len()).rev() {
+            let qualified = format!("{}::{trait_name}", segments[..take].join("::"));
+            if self.own.traits.contains_key(&qualified) {
+                return qualified;
+            }
+        }
+        trait_name.to_string()
+    }
+
     fn bounds_declared_by(&mut self, item: &Item, target: Option<&str>) {
         let Item::Fn { name, generics, .. } = item else {
             return;
@@ -4697,8 +4764,20 @@ impl<'a> Checker<'a> {
         bound: &BTreeMap<String, Ty>,
         span: &Span,
     ) {
-        let Some(wanted) = self.declared_bounds.get(key).cloned() else {
-            return;
+        let wanted = match self.declared_bounds.get(key) {
+            Some(wanted) => wanted.clone(),
+            // **A package's function answers from its signature**
+            // ([ADR-205](../../docs/specification/adr/adr-205.md) D1). The map
+            // above is built from the AST of the unit being checked, under the
+            // key a call in *that* unit resolves to; a call written
+            // `handler::dispatch` resolves to a key no unit's AST produced, and
+            // what the bound was came back as `rustc`'s words about the type
+            // this program picked ([`open-work.md`](../../docs/open-work.md)
+            // §1.10).
+            None => match self.bounds_in_a_signature(key) {
+                Some(wanted) => wanted,
+                None => return,
+            },
         };
         for (parameter, traits) in wanted {
             let Some(Ty::Named { name: actual, .. }) = bound.get(&parameter) else {

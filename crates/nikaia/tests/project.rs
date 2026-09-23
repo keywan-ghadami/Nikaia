@@ -2257,6 +2257,81 @@ fn a_bound_takes_a_path_across_a_package() {
     assert!(ledger.contains("[fn.\"Handler::handle\"]"), "{ledger}");
 }
 
+/// **A bound a package declares is checked at a consumer's call**
+/// ([ADR-205](../../../docs/specification/adr/adr-205.md) D1).
+///
+/// It was the one thing left in `open-work.md` §1: `Checker::declared_bounds` is
+/// built from the AST of the unit being checked, under the key a call in *that*
+/// unit resolves to, and a call written `handler::dispatch` resolves to a key no
+/// unit's AST produced. So what a reader got was the backend's words on their own
+/// line — *the trait bound `Bare: Handler` is not satisfied*, with `Handler`
+/// written without the path the program must write and `Static` named as an
+/// implementor the program never mentions ([Part III
+/// C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// **Both directions**, because the refusal is only worth having if the correct
+/// program still runs.
+#[test]
+fn a_bound_a_package_declares_is_checked_at_a_consumers_call() {
+    let package = (
+        "handler/src/main.nika",
+        "pub struct Answer {\n         \x20   pub text: String,\n         }\n         \n         pub trait Handler {\n         \x20   fn handle(ref self) -> Answer\n         }\n         \n         pub fn dispatch[H: Handler](h: H) -> String {\n         \x20   return h.handle().text\n         }\n",
+    );
+
+    // **The type that implements nothing**, which is the shape §1.10 recorded.
+    let refused = a_program_and_a_package(
+        "package-bound-refused",
+        "handler",
+        &[
+            package,
+            (
+                "app/src/main.nika",
+                "use handler\n\n                 struct Bare {\n                 \x20   n: i64,\n                 }\n                 \n                 fn main() {\n                 \x20   println(handler::dispatch(Bare { n: 1 }))\n                 }\n",
+            ),
+        ],
+    );
+    let built = nikaia(&["build"], &refused.join("app"));
+    assert!(!built.status.success(), "{}", said(&built));
+    let told = said(&built);
+    assert!(told.contains("NK1164"), "{told}");
+    // **The path the program must write**, which the backend's message left out.
+    assert!(told.contains("handler::Handler"), "{told}");
+    assert!(
+        told.contains("impl handler::Handler for Bare"),
+        "the help is one a program can copy:\n{told}"
+    );
+    // And nothing names an implementor this program never mentions.
+    assert!(!told.contains("is implemented for"), "{told}");
+    std::fs::remove_dir_all(&refused).ok();
+
+    // **The `impl` written, and it runs.** A refusal that also refused this would
+    // be the worse mistake ([Part III C.4](../../../docs/specification/30-nikaia-tooling.md)).
+    let allowed = a_program_and_a_package(
+        "package-bound-met",
+        "handler",
+        &[
+            package,
+            (
+                "app/src/main.nika",
+                "use handler\n\n                 struct Fixed {\n                 \x20   n: i64,\n                 }\n                 \n                 impl handler::Handler for Fixed {\n                 \x20   fn handle(ref self) -> handler::Answer {\n                 \x20       return handler::Answer { text: \"handled\".to_string() }\n                 \x20   }\n                 }\n                 \n                 fn main() {\n                 \x20   println(handler::dispatch(Fixed { n: 1 }))\n                 }\n",
+            ),
+        ],
+    );
+    let ran = nikaia(&["run"], &allowed.join("app"));
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "handled");
+
+    // **The bound is in the package's ledger file**, inside the one string a
+    // caller already parses.
+    let ledger = std::fs::read_to_string(allowed.join("handler/nikaia.contracts"))
+        .expect("the package writes its ledger");
+    assert!(
+        ledger.contains(r#"signature = "[H: Handler](h: $H) -> String""#),
+        "{ledger}"
+    );
+    std::fs::remove_dir_all(&allowed).ok();
+}
+
 /// **An `enum` a package declares is a type a consumer can `match` totally**
 /// (Part I 3.4).
 ///

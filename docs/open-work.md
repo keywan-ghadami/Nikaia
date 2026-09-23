@@ -77,11 +77,16 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**One entry is open** — §1.10 — and it was **revealed by a fix** rather than made
-by one, which is the shape this section's method produces: a thing becomes
-writable, so the next question about it becomes askable. §1.14 closed at 0.0.180,
-§1.12 at 0.0.177, §1.13 at 0.0.176, §1.11 at 0.0.173 and §1.9 at 0.0.172 — each
-the package after the one that found it, and the last of them **the same day**. §1.7 closed at 0.0.168 — `use std::<anything>` is
+**This section is empty.** §1.10 closed at 0.0.181, §1.14 at 0.0.180, §1.12 at
+0.0.177, §1.13 at 0.0.176, §1.11 at 0.0.173 and §1.9 at 0.0.172 — each the package
+after the one that found it, and the last three **the same day**. Every one of the
+six was **revealed by a fix** rather than made by one, which is the shape this
+section's method produces: a thing becomes writable, so the next question about it
+becomes askable.
+
+**And empty is a statement about what has been run**, which is the paragraph below
+and the reason it is worth reading twice here rather than once: the way to refill
+this section is to run something that has not been run. §1.7 closed at 0.0.168 — `use std::<anything>` is
 `NK1186` now, and the list it is answered from is what `std`'s ledger declares
 joined with what a page or a record names and the compiler has not built. §1.8
 closed at 0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132,
@@ -99,70 +104,6 @@ something else. And a **sixth**, fixed in the same package as §1.8 and never
 given a number, by trying the same change twice and getting two answers: a hand
 edit to a `contracts/<crate>.contracts` did not reach the build cache's key, and
 failed **open** while it did not.
-
-### 1.10. A call into a **dependency's** generic function is not checked against its bound
-
-```nika
-// handler/src/main.nika
-pub trait Handler { fn handle(ref self) -> Answer }
-
-pub fn dispatch[H: Handler](h: H) -> String {
-    return h.handle().text
-}
-```
-
-```nika
-// app/src/main.nika
-use handler
-
-struct Bare { n: i64 }
-
-fn main() {
-    println(handler::dispatch(Bare { n: 1 }))   // NK1164's shape, and it is not raised
-}
-```
-
-What comes back is `rustc`'s, on the author's line:
-
-```text
-error: app/src/main.nika:6:5: the trait bound `Bare: Handler` is not satisfied
-     = the trait `Handler` is not implemented for `Bare`
-     = the trait `Handler` is implemented for `Static`
-```
-
-The **position** is right — [ADR-005](specification/adr/adr-005.md) D7's
-translation puts the caret where the program is — and the **words** are the
-backend's, which is [Part III
-C.1](specification/30-nikaia-tooling.md). `Handler` is written without the path
-the program must write, and `Static` is a name this program never mentions.
-
-*What it is:* `Checker::declared_bounds` is built from the **AST of the unit
-being checked**, under the key a call resolves to (`dispatch`), and the call
-writes `handler::dispatch`. Every unit of the build is walked, so the `fn` is
-seen — under the wrong key, in the wrong file's pass.
-
-*What it needs, and it is a **decision** rather than a patch:* **the ledger has
-no column for a bound.** A signature writes `(h: $H) -> String` and the
-`: Handler` is nowhere in it, which is exactly what
-[ADR-024](specification/adr/adr-024.md) D1 says a ledger is for — *what a caller
-has to know about a function it cannot see the body of*. Whether that is a new
-key or a widening of the `signature` language is
-[ADR-106](specification/adr/adr-106.md) D3's table to extend, and no record does
-it. Filing the bounds under the qualified key from the AST instead would work
-for a **path** dependency and for nothing else, which is the wrong shape to
-build first.
-
-***The question is asked***, which is the half this file has skipped three times:
-*how does a bound reach a caller across a package boundary?* is on
-[`open-decisions.md`](open-decisions.md) in that page's shape, with the two
-spellings and what either costs. Until it is answered the check has nowhere to
-read from.
-
-*Why it is here and not below:* the program is refused, and refused in the
-backend's words. Nothing is miscompiled.
-
-*Found by* fixing §1.9 and then handing the now-writable function a type that
-implements nothing — the same method one step further on.
 
 **Every entry this section has ever held was found by *running* something** —
 the specification's own programs, the corpus at both settings, a two-file

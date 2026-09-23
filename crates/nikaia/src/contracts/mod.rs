@@ -517,6 +517,22 @@ impl Crosses {
 /// A function's parameters and result.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Signature {
+    /// The **type parameters and what each of them must implement**, in
+    /// declaration order ([ADR-205](../../../docs/specification/adr/adr-205.md)
+    /// D1): the `[H: handler::Handler]` of
+    /// `[H: handler::Handler](h: $H) -> String`.
+    ///
+    /// **Inside the signature and not a key beside it**, because the signature
+    /// already carries the type parameter as `$H`
+    /// ([ADR-074](../../../docs/specification/adr/adr-074.md) D2: *a generic
+    /// parameter is recorded as a variable, so a caller binds it from what it
+    /// passes and reads the result off the same signature*). A bound is the rest
+    /// of that sentence, and a second key that has to agree with the first is a
+    /// second source of truth for one fact.
+    ///
+    /// Empty for almost every entry: a parameter with no bound is written `[T]`
+    /// nowhere at all, because the signature's `$T` already says it exists.
+    pub bounds: Vec<(String, Vec<String>)>,
     /// Name and type, in order. A `self` receiver is the first of them where
     /// there is one, named `self`.
     pub params: Vec<(String, ty::Ty)>,
@@ -716,15 +732,44 @@ impl Signature {
             inside = format!("{inside}; {}", config.join(", "));
         }
         params.clear();
+        // **In front, where the declaration writes them** (ADR-205 D1).
+        let before = match self.bounds.is_empty() {
+            true => String::new(),
+            false => format!(
+                "[{}]",
+                self.bounds
+                    .iter()
+                    .map(|(name, traits)| match traits.is_empty() {
+                        true => name.clone(),
+                        false => format!("{name}: {}", traits.join(" + ")),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
         match &self.result {
-            Some(result) => format!("({inside}) -> {}", result.text()),
-            None => format!("({inside})"),
+            Some(result) => format!("{before}({inside}) -> {}", result.text()),
+            None => format!("{before}({inside})"),
         }
     }
 
     /// Read one back from the text above.
     pub fn parse(text: &str) -> Result<Signature> {
         let text = text.trim();
+        // **The bound list, where there is one** (ADR-205 D1). It stands before
+        // the `(`, so it is taken off first and everything below is the grammar
+        // that was always there — which is what makes a ledger written before
+        // this key existed parse unchanged.
+        let (bounds, text) = match text.strip_prefix('[') {
+            Some(rest) => {
+                let close = rest
+                    .find(']')
+                    .ok_or_else(|| anyhow!("a bound list is `[T: Trait]`, found `{text}`"))?;
+                let (inside, after) = rest.split_at(close);
+                (bounds_of(inside), after[1..].trim())
+            }
+            None => (Vec::new(), text),
+        };
         let inside = text
             .strip_prefix('(')
             .ok_or_else(|| anyhow!("a signature starts with `(`, found `{text}`"))?;
@@ -796,12 +841,46 @@ impl Signature {
         let result = after[1..].trim().strip_prefix("->").map(ty::Ty::parse);
 
         Ok(Signature {
+            bounds,
             params,
             mutable,
             config,
             result,
         })
     }
+}
+
+/// `H: handler::Handler, T` read back into the pairs [`Signature::bounds`] holds.
+///
+/// **Nothing here fails.** A parameter with no `:` has no bound, and a shape this
+/// does not recognise is one too: the list says which parameters exist, and a
+/// bound it could not read is a bound the checker does not claim about, which is
+/// [Part III C.4](../../../docs/specification/30-nikaia-tooling.md)'s direction.
+fn bounds_of(inside: &str) -> Vec<(String, Vec<String>)> {
+    ty::split_args(inside)
+        .iter()
+        .filter_map(|part| {
+            let part = part.trim();
+            if part.is_empty() {
+                return None;
+            }
+            // **The colon that is not part of a `::`**, for the reason a
+            // parameter's own split needs the same care: `H: handler::Handler`
+            // has three of them and only the first divides.
+            let at = split_at_the_name(part);
+            Some(match at {
+                Some((name, traits)) => (
+                    name.trim().to_string(),
+                    traits
+                        .split('+')
+                        .map(|one| one.trim().to_string())
+                        .filter(|one| !one.is_empty())
+                        .collect(),
+                ),
+                None => (part.to_string(), Vec::new()),
+            })
+        })
+        .collect()
 }
 
 /// A parameter's `name: T`, split at the colon that is **not** part of a `::`.
@@ -1619,6 +1698,9 @@ impl Ledger {
                                     // before it there was nothing in it.
                                     sync: Sync::Asserted,
                                     signature: Some(Signature {
+                                        // A grammar's rule takes no type
+                                        // parameter, so it declares no bound.
+                                        bounds: Vec::new(),
                                         mutable: Vec::new(),
                                         // The input, as every entry takes it: the
                                         // text to parse. `?` because a mapping, an
@@ -1824,6 +1906,26 @@ impl Ledger {
                     Vec::new()
                 },
                 signature: Some(Signature {
+                    // **The bounds, where the declaration writes them**
+                    // ([ADR-205](../../../docs/specification/adr/adr-205.md) D1):
+                    // `fn tell[T: greet::Speaks](x: T)` records `T: greet::Speaks`,
+                    // and that is what lets a **consumer's** call be checked
+                    // against it. Before this the bound lived only in the AST of
+                    // the unit that declared the function, so a call from another
+                    // package was answered by `rustc` about the type it picked
+                    // ([`open-work.md`](../../../docs/open-work.md) §1.10).
+                    bounds: generics
+                        .iter()
+                        .map(|g| {
+                            (
+                                parsed.text(g.name).to_string(),
+                                g.bounds
+                                    .iter()
+                                    .map(|b| parsed.text(*b).to_string())
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
                     params,
                     // **The declaration and not an inference** (ADR-094 D3):
                     // `mut out: Vec[i64]` is the claim that the caller's value
@@ -2631,6 +2733,10 @@ fn trait_method(
                 Vec::new()
             },
             signature: Some(Signature {
+                // A described foreign function's bounds are Rust's, and a Nikaia
+                // caller picks no type for one: the describer writes the
+                // signature and nothing in it is generic.
+                bounds: Vec::new(),
                 params,
                 mutable: method
                     .args

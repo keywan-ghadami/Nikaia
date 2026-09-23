@@ -14,18 +14,21 @@ question is, why it is the owner's, and what this file recommends.
 
 ## Open
 
-**Three questions are open.** Two arrived at 0.0.174 by reading
+**Two questions are open.** They arrived at 0.0.174 by reading
 [`open-work.md`](open-work.md) against its own rule — *citing a question is not
 asking it* — which is a failure that file has now had **three** times, and the
 third is the entry that named this page while writing nothing on it. The page was
-empty until 0.0.166. Three questions
-were answered in one day and each left this file for its record, which is what
+empty until 0.0.166. Four questions
+were answered and each left this file for its record, which is what
 this page says happens to an answered entry: *does a described foreign function say whether it puts its argument on a
-thread?* → [ADR-193](specification/adr/adr-193.md), and *what does a Nikaia
+thread?* → [ADR-193](specification/adr/adr-193.md), *what does a Nikaia
 program have to write to be a microservice?* →
-[ADR-194](specification/adr/adr-194.md), and *is `nikaia describe` written in
-Nikaia?* → [ADR-195](specification/adr/adr-195.md). The work they created is
-[`open-work.md`](open-work.md)'s.
+[ADR-194](specification/adr/adr-194.md), *is `nikaia describe` written in
+Nikaia?* → [ADR-195](specification/adr/adr-195.md), and *how does a bound reach a
+caller across a package boundary?* →
+[ADR-205](specification/adr/adr-205.md). The work they created is
+[`open-work.md`](open-work.md)'s — and the last of them **emptied** that file's
+§1, because the bound was the one defect left in it.
 
 **And the last of them corrected how this page had framed it.** The entry
 recommended writing the grammar *first, as a measurement that would settle the
@@ -36,7 +39,13 @@ choosing a shape* does not reach a choice that rests on a project principle.
 number is a diagnosis.** A page whose whole job is to be answerable can make
 that mistake, and this is the shape of it.
 
-**The one that is open is the one this page held back on purpose.** It was
+**The bound's answer is the recommendation taken**, which is worth recording
+because it is what this page is for: the entry named three options, said which one
+it would take and why, and said what either direction costs if it is wrong. The
+owner took **2** — the `signature` language widened — and
+[ADR-205](specification/adr/adr-205.md) is the record.
+
+**One of the two below is the one this page held back on purpose.** It was
 deferred with a note — *the owner has asked to be asked again, with a fuller
 write-up, when the work reaches it* — and the work has reached it: the server is
 built at 0.0.166, so there is something for a refusal to be about.
@@ -124,67 +133,6 @@ Every entry this page has held was put here because something was blocked by it
 and somebody noticed; an empty page means nothing is blocked that anyone has
 written down. The way to refill it is the head of this file: the moment a piece
 of work is blocked by a question, the question comes here in the shape above.
-
-### How does a bound reach a caller across a package boundary?
-
-**What is blocked.** A call into a **package's** generic function is not checked
-against that function's bound, and what a reader gets is `rustc`'s words on their
-own line ([`open-work.md`](open-work.md) §1.10):
-
-```text
-error: app/src/main.nika:6:5: the trait bound `Bare: Handler` is not satisfied
-     = the trait `Handler` is not implemented for `Bare`
-     = the trait `Handler` is implemented for `Static`
-```
-
-`Handler` is written without the path the program must write, and `Static` is a
-name the program never mentions. The position is right — that is
-[ADR-005](specification/adr/adr-005.md) D7's translation — and the words are the
-backend's, which is [Part III C.1](specification/30-nikaia-tooling.md).
-
-**Why it is the owner's and not work.** The check itself is four lines:
-`Checker::declared_bounds` already holds *which bound each parameter carries*,
-under the key a call resolves to, and the only thing missing is that key for a
-function in another package. It cannot be read from the ledger, because **the
-ledger has no column for a bound** — a signature writes `(h: $H) -> String` and
-the `: Handler` is nowhere in it. Adding one is
-[ADR-106](specification/adr/adr-106.md) D3's table of ledger entries, extended,
-and that is a format decision: every reader of a `.contracts` file parses it, and
-`--locked` compares it byte for byte.
-
-**Nothing is blocked today.** Nothing in the tree publishes a generic function
-with a bound; the shape became writable at 0.0.171 and the first package to use
-it is the one that meets this.
-
-**Three options.**
-
-1. **A key of its own.** `bounds = ["H: handler::Handler"]` beside `signature`.
-   Additive: an older reader ignores a key it does not know, which is what
-   `version` is for.
-2. **Widen the `signature` language.** `signature = "[H: handler::Handler](h: $H) -> String"`,
-   the bound where the declaration writes it. No new key, and the one string a
-   caller already parses says the whole of what the call means.
-3. **Neither.** A cross-package generic call stays the backend's to refuse, with
-   the position translated and the words Rust's.
-
-**What this page recommends: 2.**
-
-The signature **already** carries the type parameter as `$H`
-([ADR-074](specification/adr/adr-074.md) D2: *a generic parameter is recorded as
-a variable, so a caller binds it from what it passes and reads the result off the
-same signature*). A bound is the rest of that sentence, and a second key that has
-to agree with the first is a second source of truth for one fact — the argument
-[ADR-106](specification/adr/adr-106.md) D3 already makes about a trait's methods,
-which are the `fn` entries beside it rather than a list inside the `trait` table.
-
-**What either direction costs if it is wrong.** Option 2 changes a grammar every
-ledger reader parses, and every signature in every `.contracts` file is compared
-byte for byte by `--locked` — so getting the spelling wrong is a churn across the
-tree rather than a bug. Option 1 costs nothing to add and one more place for the
-two columns to disagree, forever. Option 3 costs a [Part III
-C.1](specification/30-nikaia-tooling.md) hole that stays open, and it is the only
-one of the three that cannot be undone cheaply: a package published under it
-would have callers relying on `rustc` to say what the compiler should have.
 
 ### Does the language have a type for a list of errors?
 

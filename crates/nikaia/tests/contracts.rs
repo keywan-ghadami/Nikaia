@@ -621,6 +621,67 @@ fn the_ledger_is_deterministic_and_reads_back() {
     assert_eq!(read.types["S"].tethered, ["t"]);
 }
 
+// --- ADR-205: a bound reaches a caller inside the signature ------------------
+
+/// **A bound is written where the declaration writes it**, and it reads back.
+///
+/// The signature already carried the type parameter as `$H`
+/// ([ADR-074](../../../docs/specification/adr/adr-074.md) D2); a bound is the
+/// rest of that sentence, which is why it is inside the one string a caller
+/// already parses rather than a second key that has to agree with it.
+#[test]
+fn a_bound_is_in_the_signature_and_reads_back() {
+    let written = ledger(
+        "pub trait Speaks { fn speak(ref self) -> String }\n\
+         pub fn tell[T: Speaks](x: T) -> String { return x.speak() }\n",
+    )
+    .render();
+    assert!(
+        written.contains(r#"signature = "[T: Speaks](x: $T) -> String""#),
+        "{written}"
+    );
+    let read = Ledger::parse(&written).expect("its own output parses");
+    assert_eq!(read.render(), written);
+    let signature = read.functions["tell"]
+        .signature
+        .as_ref()
+        .expect("the entry has one");
+    assert_eq!(
+        signature.bounds,
+        vec![("T".to_string(), vec!["Speaks".to_string()])]
+    );
+}
+
+/// **Several bounds, and a parameter with none**, each written the way the
+/// declaration does.
+#[test]
+fn the_bound_list_carries_every_shape() {
+    let signature = nikaia::contracts::Signature::parse("[H: a::One + b::Two, U](h: $H, u: $U)")
+        .expect("it parses");
+    assert_eq!(
+        signature.bounds,
+        vec![
+            (
+                "H".to_string(),
+                vec!["a::One".to_string(), "b::Two".to_string()]
+            ),
+            ("U".to_string(), Vec::new()),
+        ]
+    );
+    assert_eq!(signature.text(), "[H: a::One + b::Two, U](h: $H, u: $U)");
+}
+
+/// **And a signature written before the key existed parses unchanged**, which is
+/// what makes the change additive: the bound list stands before the `(`, so
+/// everything below it is the grammar that was always there.
+#[test]
+fn a_signature_with_no_bound_list_is_what_it_was() {
+    let signature = nikaia::contracts::Signature::parse("(path: ?, root: ref Root) -> Mapped")
+        .expect("it parses");
+    assert!(signature.bounds.is_empty());
+    assert_eq!(signature.text(), "(path: ?, root: ref Root) -> Mapped");
+}
+
 /// `std` ships its ledger, and the entries it says are inferred really are.
 ///
 /// The modules still written in Rust are written into `std.contracts` by hand -

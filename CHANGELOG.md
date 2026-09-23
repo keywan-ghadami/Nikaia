@@ -4,6 +4,77 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.181] — 2026-09-23
+
+**A bound reaches a caller inside the `signature`** —
+[ADR-205](docs/specification/adr/adr-205.md), the owner's answer to
+[`open-decisions.md`](docs/open-decisions.md)'s second question, in favour of that
+page's recommendation. [`open-work.md`](docs/open-work.md) §1.10 closes and **§1
+is empty**.
+
+### What was wrong
+
+A call into a **package's** generic function was not checked against its bound:
+
+```text
+error: app/src/main.nika:6:5: the trait bound `Bare: Handler` is not satisfied
+     = the trait `Handler` is not implemented for `Bare`
+     = the trait `Handler` is implemented for `Static`
+```
+
+The position is right and the words are the backend's, which is [Part III
+C.1](docs/specification/30-nikaia-tooling.md). `Handler` is written **without the
+path the program must write**, and `Static` is a name the program never mentions.
+
+The check was four lines. What was missing was the **key**: the bound lived only
+in the AST of the unit that declared the function, and the ledger had no column
+for one — a signature wrote `(h: $H) -> String` and the `: Handler` was nowhere
+in it.
+
+### The decision
+
+```toml
+[fn."dispatch"]
+signature = "[H: Handler](h: $H) -> String"
+```
+
+**In front of the parameter list, and nowhere else.** The signature already
+carries the type parameter as `$H`
+([ADR-074](docs/specification/adr/adr-074.md) D2), so a bound is the rest of that
+sentence; a second key that has to agree with the first is a second source of
+truth for one fact. `[T]` for a parameter with no bound is written nowhere, because
+the `$T` already says it exists.
+
+**Additive.** The list stands before the `(`, so a signature written before this
+key existed parses unchanged — and no ledger in this tree changed a byte, because
+nothing in it publishes a generic function with a bound. That is what §1.10 meant
+by *the first package to use it is the one that meets this*.
+
+### And the trait is qualified on the way in
+
+A package writes its own names bare and a consumer writes the path, because naming
+is per package ([ADR-047](docs/specification/adr/adr-047.md) D1). Every prefix of
+the entry's key is tried and the first spelling this program's trait map knows
+wins. Without it the refusal **never landed**: the map held `handler::Handler`, the
+bound said `Handler`, and the check found no trait and passed the argument through.
+Where no spelling matches, the name stands as written and the fail-open line does
+what it always did (C.4).
+
+### What a reader gets
+
+```text
+error[NK1164]: `handler::dispatch` asks for a `handler::Handler` here, and `Bare` is not one
+     = `handler::dispatch`'s `H` is declared `[H: handler::Handler]`, so the type a caller
+       picks has to answer for `handler::Handler`'s methods - and nothing in this program
+       says `Bare` does (Part I, 4.7)
+     help: write `impl handler::Handler for Bare { … }`, or pass a type that already has one
+```
+
+The path is in it and the help is a line the program can copy. **The hash covers
+the bound**, because it covered the signature already
+([ADR-100](docs/specification/adr/adr-100.md)): a bound added or removed changes
+what a consumer compiles against, and now it changes the file too.
+
 ## [0.0.180] — 2026-09-23
 
 **Whether a type compares is a question about its parts** —
