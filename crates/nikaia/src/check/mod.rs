@@ -1702,6 +1702,27 @@ struct Local {
     /// program refused* ([Part III
     /// C.4](../../docs/specification/30-nikaia-tooling.md)).
     immutable: Option<Immutable>,
+    /// **A parameter whose declaration wrote `mut`**, which is already a
+    /// `&mut T` in the lowering ([ADR-094](../../docs/specification/adr/adr-094.md)
+    /// D3).
+    ///
+    /// Not the same question as `immutable` being `None`. A `let mut` is a
+    /// *value*, and the `&mut` a call writes in front of one is the reference
+    /// that call means; this is the binding where the reference is already
+    /// there, so a second one would be `&mut &mut T` — and `rustc` refuses it
+    /// one step earlier than that, because a `&mut` may only be taken of a
+    /// binding that is itself `mut`. It said so about a file nobody wrote —
+    /// *cannot borrow `connection` as mutable* — which is [Part III
+    /// C.1](../../docs/specification/30-nikaia-tooling.md).
+    ///
+    /// **A bare name and nothing further in.** `&mut c.field` for a `mut c` is
+    /// the reference the call wants, so this answers a question about the whole
+    /// binding rather than about any place rooted at it.
+    ///
+    /// On the binding for `lent`'s reason: the scope is the one `scope` already
+    /// keeps, so a `let connection = …` shadowing a `mut connection` parameter
+    /// stops being the answer where it stops being the binding.
+    changing: bool,
     /// **What the build worked out this name is**, whole — a `comptime`'s
     /// value, where there is one.
     ///
@@ -1761,6 +1782,7 @@ impl Local {
             lent: local.lent,
             built: local.built.clone(),
             immutable: local.immutable.clone(),
+            changing: local.changing,
             empty_list: local.empty_list,
         }
     }
@@ -1771,6 +1793,7 @@ impl Local {
             ty,
             constant: None,
             lent: false,
+            changing: false,
             built: None,
             immutable: None,
             empty_list: None,
@@ -2880,6 +2903,9 @@ impl<'a> Checker<'a> {
                     at: arg.span.clone(),
                     kind: Kind::Parameter,
                 }),
+                // **D3's third state, on the binding**: this name is a `&mut T`
+                // already, so a call that lends it writes nothing.
+                changing: arg.mutable,
             });
         }
         // **An option is a parameter** (Part I 5.1): it stands after the `;`,
@@ -3497,6 +3523,28 @@ impl<'a> Checker<'a> {
             let Some(given) = given else {
                 return false;
             };
+            // **A reference that is already there is not written twice.** Where
+            // the argument is a `mut` parameter of the function this call stands
+            // in, the binding *is* a `&mut T`, so the call hands it straight on
+            // and the language below reborrows it. Writing the `&mut` anyway is
+            // not a `&mut &mut T` that works by deref: a `&mut` may only be
+            // taken of a binding that is itself `mut`, and a parameter is not
+            // one, so `rustc` refuses it — *cannot borrow `connection` as
+            // mutable, as it is not declared as mutable* — about a file nobody
+            // wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+            //
+            // `true` and not `false`: nothing is left for the positions below to
+            // decide. This **is** the fit — the argument already has the shape
+            // the parameter asked for — and falling through would measure a
+            // `Connection` against a `Connection` and then look for a wrap.
+            //
+            // Only a bare name. `&mut c.field` for a `mut c` is the reference
+            // the call wants, and `rooted_at` would have said `c` for it.
+            if matches!(given, Expr::Variable(name)
+                if self.binding(self.parsed.text(*name)).is_some_and(|l| l.changing))
+            {
+                return true;
+            }
             self.checked
                 .mut_args
                 .entry((span.start, written.to_string(), at))
@@ -3843,6 +3891,7 @@ impl<'a> Checker<'a> {
             ty,
             constant: None,
             lent: false,
+            changing: false,
             built: None,
             empty_list: None,
             immutable: asked.then(|| Immutable {
@@ -4906,6 +4955,7 @@ impl<'a> Checker<'a> {
                     // front of a place, and a cast over the name that comes
                     // out of one is the language below's own deref.
                     lent: false,
+                    changing: false,
                     // A `let` binds a number where one folded; the whole value
                     // is a `comptime`'s, which is the one that *must* fold.
                     built: None,
@@ -12023,6 +12073,7 @@ impl<'a> Checker<'a> {
             ty,
             constant,
             lent: false,
+            changing: false,
             built: None,
             immutable: None,
             empty_list: None,
@@ -13096,6 +13147,7 @@ impl<'a> Checker<'a> {
             name: bound,
             ty: held,
             lent: false,
+            changing: false,
             // The fold's number, which is what `constant_of` reads one
             // `comptime` later and what `ADR-043` D5's overflow check needs.
             constant: match &evaluated {

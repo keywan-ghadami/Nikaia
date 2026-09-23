@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.165 (Draft)
-**Date:** 2026-09-22
+**Version:** 0.0.166 (Draft)
+**Date:** 2026-09-23
 
 ---
 
@@ -1626,10 +1626,16 @@ parameter the callee's own promises follow the lambda, as `map`'s do. For a
 kept parameter they follow the type, so a `listen` that calls a stored
 `fn(Request) -> Response` may pause.
 
-> **Implementation status:** Not implemented. A parameter of function type is a
-> parse error, and the eight `std` entries that take a lambda are written
-> straight into the ledger. The capture at a `spawn` is reported with `NK2101`
-> (8.3). [ADR-102](adr/adr-102.md) §5 carries the work.
+> **Implementation status:** Implemented for the **immediate** case
+> ([ADR-102](adr/adr-102.md) D1, [ADR-192](adr/adr-192.md) D1). A parameter of
+> function type parses, is recorded in the ledger with its two promises, and
+> lowers by them: `impl Fn(A) -> R` with `sync`, `impl AsyncFn(A) -> R` without.
+> It **borrows**, which is the context read off the body and not off a word — a
+> parameter the callee only calls or hands on is not in `keeps`, so it takes the
+> `&` every other read-only parameter takes (6.5). The **kept** case, which
+> needs a stored handler and the boxing that goes with it, is `NK1142` and is
+> [ADR-102](adr/adr-102.md) D5's. The capture at a `spawn` is reported with
+> `NK2101` (8.3).
 
 ---
 
@@ -2044,8 +2050,11 @@ a **method's** argument.
 > so `serve(ref db)` is refused with `NK1137` (Part III, C.3). `mut` is read:
 > `fn fill(mut out: Vec[i64])` lowers to `ref mut Vec<i64>`, `fill(xs)` gains its
 > `ref mut`, and a parameter a body changes without the word is refused with
-> `NK1138`. A method's argument is passed owned because the compiler cannot yet
-> resolve which entry the call goes to. Not built: the ledger diff that
+> `NK1138`. A `mut` parameter handed to **another** one is passed straight on:
+> the binding is a `ref mut` already, and a second one is not a reference to a
+> reference but a refusal, because a `ref mut` may only be taken of a binding
+> that is itself `mut`. A method's argument is passed owned because the compiler
+> cannot yet resolve which entry the call goes to. Not built: the ledger diff that
 > narrates a kept value's moved cleanup point, and the refusal of a `&` written
 > at a call whose argument type is not known (a value a `catch` handed back, a
 > place inside a lambda).

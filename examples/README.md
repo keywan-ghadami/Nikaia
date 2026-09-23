@@ -23,8 +23,8 @@ down rather than described.
 | [`tally.nika`](tally.nika) | a pipe read line by line in **constant memory**, and a loop that can fail | ✅ `crates/nikaia/tests/examples.rs` |
 | [`inventory/`](inventory/) | `report.nika` again, in **three files**: what a module boundary buys and costs | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
-| [`http/`](http/) | the `http` **package** — what a handler is given and gives back, and HTTP/1.1's text half | ✅ through its consumer |
-| [`hello-http/`](hello-http/) | a program that reaches `http` **by a path**: the dependency arm, with a program on the end of it | ✅ `crates/nikaia/tests/project.rs` |
+| [`http/`](http/) | the `http` **package**: what a handler is given and gives back, and **the server** — one connection at a time, with the caps as options | ✅ through its consumer |
+| [`hello-http/`](hello-http/) | a **server**, and a program that reaches `http` **by a path**: one address and one function that decides | ✅ `crates/nikaia/tests/project.rs`, over a real socket |
 | [`sqlite/`](sqlite/) | a real **C library**, end to end: a buffer, two handles with their `cleanup`, an out-parameter and text the library owns | ✅ `crates/nikaia/tests/foreign_pointers.rs`, skipped where the machine has no `libsqlite3` |
 
 Each of the eleven single programs is compiled and run **at both settings**, and their output

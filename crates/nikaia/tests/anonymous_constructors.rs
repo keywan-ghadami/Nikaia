@@ -111,8 +111,11 @@ fn new_is_refused_as_a_value_and_the_bare_name_lowers() {
     };
     assert_eq!(refusals(&source("S::new")).len(), 1);
     assert!(refusals(&source("S")).is_empty());
-    // The bare name is the constructor, and the language below wants its key.
-    assert!(lowered(&source("S")).contains("take(S::new)"));
+    // The bare name is the constructor, and the language below wants its key -
+    // behind the `&` a function-typed parameter takes, because `take` only calls
+    // what it is handed ([ADR-094](../../../docs/specification/adr/adr-094.md)
+    // D1, Part I 5.4 C).
+    assert!(lowered(&source("S")).contains("take(&S::new)"));
 }
 
 /// **A qualified name is left alone**, which is `NK1135`'s convention one

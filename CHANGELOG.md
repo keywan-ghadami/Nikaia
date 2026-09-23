@@ -4,6 +4,60 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.166] — 2026-09-23
+
+**The HTTP server, and `nikaia serve` is cut** —
+[ADR-194](docs/specification/adr/adr-194.md) D5 built and
+[ADR-200](docs/specification/adr/adr-200.md) written, which together close
+[`open-work.md`](docs/open-work.md) §2.6's order down to one step.
+
+### A Nikaia program answers HTTP over a socket
+
+- **`examples/hello-http/` is a server.** `http::listen(at) fn(request) { … }` — one address and one function that decides — and `crates/nikaia/tests/project.rs` drives it over a real socket: port `0`, the bound address read back off the line the server prints, then `GET /`, `GET /nowhere`, a `POST` with a body, and each of the six refusals.
+- It used to render one response and print it, because there was nothing to hand a response to.
+- **The server itself is in `examples/http/`**, which is Nikaia: `listen` accepts, `answer` reads a head and a body and calls the handler, `refuse` answers a client this will not answer properly. **The socket is `std`'s and the protocol is the package's** ([ADR-194](docs/specification/adr/adr-194.md) D1), and neither half says `async`, `await` or `epoll`.
+- **The caps are options with server defaults**: `body_cap` 1 MiB, `head_cap` 16 KiB, `head_wait` 10 reads, `connections` 0 for *keep going*. A program that wants the defaults says nothing; a test names `connections`.
+- **Every failure is answered rather than thrown at the caller.** A malformed request is one client's problem, and a server that stopped for it would be answering the next client's question with silence. The one thing not answered is a client that went away, because there is nobody left to answer.
+
+### `std::http1` — HTTP/1.1's text half, and where the line runs
+
+- **`http1::Buffer`** holds the bytes as they arrive and answers three questions: `head_end(cap)` for where the head ends, `head()` for what it says, `text_from(at)` for the body. Plus `take`, `len`. All `sync`: it reaches no socket, so a server calls it between two steps that do pause and neither of them is this.
+- **`Buffer` is on `std`'s side of the line** because deciding that a head has *not arrived yet* is reading HTTP/1.1, not reading a request. What a package holds is what a request **means**.
+- **`0` is *not yet*, and not a missing value.** A read loop over `while ended == 0` is one condition where a loop over an absence is a condition plus the unwrapping after it — and a head cannot end at byte zero, so the two readings cannot collide. That shape was chosen after the first draft handed back a `Head?` and the package could not be written against it.
+- **Not named `http`**: a program reaches a *package* by that word ([ADR-069](docs/specification/adr/adr-069.md) D1), and a `std` module of the same name would make `http::Response` mean two things.
+- **What it refuses, by name, each message being what a server sends back**: a head over the cap (431, answered as soon as the buffer is over it rather than at the end of a head that never comes), a head that is not text, a request line that is not three words, a version it does not speak, a method other than `GET` or `POST`, a `content-length` that is not a count, and a `transfer-encoding` **at all** — because a server that ignored that one would read a chunk header as a body. Nine tests in `crates/nikaia-std/tests/http1.rs`.
+- **`Bytes::len` and `Bytes::is_empty` are in the ledger now.** `net::Connection::read` says *empty means the peer closed*, and a loop over a socket cannot be written without the question. The Rust type had both; nothing had written them down.
+
+### Two lowerings were wrong about a function-typed parameter
+
+Both were `rustc` about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)), and both were found by being the first program to write ADR-102 D1's parameter for real.
+
+- **A handler handed *on* was moved, not lent.** A function value lowers to `impl AsyncFn(A) -> R`, an opaque type with no `Copy`, so a `listen` that passes its handler to an `answer` inside its accept loop handed it away the first time round: *use of moved value: `handler`*. The answer is the one Part I 5.4 C already gives — a run parameter is **immediate** and borrows — reached through the column every other parameter is: `Ty::Fn` **moves**, so `keeps::lends` claims the position where the body does not keep it. `&impl AsyncFn(A) -> R` in the declaration, `&handler` at the call, and `&F` is a function too, so one `&` is all it takes.
+- **A `mut` parameter handed to another `mut` parameter gained a second `&mut`.** `refuse(&mut connection, …)` for a `connection` that is already a `&mut Connection` is not a `&mut &mut T` that derefs: a `&mut` may only be taken of a binding that is itself `mut`, and a parameter is not one — *cannot borrow `connection` as mutable, as it is not declared as mutable*. The binding now records that it is a `mut` **parameter** (scope-correct, so a shadowing `let` stops being the answer), and a bare name in that position is handed straight on for the language below to reborrow. **A bare name only**: `&mut c.field` for a `mut c` is the reference the call wants.
+- **Both are tested by running the lowering**, not by reading it: the declaration and the call are written by two passes off one column, and the only proof that they agree is `rustc` accepting both at once.
+
+### `nikaia serve` is cut
+
+[ADR-200](docs/specification/adr/adr-200.md), narrowing [ADR-194](docs/specification/adr/adr-194.md) D2 and D3's operator half.
+
+- **The reasoning of D2 is not withdrawn** — there are two servers and each is right about itself — but the **product** is. Two reasons together: the MVP is **behind schedule**, and `serve` is the half nothing else waits on ([ADR-018](docs/specification/adr/adr-018.md), [ADR-058](docs/specification/adr/adr-058.md)'s body rows and the roadmap's route hashing all wait on the *application* server); and its **value** is questionable — what a Nikaia file server would demonstrate about this language is the part it has least of, with no handler, no routing, no ledger and no provenance.
+- **So the caps are the program's and there is no operator half.** D5 ends *the limits are the operator's in the first product and the program's in the second*; with the first gone the second clause is the whole sentence. D3's localhost default goes the same way: an application's author is present and says which address. What D3 leaves behind is `--trust`'s listing of a wide bind, which it put in [ADR-108](docs/specification/adr/adr-108.md)'s shape rather than its own.
+- **A cut is written down**, which is why the record exists at all: a step nobody intends to take makes a list wrong about what is coming rather than merely incomplete.
+
+### One handler and not a route table, which is a language limit named
+
+- **`NK1142` refuses a function type in a field**, so nothing can *keep* a handler per path and a `.route(…)` chain has nowhere to put what it was handed. The 0.0.152 measurement that said *what an application writes needs no language change* ran the chain as an expression and never stored one.
+- What the language reaches instead is **one function that decides**, which keeps [ADR-194](docs/specification/adr/adr-194.md) D4's rule by another route: the program says what is exposed, and nothing is derived from `pub`. The chain is what [`open-work.md`](docs/open-work.md) §2.14's kept lowering buys.
+
+### Two numbers moved, and both say what moved them
+
+- **`the_corpus_has_no_more_unanswered_method_calls_than_it_had`: 51 → 62**, and eleven have one cause with one exception. **A binding whose value came through a `catch` has no type in this compiler** — the gap [Part I 6.5](docs/specification/10-nikaia-light.md)'s own status block already names for the `&` it cannot write — and four of the five `let`s in the server's `answer` are `… catch { … }`, so ten calls on receivers the program states plainly go unread. Measured piece by piece: `let b = http1::Buffer()` answers every call on it, and the same `Buffer` reached through a `catch` answers none. The eleventh is the sweep's shape and not a gap: a lambda parameter **is** typed from the function type it fits (measured with the `struct` in the same file), and what this one cannot see is `http::Request`, because the sweep reads one file at a time.
+- **`the_lengths_are_i64_and_are_all_called_len`: six names to eight.** `Bytes::len` and `http1::Buffer::len`, both `i64`, both called `len`. That list is what makes adding one a decision rather than a line.
+
+### The question that was deferred is open
+
+- **May a route be refused by what its handler `touches`?** [ADR-194](docs/specification/adr/adr-194.md) §4 deferred it with *the owner has asked to be asked again, with a fuller write-up, when the work reaches it* — and the work has reached it. It is on [`open-decisions.md`](docs/open-decisions.md) now, in that page's shape: what is blocked, three options, a recommendation (**list it, do not refuse on it**) and what either direction costs.
+
 ## [0.0.165] — 2026-09-22
 
 **A readiness wait is a registration, not a worker** —

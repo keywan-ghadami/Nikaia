@@ -167,8 +167,13 @@ fn a_run_parameter_lowers_to_a_closure_argument() {
          fn main() { println(f\"{twice(2, fn(n) { return n * 3 })}\") }\n",
     );
     assert_eq!(printed.trim(), "18");
+    // **A view of it** (Part I 5.4 C): `on_tick` only calls its handler, so the
+    // parameter is immediate and borrows, exactly as an ordinary parameter the
+    // body only reads does. The `&` used not to be written, which held for as
+    // long as nothing handed a handler **on** - and then `rustc` said *use of
+    // moved value* about a file nobody wrote.
     let rust = lowered("fn on_tick(handler: fn() sync) { }\nfn main() { }\n");
-    assert!(rust.contains("fn on_tick(handler: impl Fn())"), "{rust}");
+    assert!(rust.contains("fn on_tick(handler: &impl Fn())"), "{rust}");
 }
 
 /// **And `throws` puts the same `Result` on the closure's result** that a
@@ -218,13 +223,13 @@ fn a_lambda_that_pauses_fits_a_parameter_that_allows_pausing() {
     // to return an error here rather than write anything.
     let rust = lowered(source);
     assert!(
-        rust.contains("fn run(f: impl AsyncFn() -> String)"),
-        "a run parameter takes the bound: {rust}"
+        rust.contains("fn run(f: &impl AsyncFn() -> String)"),
+        "a run parameter takes the bound, and a view of it: {rust}"
     );
     // **No `move`**, which is Part I 5.4 A: a lambda handed to a parameter the
     // body only calls borrows what it captures.
     assert!(
-        rust.contains("run(async || {"),
+        rust.contains("run(&async || {"),
         "and the lambda is an `async` closure: {rust}"
     );
     assert!(
@@ -563,4 +568,88 @@ fn a_promise_before_the_arrow_is_refused() {
 fn a_promise_with_no_result_type_is_untouched() {
     let parsed = parse_to_ast("fn tick() sync { }\n").expect("it parses");
     assert!(Ledger::infer(&parsed).functions["tick"].sync.is_sync());
+}
+
+/// **A handler handed on, in a loop** — which is what the first program to write
+/// D1's parameter for real did, and what `rustc` refused about a file nobody
+/// wrote: *use of moved value: `handler`*.
+///
+/// A function value lowers to `impl AsyncFn(A) -> R`, an opaque type with no
+/// `Copy`, so a `listen` that passes its handler to an `answer` inside its accept
+/// loop handed it away the first time round. The answer is the one Part I 5.4 C
+/// already gives and the one every other parameter gets: a parameter the body
+/// only **calls or passes on** is not in `keeps`, so `contracts::keeps::lends`
+/// says to write the `&` — in the declaration and at the call, off one column.
+/// `&F` is a function too, which is why one `&` is all it takes.
+#[test]
+fn a_handler_passed_on_inside_a_loop_is_lent() {
+    let source = "fn twice(n: i64, f: fn(i64) -> i64) -> i64 {\n\
+                  \x20   return f(n) + f(n)\n\
+                  }\n\n\
+                  fn all(f: fn(i64) -> i64) -> i64 {\n\
+                  \x20   let mut total = 0\n\
+                  \x20   for n in [1, 2, 3] {\n\
+                  \x20       total = total + twice(n, f)\n\
+                  \x20   }\n\
+                  \x20   return total\n\
+                  }\n\n\
+                  fn main() {\n\
+                  \x20   println(f\"{all(fn(x) { x * 10 })}\")\n\
+                  }\n";
+    let rust = lowered(source);
+    assert!(
+        rust.contains("f: &impl AsyncFn(i64) -> i64"),
+        "the declaration takes a view of it: {rust}"
+    );
+    assert!(
+        rust.contains("twice(n, &f)"),
+        "and the call writes the `&`: {rust}"
+    );
+    // (1+1) + (2+2) + (3+3) = 12, times ten.
+    assert_eq!(ran("passed-on", source).trim(), "120");
+}
+
+/// **A parameter the declaration wrote `mut` is handed straight on**
+/// ([ADR-094](../../../docs/specification/adr/adr-094.md) D3).
+///
+/// `&mut` at a call is written off the callee's word, and the argument here is a
+/// `mut` parameter of the function the call stands in — which is a `&mut T`
+/// already. A second one is not a `&mut &mut T` that works by deref: a `&mut`
+/// may only be taken of a binding that is itself `mut`, and a parameter is not
+/// one, so `rustc` refused it — *cannot borrow `connection` as mutable, as it is
+/// not declared as mutable* — about a file nobody wrote
+/// ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// The first program to meet it was `examples/http`'s server, whose `answer`
+/// hands its connection to a `refuse`.
+#[test]
+fn a_mut_parameter_handed_to_another_mut_parameter_gains_no_second_reference() {
+    let source = "fn bump(mut xs: Vec[i64]) {\n\
+                  \x20   xs.push(1)\n\
+                  }\n\n\
+                  fn twice(mut xs: Vec[i64]) {\n\
+                  \x20   bump(xs)\n\
+                  \x20   bump(xs)\n\
+                  }\n\n\
+                  fn main() {\n\
+                  \x20   let mut xs = [0]\n\
+                  \x20   twice(xs)\n\
+                  \x20   println(f\"{xs.len()}\")\n\
+                  }\n";
+    let rust = lowered(source);
+    assert!(
+        rust.contains("bump(xs);"),
+        "the reference is already there: {rust}"
+    );
+    assert!(
+        !rust.contains("bump(&mut xs)"),
+        "and a second one is not written: {rust}"
+    );
+    // **And the `let mut` still gains one**, which is the half this must not have
+    // taken away: a local is a value, so the call means the reference.
+    assert!(
+        rust.contains("twice(&mut xs)"),
+        "a `let mut` argument is still lent: {rust}"
+    );
+    assert_eq!(ran("mut-passed-on", source).trim(), "3");
 }

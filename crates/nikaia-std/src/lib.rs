@@ -31,6 +31,7 @@ pub mod fs;
 pub mod grammar;
 pub mod hash;
 pub mod html;
+pub mod http1;
 pub mod index;
 pub mod io;
 pub mod list;
@@ -145,6 +146,11 @@ pub mod prelude {
     pub use crate::grammar::ParseError;
     pub use crate::hash::{TrustedMap, TrustedSet};
     pub use crate::html;
+    // **HTTP/1.1's text half** ([ADR-194](../../../docs/specification/adr/adr-194.md)
+    // D5), which the `http` package calls. **Not named `http`**: a program
+    // reaches a *package* by that word, and a `std` module of the same name
+    // would make `http::Response` mean two things.
+    pub use crate::http1;
     pub use crate::io;
     pub use crate::list::ListExt;
     pub use crate::task;

@@ -1550,25 +1550,167 @@ fn a_warning_reaches_the_user_once_and_in_nikaia_terms() {
 /// a `type = "rust"` one is handed to Cargo verbatim (ADR-002 D1) and is
 /// therefore relative to the *generated* manifest under `target/nikaia/build/`.
 /// `examples/foreign-runtime/serve` climbs four levels; this climbs one.
+/// **And it is a server now** ([ADR-194](../../../docs/specification/adr/adr-194.md)
+/// D5), which is what this test grew into: it used to build the pair and read
+/// one rendered response off stdout, because there was nothing to hand a
+/// response to.
+///
+/// What it drives is the whole of the MVP's protocol over a real socket — the
+/// two methods, a body by `Content-Length`, and each of the five refusals — and
+/// it drives them against the **example**, not a copy, for `examples.rs`'s
+/// reason about its own: the example is the file, so it cannot drift.
+///
+/// **Port `0` and the address read back.** A test that picked a port would race
+/// every other test on the machine for it; `net::Listener::address` exists so
+/// that a program which asked for any free one can say which it got, and the
+/// line `listen` prints is how this finds out. That is also why the child is
+/// spawned rather than run to completion: a server does not end.
 #[test]
 fn the_http_package_serves_its_example() {
     let consumer = repo_root().join("examples/hello-http");
-    let ran = nikaia(&["run"], &consumer);
+    let built = nikaia(&["build"], &consumer);
     assert!(
-        ran.status.success(),
+        built.status.success(),
         "examples/hello-http builds against examples/http: {}",
-        said(&ran)
+        said(&built)
     );
 
-    let out = String::from_utf8_lossy(&ran.stdout);
-    assert!(
-        out.starts_with("HTTP/1.1 200 OK\r\n"),
-        "the status line ends with CRLF, which is what HTTP asks for: {out:?}"
+    let mut server = Command::new(env!("CARGO_BIN_EXE_nikaia"))
+        .args(["run", "--project"])
+        .arg(&consumer)
+        .args(["--", "127.0.0.1:0"])
+        .env("NIKAIA_CACHE_DIR", shared_cache_dir())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the nikaia binary runs");
+    // **Killed however this ends**, including a panicking assertion: a test that
+    // left a server listening would leave it listening for the rest of the run.
+    let stopped = Stop(&mut server);
+    let address = the_address_it_printed(stopped.0);
+
+    let (status, body) = ask(&address, b"GET / HTTP/1.1\r\nhost: x\r\n\r\n");
+    assert_eq!(status, "HTTP/1.1 200 OK", "the handler answered `/`");
+    assert_eq!(body, "Hello from a package");
+
+    let (status, body) = ask(&address, b"GET /nowhere HTTP/1.1\r\nhost: x\r\n\r\n");
+    assert_eq!(
+        status, "HTTP/1.1 404 Not Found",
+        "and the program decides what it does not have"
     );
-    assert!(
-        out.contains("content-length: 20\r\n\r\nHello from a package"),
-        "the headers are separated from the body by a blank line: {out:?}"
+    assert_eq!(body, "not found");
+
+    // **A body by `Content-Length`**, which is the whole of the MVP's framing.
+    let (status, body) = ask(
+        &address,
+        b"POST /x HTTP/1.1\r\nhost: x\r\ncontent-length: 5\r\n\r\nhello",
     );
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert_eq!(body, "you sent 5 bytes", "the handler read the body");
+
+    // **The refusals, each of them answered rather than dropped** — a malformed
+    // request is one client's problem, and a server that stopped for it would be
+    // answering the next client with silence.
+    for (asked, expected, why) in [
+        (
+            b"PUT /x HTTP/1.1\r\nhost: x\r\n\r\n".to_vec(),
+            "HTTP/1.1 400 Bad Request",
+            "400 a method this does not answer",
+        ),
+        (
+            b"GET / HTTP/9.9\r\nhost: x\r\n\r\n".to_vec(),
+            "HTTP/1.1 400 Bad Request",
+            "400 a version this does not speak",
+        ),
+        (
+            b"nonsense\r\n\r\n".to_vec(),
+            "HTTP/1.1 400 Bad Request",
+            "400 a request line that is not three words",
+        ),
+        (
+            b"GET / HTTP/1.1\r\ntransfer-encoding: chunked\r\n\r\n".to_vec(),
+            "HTTP/1.1 400 Bad Request",
+            "400 a transfer-encoding this does not speak",
+        ),
+        (
+            // Over `head_cap`'s 16 KiB default, and refused as soon as the
+            // buffer is over it rather than at the end of a head that never
+            // comes.
+            [
+                b"GET /".to_vec(),
+                vec![b'a'; 20_000],
+                b" HTTP/1.1\r\n\r\n".to_vec(),
+            ]
+            .concat(),
+            "HTTP/1.1 431 Request Header Fields Too Large",
+            "431 a request head over the cap",
+        ),
+        (
+            // Over `body_cap`'s 1 MiB, refused for **saying** so: not a byte of
+            // the body is read first, which is the only point at which refusing
+            // is cheap.
+            b"POST / HTTP/1.1\r\ncontent-length: 99999999\r\n\r\n".to_vec(),
+            "HTTP/1.1 413 Content Too Large",
+            "413 a body over the cap",
+        ),
+    ] {
+        let (status, body) = ask(&address, &asked);
+        assert_eq!(status, expected, "{why}");
+        assert_eq!(body, why);
+    }
+}
+
+/// The child, killed whatever way the test ends.
+struct Stop<'a>(&'a mut std::process::Child);
+
+impl Drop for Stop<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// The address the server bound, off the line it printed.
+///
+/// One line and then nothing more is read: the pipe stays open for the rest of
+/// the run, and a read to the end would wait for a server to stop.
+fn the_address_it_printed(server: &mut std::process::Child) -> String {
+    use std::io::BufRead;
+    let out = server.stdout.take().expect("the child's stdout is a pipe");
+    let mut line = String::new();
+    std::io::BufReader::new(out)
+        .read_line(&mut line)
+        .expect("the server says which address it bound");
+    line.trim()
+        .rsplit_once(' ')
+        .map(|(_, address)| address.to_string())
+        .unwrap_or_else(|| panic!("`http: listening on <address>`, and this said {line:?}"))
+}
+
+/// One request on its own connection, answered as a status line and a body.
+///
+/// A connection each, because `Connection: close` is the MVP's scope and the
+/// server implements it that way: the answer goes out and the connection ends,
+/// which is also what makes reading to the end of it the right stop.
+fn ask(address: &str, request: &[u8]) -> (String, String) {
+    use std::io::{Read, Write};
+    let mut socket = std::net::TcpStream::connect(address).expect("the server is listening");
+    socket
+        .set_read_timeout(Some(std::time::Duration::from_secs(20)))
+        .expect("a read that cannot hang the suite");
+    socket.write_all(request).expect("the request goes out");
+    socket.flush().expect("all of it");
+    let mut answered = Vec::new();
+    // A refused request whose sender is still writing gets a reset rather than
+    // the answer, which is what a closing server looks like from the other end -
+    // so what arrived before it counts, and only an empty answer is a failure.
+    let _ = socket.read_to_end(&mut answered);
+    let answered = String::from_utf8_lossy(&answered).into_owned();
+    let (head, body) = answered
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("a head and a body, and this said {answered:?}"));
+    let status = head.split("\r\n").next().unwrap_or_default().to_string();
+    (status, body.to_string())
 }
 
 /// **A trait a package publishes is implemented and then called**

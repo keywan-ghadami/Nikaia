@@ -152,6 +152,19 @@ pub fn moves(ty: &super::ty::Ty) -> bool {
                         | "Locked"
                 )
         }
+        // **A function value moves**, which is what
+        // [ADR-102](../../../docs/specification/adr/adr-102.md) D1's parameter
+        // needed: it lowers to `impl AsyncFn(A) -> R`, an opaque type with no
+        // `Copy`, so a `listen` that hands its handler to an `answer` inside a
+        // loop hands it away the first time round. `rustc` said so about a file
+        // nobody wrote - *use of moved value: `handler`* - which is [Part III
+        // C.1](../../../docs/specification/30-nikaia-tooling.md).
+        //
+        // It is the answer for Part I 5.4 C's **immediate** context read off the
+        // body rather than off a word: a parameter the body only calls or passes
+        // on is not in `keeps`, so `lends` says to write the `&` - and `&F` is a
+        // function too, which is why one `&` is all it takes.
+        Ty::Fn { .. } => true,
         // A nullable of data is still data: `Option<String>` moves.
         Ty::Nullable(inner) => moves(inner),
         // A tuple moves where any part does; one of copied parts is copied.

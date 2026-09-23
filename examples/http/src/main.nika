@@ -1,9 +1,29 @@
-// The `http` package - **a skeleton, and it says where it stops**.
+// The `http` package — **the MVP's protocol, and it says where it stops**.
 //
-// ADR-069 made `http` a package and did not build one; this is the thing on the
-// other end of the path.  What it holds today is the *data* of ADR-018: what a
-// handler is given and what it gives back.  What it does not hold is a server,
-// and the reason is measured rather than guessed - see the note at the bottom.
+// [ADR-069](../../../docs/specification/adr/adr-069.md) made `http` a package
+// and did not build one; this is the thing on the other end of the path. What
+// it holds is [ADR-018](../../../docs/specification/adr/adr-018.md)'s data —
+// what a handler is given and what it gives back — and
+// [ADR-194](../../../docs/specification/adr/adr-194.md) D5's server over it:
+// `GET` and `POST`, bodies by `Content-Length`, `Connection: close`, no chunked
+// transfer and no TLS.
+//
+// **The socket is `std`'s and the protocol is this package's** (D1). The text
+// half of HTTP/1.1 is `std::http1`, which is D5's staging — the parser is Rust
+// until it is written in a grammar — and everything that decides what a request
+// *means* is here.
+//
+// **One handler and not a route table**, which is a language limit named rather
+// than a design: `NK1142` refuses a function type in a field, so a `.route(…)`
+// chain cannot keep what it was handed
+// ([ADR-102](../../../docs/specification/adr/adr-102.md) D5's kept lowering).
+// What a program writes instead is one function that decides, which is
+// [ADR-194](../../../docs/specification/adr/adr-194.md) D4's rule kept — the
+// program says what is exposed, and nothing is derived from `pub`.
+
+use std::net
+use std::http1
+use std::io
 
 // What a handler is given (ADR-018 D1).
 //
@@ -13,6 +33,12 @@
 pub struct Request {
     pub method: String,
     pub path: String,
+    // What the client sent after the head, empty where it sent nothing.
+    //
+    // **Untrusted**, and the language knows it: it came off a socket
+    // ([ADR-010](../../../docs/specification/adr/adr-010.md) D2), and
+    // provenance travels with the bytes.
+    pub body: String,
 }
 
 // What a handler gives back (ADR-018 D3).
@@ -61,7 +87,134 @@ pub fn status_line(status: i32) -> String {
         return "404 Not Found".to_string()
     } else if status == 400 {
         return "400 Bad Request".to_string()
+    } else if status == 408 {
+        return "408 Request Timeout".to_string()
+    } else if status == 413 {
+        return "413 Content Too Large".to_string()
+    } else if status == 431 {
+        return "431 Request Header Fields Too Large".to_string()
     } else {
         return "500 Internal Server Error".to_string()
     }
+}
+
+// **The server** ([ADR-194](../../../docs/specification/adr/adr-194.md) D5).
+//
+// One connection at a time, answered and closed. That is `Connection: close`
+// read as an implementation and not only as a header: a request is read, a
+// handler runs, an answer goes out, the connection ends. What it costs is that
+// a slow client holds the server, which is what `head_wait` bounds.
+//
+// **The caps are the program's** (D5's second half), with defaults that are a
+// server rather than a denial of service. Written as options after the `;`, so
+// a program that wants the defaults says nothing and one that does not names
+// only what it changes.
+pub fn listen(
+    at: ref String,
+    handler: fn(Request) -> Response;
+    body_cap: i64 = 1048576,
+    head_cap: i64 = 16384,
+    head_wait: i64 = 10,
+    connections: i64 = 0
+) throws {
+    let listener = net::listen(at)
+    let bound = listener.address()
+    println(f"http: listening on {bound}")
+
+    let mut served = 0
+    // `connections: 0` is *keep going*, which is what a server does; a count is
+    // what a test wants, and a test is the only reader that can say when to
+    // stop.
+    while connections == 0 || served < connections {
+        let mut connection = listener.accept()
+        answer(connection, handler; body_cap: body_cap, head_cap: head_cap, head_wait: head_wait)
+        served = served + 1
+    }
+}
+
+// One connection, from its first byte to its close.
+//
+// Every failure here is **answered** rather than thrown at the caller: a
+// malformed request is one client's problem, and a server that stopped for it
+// would be answering the next client's question with silence. The one thing not
+// answered is a client that went away, because there is nobody left to answer.
+//
+// `mut connection` and not `ref mut` at the call: the declaration writes the
+// `&` and the call shows nothing (Part I 6.5,
+// [ADR-094](../../../docs/specification/adr/adr-094.md) D1).
+fn answer(
+    mut connection: net::Connection,
+    handler: fn(Request) -> Response;
+    body_cap: i64 = 1048576,
+    head_cap: i64 = 16384,
+    head_wait: i64 = 10
+) {
+    let mut buffer = http1::Buffer()
+
+    // **Read until the head ends**, and no longer than the cap, which
+    // `head_end` is the one to say. `0` is *not yet*; `head_wait` is how many
+    // reads a client gets to finish asking in, which is what bounds a client
+    // that dribbles a head one byte at a time.
+    let mut ended = 0
+    let mut reads = 0
+    while ended == 0 && reads < head_wait {
+        let more = connection.read() catch { return }
+        if more.len() == 0 {
+            // The client went away before it finished asking. Nothing to
+            // answer and nobody to answer it to.
+            return
+        }
+        buffer.take(more)
+        ended = buffer.head_end(head_cap) catch {
+            refuse(connection, 431, f"{error}")
+            return
+        }
+        reads = reads + 1
+    }
+    if ended == 0 {
+        refuse(connection, 408, "408 a request head that never ended")
+        return
+    }
+
+    let asked = buffer.head() catch {
+        refuse(connection, 400, f"{error}")
+        return
+    }
+
+    // **The cap is checked against what the head promised**, before a byte of
+    // body is read: a client that says it will send a gigabyte is refused for
+    // saying so, which is the only point at which refusing is cheap.
+    if asked.length() > body_cap {
+        refuse(connection, 413, "413 a body over the cap")
+        return
+    }
+
+    // The body, as much of it as the head promised. What the head's own reads
+    // already carried is not read again, which is why this counts from the
+    // head's end rather than from zero.
+    while buffer.len() - asked.size() < asked.length() {
+        let more = connection.read() catch { return }
+        if more.len() == 0 { return }
+        buffer.take(more)
+    }
+    let body = buffer.text_from(asked.size()) catch {
+        refuse(connection, 400, f"{error}")
+        return
+    }
+
+    let answered = handler(Request {
+        method: asked.method().to_string(),
+        path: asked.path().to_string(),
+        body: body,
+    })
+    connection.write(render(answered)) catch { return }
+}
+
+// A status and a sentence, for a client this will not answer properly.
+//
+// The sentence is the one `http1` threw, which already begins with its status:
+// the parser knows what it refused and this only has to pass it on.
+fn refuse(mut connection: net::Connection, status: i32, why: ref String) {
+    let answered = Response { status: status, content_type: "text/plain".to_string(), body: why.to_string() }
+    connection.write(render(answered)) catch { return }
 }

@@ -1659,3 +1659,150 @@ sync = true
 touches = ["socket write"]
 signature = "(Connection)"
 doc = "Close it now rather than when it is dropped.\n\nDropping one closes it, which is the language below's answer; a program that\nwants the close at a named moment writes this."
+
+# --- `http1`: HTTP/1.1's text half (ADR-194 D5) -------------------------------
+#
+# **Not named `http`**, and that is not a taste: a program reaches a *package* by
+# that word (ADR-069 D1), and a `std` module of the same name would make
+# `http::Response` mean two things. This file's own note about a crate's word
+# colliding with a module's says what that day costs; this is the day not to
+# create one.
+#
+# **The parser is Rust and moving it into a Nikaia grammar is a later step**
+# (D5): self-hosting the protocol is not the MVP, and the route it will take is
+# ADR-196 D2's.
+#
+# `sync = true` on all of it: this is text handling over bytes that are already
+# there. It cannot pause and it reaches no resource, which is what lets a server
+# call it between two things that do.
+#
+# **Where the line between this and a package runs.** This module holds
+# **framing** - where a head ends, what its lines say, how many bytes of body the
+# head promised - and a package holds **meaning**: what a path is for, what a
+# handler is, what goes back. `Buffer` is on this side of the line because
+# deciding that a head has *not arrived yet* is reading HTTP/1.1, not reading a
+# request.
+#
+# **What it hands back is not marked `untrusted`**, and the reason is that it
+# does not need to be: what came off the socket already is (`net::Connection::read`,
+# ADR-010 D2), and provenance travels with the bytes rather than being re-stated
+# by everything that reads them.
+
+[type."http1::Buffer"]
+pub = true
+crosses = true
+doc = "The bytes of one request as they arrive, and the questions HTTP/1.1 can ask of\nthem.\n\nIt is written `http1::Buffer()`. A caller reads a chunk from a socket, `take`s\nit, and asks `head_end` again."
+
+[type."http1::Head"]
+pub = true
+crosses = true
+doc = "What the head of one HTTP/1.1 request says.\n\nThe two methods this speaks are `GET` and `POST`; anything else is a refusal\nand not a guess. A path is **not** decoded — what a `%20` means is the\nprogram's question."
+
+[fn."http1::Buffer::new"]
+pub = true
+sync = true
+touches = []
+signature = "() -> http1::Buffer"
+doc = "Nothing read yet. It is written `http1::Buffer()`."
+
+# `?` for the bytes, `net::Connection::write`'s reason: what a caller has is a
+# `Bytes`, and a `Bytes` here would refuse the `ref String` a test hands it.
+[fn."http1::Buffer::take"]
+pub = true
+sync = true
+mutates = true
+touches = []
+signature = "(ref Buffer, more: ?)"
+doc = "Add what the socket just handed over."
+
+[fn."http1::Buffer::len"]
+pub = true
+sync = true
+touches = []
+signature = "(ref Buffer) -> i64"
+doc = "How many bytes have arrived."
+
+# **`0` is *not yet*** rather than a missing value, and the shape was chosen for
+# what it lets a caller write: `while ended == 0` is one condition where a loop
+# over an absence is a condition plus the unwrapping after it. A head cannot end
+# at byte zero - the shortest one there is is `GET / HTTP/1.0\r\n\r\n` - so the
+# two readings cannot collide.
+[fn."http1::Buffer::head_end"]
+pub = true
+sync = true
+touches = []
+throws = ["io::IoError"]
+signature = "(ref Buffer, cap: i64) -> i64"
+doc = "Where the head ends, or **`0` for *not yet***: the blank line that ends a head\nhas not arrived, so read more and ask again.\n\nA head over `cap` fails rather than growing - the bytes are somebody else's -\nand it fails as soon as the buffer is over it, because a head that has not\nended and is already too long never will."
+
+[fn."http1::Buffer::head"]
+pub = true
+sync = true
+touches = []
+throws = ["io::IoError"]
+signature = "(ref Buffer) -> http1::Head"
+doc = "What the head says, where `head_end` said there is one.\n\nEvery failure here is what a server sends back: a request line that is not\nthree words, a version this does not speak, a method it does not answer, a\n`content-length` that is not a count, a `transfer-encoding` at all."
+
+[fn."http1::Buffer::text_from"]
+pub = true
+sync = true
+touches = []
+throws = ["io::IoError"]
+signature = "(ref Buffer, at: i64) -> String"
+doc = "The bytes from `at` on, as text.\n\n**Owned**, and the copy is not an oversight: this is the body, and a body goes\ninto a request a handler is given, which owns it."
+
+[fn."http1::Head::method"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref Head) -> ref String"
+doc = "`GET` or `POST`, as it was written."
+
+[fn."http1::Head::path"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref Head) -> ref String"
+doc = "The path, with its query string if there is one, and **not decoded**."
+
+[fn."http1::Head::length"]
+pub = true
+sync = true
+touches = []
+signature = "(ref Head) -> i64"
+doc = "What `Content-Length` said, or `0` where it said nothing."
+
+[fn."http1::Head::size"]
+pub = true
+sync = true
+touches = []
+signature = "(ref Head) -> i64"
+doc = "How many bytes of the buffer the head took, so a caller knows where the body\nstarts."
+
+[fn."http1::Head::keep_alive"]
+pub = true
+sync = true
+touches = []
+signature = "(ref Head) -> bool"
+doc = "Whether the client asked for the connection to stay open.\n\n**Read and not honoured**: `Connection: close` is the MVP's scope, and a server\nthat read the header and ignored it silently would be lying to a client that\nasked."
+
+# --- `Bytes`: how many there are ----------------------------------------------
+#
+# The one thing a program has to be able to ask a `Bytes`, because
+# `net::Connection::read` says **empty means the peer closed** and a loop over a
+# socket cannot be written without the question.
+[fn."Bytes::len"]
+pub = true
+sync = true
+touches = []
+signature = "(ref Bytes) -> i64"
+doc = "How many bytes there are.\n\nAfter `net::Connection::read`, **zero means the peer closed**."
+
+[fn."Bytes::is_empty"]
+pub = true
+sync = true
+touches = []
+signature = "(ref Bytes) -> bool"
+doc = "Whether there are none."

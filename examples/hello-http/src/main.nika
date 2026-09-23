@@ -1,9 +1,36 @@
-// What a program does with the `http` package today: build a response and
-// render it.  There is no server to hand it to (`open-work.md` §2.9), so this
-// prints what a socket would have received.
+// **A server**, and the program on the other end of
+// [ADR-069](../../../docs/specification/adr/adr-069.md) D1's path arm.
+//
+// What it exercises is the pair: `http/` is a package reached **by a path**, and
+// this is a program that reaches it. Until this directory existed nothing in the
+// corpus wrote that arm with a Nikaia package on the end of it (the `type =
+// "rust"` arm has `examples/foreign-runtime/`).
+//
+// It used to render a response and print it, because there was no server to hand
+// one to. There is now
+// ([ADR-194](../../../docs/specification/adr/adr-194.md) D5), so this asks for
+// one — which is the whole of what a program has to write: an address, and one
+// function that decides.
 use http
+use std::cli
 
-fn main() {
-    let answer = http::Response::text("Hello from a package".to_string())
-    print(http::render(answer))
+fn main() throws {
+    // Port `0` is *any free one*, which is what a test wants; `listen` prints
+    // the address it got, which is how the test finds out which.
+    let at = cli::args().nth(1) ?? "127.0.0.1:8080".to_string()
+
+    // **One function and not a route table**, which is the package's own note:
+    // `NK1142` refuses a function type in a field, so nothing can keep a
+    // handler per path. What a program writes instead is the decision itself,
+    // which is also ADR-194 D4's rule — the program says what is exposed.
+    http::listen(at) fn(request) {
+        if request.method == "POST" {
+            let size = request.body.len()
+            return http::Response::text(f"you sent {size} bytes")
+        }
+        if request.path == "/" {
+            return http::Response::text("Hello from a package".to_string())
+        }
+        return http::Response::not_found()
+    }
 }

@@ -1106,6 +1106,14 @@ fn a_sync_function_may_not_pause_inside_a_hole_either() {
 /// is a length the same way the other five are: the entry promises an `i64`
 /// and the emitter writes `as i64` because the name is `len`. Naming it
 /// `count` would have compiled and been wrong.
+///
+/// **And the seventh and eighth.** `Bytes::len` was the Rust type's from the
+/// start and was in no ledger, so nothing could ask it — which held for as long
+/// as the only `Bytes` a program had came out of `fs::read`.
+/// `net::Connection::read` says **empty means the peer closed**, and a loop over
+/// a socket cannot be written without the question. `http1::Buffer::len` is the
+/// same rule on a type that grows: a server reads until the body is as long as
+/// the head promised.
 #[test]
 fn the_lengths_are_i64_and_are_all_called_len() {
     let library = Ledger::parse(nikaia::contracts::STD).expect("std's ledger parses");
@@ -1120,10 +1128,12 @@ fn the_lengths_are_i64_and_are_all_called_len() {
         lengths,
         vec![
             "Array::len",
+            "Bytes::len",
             "Fixed::len",
             "String::len",
             "Vec::len",
             "collections::HashMap::len",
+            "http1::Buffer::len",
             "str::len",
         ],
         "D1's names, and no others"

@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.165 (Draft)
-**Date:** 2026-09-22
+**Version:** 0.0.166 (Draft)
+**Date:** 2026-09-23
 
 ---
 
@@ -1244,9 +1244,20 @@ An untrusted map is seeded randomly, so **its iteration order is not stable betw
   and **what comes off a socket is `untrusted`** ([ADR-010](adr/adr-010.md) D2):
   somebody else chose those bytes.
 
-> **Implementation status:** Implemented for TCP ([ADR-198](adr/adr-198.md)).
-> UDP is not, and nothing asks for it; TLS is [ADR-038](adr/adr-038.md) D2's
-> `rustls` and its own step.
+* **`std::http1`**: HTTP/1.1's **text half** — where a head ends, what its lines
+  say, and where the body starts. It reaches no socket, so everything in it is
+  `sync`: a program reads bytes with `net` and hands them over. It is
+  [ADR-194](adr/adr-194.md) D5's staging and not a `std` HTTP module — **the
+  protocol is the `http` package's** (D1), and what belongs here is the framing a
+  parser does. Named `http1` and not `http` because a program reaches a *package*
+  by that word ([ADR-069](adr/adr-069.md) D1).
+
+> **Implementation status:** Implemented for TCP ([ADR-198](adr/adr-198.md)),
+> with `http1` beside it ([ADR-194](adr/adr-194.md) D5) and the server over the
+> two of them in `examples/http/`. UDP is not, and nothing asks for it; TLS is
+> [ADR-038](adr/adr-038.md) D2's `rustls` and its own step. **Moving `http1`
+> into a Nikaia grammar** is the next step of that record's order and the route
+> is [ADR-196](adr/adr-196.md) D2's.
 
 ### 17.2. Availability by Target and by `user_parallelism`
 Some modules are available, or behave restrictively, depending on the target and on whether user code may run concurrently.

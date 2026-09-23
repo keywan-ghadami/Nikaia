@@ -380,24 +380,26 @@ what it meets after that.
 Moved here from [`handoff.md`](handoff.md), which is a guide to the parser backend
 and was also carrying open work. One list.
 
-### 2.6. There is no HTTP server, and three records now wait on it
+### 2.6. The HTTP server is built, and what waits on it is the parsing moved into Nikaia
 
 [ADR-038](specification/adr/adr-038.md) §4.5. Its D3, D4 and D5 are built — the
 runtime is running before `main`, files complete on `io_uring`, sockets signal
 readiness — and [ADR-055](specification/adr/adr-055.md) has since put an executor
 on top of them at `user_parallelism = no`, so a task can pause and another can
-run. **D1's server, D2's `rustls` and D6's HTTP/1.1 parser are untouched**, and
-the executor does not change that: what is missing is not somewhere for a
-handler to run, it is a socket to run it for. The order that record gives is unchanged: a socket layer that keeps
-registrations rather than answering one readiness question at a time, then a
-minimal HTTP/1.1 server on it, then the parsing moved into Nikaia, then `rustls`,
-then HTTP/2. The first step is the blocker; `worker::poll_one` builds a poller per
-wait today.
+run. **D1's server is built at 0.0.166**; D2's `rustls` and D6's HTTP/1.1 parser
+written in Nikaia are untouched. The order that record gives is unchanged except
+that it is one step shorter: a socket layer that keeps registrations rather than
+answering one readiness question at a time, then a minimal HTTP/1.1 server on it,
+then the parsing moved into Nikaia, then `rustls`, then HTTP/2 — with
+`nikaia serve` **cut** ([ADR-200](specification/adr/adr-200.md) D1) rather than
+waiting at the end of it. The first three steps are done.
 
 What waits inside it:
 
-* [ADR-018](specification/adr/adr-018.md) entire — what a handler sees and what it
-  returns is specified and has nowhere to run;
+* [ADR-018](specification/adr/adr-018.md) D1 and D3 — what a handler sees and what
+  it gives back — are **built** as `http::Request` and `http::Response` in
+  `examples/http/`, and its D2's other two rows (a bare `String`, an
+  `html::Raw`) need a conversion that package cannot express yet;
 * [ADR-058](specification/adr/adr-058.md) D1's `Bytes` body row, D2's `http::File`,
   D3's mechanism choice and D8's kept mappings, all of which are things to build
   *on* a server ([#45](https://github.com/keywan-ghadami/Nikaia/pull/45));
@@ -440,8 +442,12 @@ top of it, which is work in this section and not a question for anybody.
 
 *And the socket is in `std` since 0.0.164* ([ADR-198](specification/adr/adr-198.md)),
 with the layer under it since 0.0.165
-([ADR-199](specification/adr/adr-199.md)) — so what is left of the order below
-is steps 3 and 4: the server and `nikaia serve`.
+([ADR-199](specification/adr/adr-199.md)) and the server itself since 0.0.166 —
+so nothing is left of the order below. **Step 4 was `nikaia serve` and is cut**
+([ADR-200](specification/adr/adr-200.md) D1): it is the half of
+[ADR-194](specification/adr/adr-194.md) D2 that nothing on this list waits on,
+and what it would have shown about this language is the part this language has
+least of.
 
 **And the MVP is decided** ([ADR-194](specification/adr/adr-194.md)), so what is
 left here is an order rather than a design:
@@ -470,31 +476,48 @@ left here is an order rather than a design:
    ([ADR-009](specification/adr/adr-009.md) D4, doing its job on a line written
    before anything had been measured). One poller for the process, arming on the
    calling thread, and `rt::io::waiting` goes 35.4 → **6.6 µs**.
-3. **A minimal HTTP/1.1 server in the `http` package** — D5: `GET` and `POST`,
-   bodies by `Content-Length`, `Connection: close`, no chunked and no TLS, with
-   a body cap and a connection cap from the first commit. **The parser is Rust
-   in `nikaia-std`**, and moving it into a Nikaia grammar is step 4 of
-   [ADR-038](specification/adr/adr-038.md) §4.5 — self-hosting the protocol is
-   deferred and not forgotten. **And the route it takes when it moves is
-   decided** ([ADR-196](specification/adr/adr-196.md) D2): the grammar is
-   lowered ahead of time and joins `nikaia-std` as an **ordinary Rust module**,
-   the way `std::text` already does — so the Nikaia parser is what a Nikaia
-   program *and* a Rust one call, and there is nothing between them to design.
-4. **`nikaia serve [dir]`** — D2's other product: a file server with no program
-   behind it, where the directory, the port and the limits are the operator's.
-   Localhost unless asked otherwise (D3).
+3. **A minimal HTTP/1.1 server in the `http` package** — D5, **built** at
+   0.0.166. `GET` and `POST`, bodies by `Content-Length`, `Connection: close`,
+   no chunked and no TLS, with the caps from the first commit: `body_cap`,
+   `head_cap`, `head_wait` and `connections` are options on `http::listen`, and
+   `examples/hello-http/` is a real server that
+   `crates/nikaia/tests/project.rs` drives over a real socket — port `0`, the
+   bound address read off the line the server prints, then the two methods, a
+   body by `Content-Length` and each of the six refusals. **The parser's text
+   half is Rust in `nikaia-std`** — `std::http1`, whose `Buffer` answers where a
+   head ends, what it says, and where the body starts — and moving it into a
+   Nikaia grammar is step 4 of
+   [ADR-038](specification/adr/adr-038.md) §4.5, which is what is left of this
+   entry. **The route it takes when it moves is decided**
+   ([ADR-196](specification/adr/adr-196.md) D2): the grammar is lowered ahead of
+   time and joins `nikaia-std` as an **ordinary Rust module**, the way
+   `std::text` already does — so the Nikaia parser is what a Nikaia program
+   *and* a Rust one call, and there is nothing between them to design.
 
-*What an application writes needs no language change*, measured at 0.0.152 and
-run by `crates/nikaia/tests/project.rs`: `http::Server()` — **not**
-`Server::new()`, which `NK1149` refuses since
-[ADR-140](specification/adr/adr-140.md) D2 and which
-[ADR-018](specification/adr/adr-018.md)'s own example still prints — chained
-with `.route(…) fn(r) { … }` and ended with `.listen(…)`.
+*What an application writes needs no language change*, measured at 0.0.152 —
+and what it turned out to write is **not** the chain that measurement ran.
+`NK1142` refuses a function type in a field, so nothing can *keep* a handler per
+path and a `.route(…)` chain has nowhere to put what it was handed
+([§2.14](#214-a-parameter-may-be-a-function-and-a-kept-one-has-no-lowering) is
+the entry that owes it). So the MVP's shape is **one handler and not a route
+table** — `http::listen(at) fn(request) { … }`, with the handler deciding — which
+is [ADR-194](specification/adr/adr-194.md) D4's rule kept by another route: the
+program says what is exposed, and nothing is derived from `pub`.
 
-*And one thing is deferred on purpose*: whether a route may be refused by what
-its handler **touches**. [ADR-194](specification/adr/adr-194.md) §4 carries it
-and the owner has asked to be asked again, with a fuller write-up, when the work
-reaches it.
+*Two lowerings were wrong about a function-typed parameter*, both found by being
+the first program to write one for real, and both fixed at 0.0.166. A parameter
+the body hands **on** was moved rather than lent, so a handler passed to an
+`answer` inside an accept loop was gone the second time round; and a `mut`
+parameter handed to another `mut` parameter gained a second `&mut`, which is not
+a `&&mut` that derefs — a `&mut` may only be taken of a binding that is itself
+`mut`. Both were `rustc` about a file nobody wrote
+([Part III C.1](specification/30-nikaia-tooling.md)).
+
+*And one thing is no longer deferred*: whether a route may be refused by what
+its handler **touches**. [ADR-194](specification/adr/adr-194.md) §4 carries it,
+the owner asked to be asked again with a fuller write-up when the work reached
+it, and the work has reached it. **It is on
+[`open-decisions.md`](open-decisions.md) now**, not here.
 
 ### 2.7. There is no target that lets foreign code call in, and the record for one is written
 
@@ -605,9 +628,16 @@ testable in the same change, and the test above is what says the day has come.
 left. Steps 1 to 3 are built: the type parses and round-trips through the
 ledger, D2's reading is in the fit (`NK2206` for a lambda that pauses where the
 type says `sync`, `NK2606` for one that fails where it declares none), a **run**
-parameter lowers to a closure argument `impl Fn(A) -> R`, and the run-or-kept
+parameter lowers to a closure argument `&impl Fn(A) -> R`, and the run-or-kept
 answer feeds the `sync` column — a run parameter gives its function
 `sync = "from(f)"` and a kept one is answered from the type.
+
+*The `&` on that shape arrived at 0.0.166*, and it arrived from a defect: a run
+parameter is **immediate** (Part I 5.4 C), so it borrows, and the lowering used
+to move it. Nothing noticed while no program handed a handler **on** — and the
+first one that did, `examples/http/`'s server passing its handler to an `answer`
+inside its accept loop, got *use of moved value* from `rustc` about a file nobody
+wrote.
 
 *What is left is D5's lowering of a **kept** handler*, which is *a lambda that
 pauses is refused where `std` takes it* one entry up, with a callee that can now
@@ -618,6 +648,14 @@ field, a result and a `let` are the positions where it can only be kept, and
 they are `NK1142` here rather than `impl Fn(…)` in a Rust field — which is not
 Rust, and would reach the reader as the backend's words about a file nobody
 wrote.
+
+*And what that costs is now a concrete thing and not a hypothetical one.* A
+**route table** is a field holding a handler per path, so `NK1142` is why the
+HTTP MVP is **one handler and not a `.route(…)` chain**
+([§2.6](#26-the-http-server-is-built-and-what-waits-on-it-is-the-parsing-moved-into-nikaia)).
+The shape the language reaches instead is one function that decides, which keeps
+[ADR-194](specification/adr/adr-194.md) D4's rule — the program says what is
+exposed — by another route; a chain is what this entry buys.
 
 ### 2.15. A package is found by version through Cargo, under `nikaia_<name>`
 
@@ -1027,10 +1065,19 @@ for it produced *expected `()`, found `Pin<Box<…>>`* against
 `examples/access-log.nika`. The shape is written only where the signature was
 declared in this language.
 
-*What is left is step 4*, `fortunes.nika` as the corpus program: the handler is
-writable now, and what it waits on is `examples/http/` declaring `route` — which
-is ADR-102's consequence and needs the package rewritten rather than the
-compiler changed.
+*And the run shape gained a `&` at 0.0.166*: `&impl AsyncFn(A) -> R`, because a
+run parameter is **immediate** and borrows (Part I 5.4 C). It was moved before,
+which held for as long as no program handed a handler on — and `&F` is a function
+too, so the call writes one `&` and nothing else changes.
+
+*What is left is step 4*, `fortunes.nika` as the corpus program. `examples/http/`
+is written and **declares no `route`**: `NK1142` refuses a function type in a
+field, so a chain cannot keep what it was handed, and the MVP's shape is one
+handler ([§2.6](#26-the-http-server-is-built-and-what-waits-on-it-is-the-parsing-moved-into-nikaia)).
+So this line's *needs the package rewritten rather than the compiler changed* was
+wrong about which half is blocking: the package is written, and what `route`
+waits on is [§2.14](#214-a-parameter-may-be-a-function-and-a-kept-one-has-no-lowering)'s
+kept lowering, which is the compiler.
 
 ### 2.31. A described foreign call is not asked whether it threads
 

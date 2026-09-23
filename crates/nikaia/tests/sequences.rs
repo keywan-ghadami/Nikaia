@@ -237,6 +237,24 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// ([ADR-193](../../../docs/specification/adr/adr-193.md) D4 needs the bounds),
 /// and `w.trim()` on what a pattern bound is a method call on an untyped
 /// receiver like the ten before it.
+///
+/// **62 at 0.0.166**, and the eleven have **one** cause with one exception.
+/// `examples/http/`'s server arrived, and **a binding whose value came through a
+/// `catch` has no type in this compiler** — the same gap [Part I
+/// 6.5](../../../docs/specification/10-nikaia-light.md)'s status block already
+/// names for the `&` it cannot write. Four of the five `let`s in `answer` are
+/// `… catch { … }`, so `more.len()`, `asked.method()`, `asked.path()`,
+/// `asked.length()` and `asked.size()` are ten calls on receivers whose types the
+/// program states plainly and this checker does not read. Measured piece by
+/// piece: `let b = http1::Buffer()` answers every call on it, and the same
+/// `Buffer` reached through a `catch` answers none.
+///
+/// **The eleventh is the sweep's own shape and not a gap.** It is
+/// `request.body.len()` in `examples/hello-http/`, a method on a field of a
+/// **lambda parameter** — and a lambda parameter *is* typed from the function
+/// type it fits, measured: the same shape with the `struct` declared in the same
+/// file answers. What this one cannot see is `http::Request`, because the sweep
+/// reads one file at a time and that type is the package next door's.
 #[test]
 fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -273,8 +291,8 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     }
     assert!(files >= 18, "only {files} programs were read");
     assert!(
-        unanswered <= 51,
-        "{unanswered} unanswered method calls in {files} programs, and 51 is the \
+        unanswered <= 62,
+        "{unanswered} unanswered method calls in {files} programs, and 62 is the \
          ceiling this was last measured at - a rise means a receiver stopped \
          being typed, and a fall means this number goes down with a sentence \
          saying what answered them"

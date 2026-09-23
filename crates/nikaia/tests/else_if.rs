@@ -128,10 +128,13 @@ fn the_http_examples_status_line_is_one_decision() {
         .lines()
         .find(|l| l.contains("fn status_line"))
         .expect("the function is emitted");
+    // **Five links now**, which is the server's arrival and not a rewrite: the
+    // refusals it answers are a 408, a 413 and a 431, and each is a status this
+    // function had no line for.
     assert_eq!(
         line.matches("else if").count(),
-        2,
-        "two links between the first `if` and the final `else`: {line}"
+        5,
+        "five links between the first `if` and the final `else`: {line}"
     );
     assert!(!line.contains("else { if "), "{line}");
 }
