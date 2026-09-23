@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.172 (Draft)
+**Version:** 0.0.173 (Draft)
 **Date:** 2026-09-23
 
 ---
@@ -2027,7 +2027,10 @@ rarely breaks this rule by accident.
 **The declaration writes the `&`, never the call** ([ADR-094](adr/adr-094.md)).
 A parameter written with a plain type is a **view** unless the function's body
 keeps the value: stores it, hands it back, gives it to a task, or passes it to
-something that keeps it. Which of the two it is comes from the body, is written
+something that keeps it. **Handing back a *part* of it is handing it back** — a
+field whose type moves, taken out of the parameter and returned, is the value
+leaving the call in pieces; a field that **copies** takes nothing away and leaves
+the parameter a view. Which of the two it is comes from the body, is written
 to the ledger (6.7), and is true for every caller. The caller writes `serve(db)`
 and `fs::map(path)`, and the compiler writes the reference the callee asked
 for, as it writes the pause and the failure a call carries (7.1, 8.1). A `&` in
@@ -2052,7 +2055,12 @@ a **method's** argument.
 > so `serve(ref db)` is refused with `NK1137` (Part III, C.3). `mut` is read:
 > `fn fill(mut out: Vec[i64])` lowers to `ref mut Vec<i64>`, `fill(xs)` gains its
 > `ref mut`, and a parameter a body changes without the word is refused with
-> `NK1138`. A `mut` parameter handed to **another** one is passed straight on:
+> `NK1138`. **A field that moves, handed back out of a parameter, keeps it**
+> (0.0.173): the declaration is written by value, as it already was for the whole
+> value — before that the parameter stayed lent and the body took a piece out of
+> a loan, which the language below refused about a file nobody wrote. `self` is
+> not this rule's: a `ref self` is a word the author wrote, and that shape is
+> `NK1131`. A `mut` parameter handed to **another** one is passed straight on:
 > the binding is a `ref mut` already, and a second one is not a reference to a
 > reference but a refusal, because a `ref mut` may only be taken of a binding
 > that is itself `mut`. A method's argument is passed owned because the compiler

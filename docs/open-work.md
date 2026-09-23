@@ -77,22 +77,26 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Two entries are open**, §1.10 and §1.11 — and both are things §1.9's fix
-**revealed** rather than made,
-and which is the shape this section's method produces: a thing becomes writable,
-so the next question about it becomes askable. §1.9 closed at 0.0.172, the
-package after the one that found it. §1.7 closed at 0.0.168 — `use std::<anything>` is
+**One entry is open**, §1.10, which §1.9's fix **revealed** rather than made.
+§1.11 closed at 0.0.173, the package after the one that found it. §1.9 closed at
+0.0.172, the package after the one that found it — and that pair is the shape
+this section's method produces: a thing becomes writable, so the next question
+about it becomes askable. §1.7 closed at 0.0.168 — `use std::<anything>` is
 `NK1186` now, and the list it is answered from is what `std`'s ledger declares
 joined with what a page or a record names and the compiler has not built. §1.8
 closed at 0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132,
 §1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay
 where they were, because this file is cited by number.
 
-**And the last two were found the way the method above says**, by running
-something: §1.7 by writing `use std::rust` in a program to check a sentence this
-file was about to claim, §1.8 by building an experiment to see what a new column
-changed about it — and a **third**, which was fixed in the same package and never
-got a number, by trying the same change twice and getting two answers: a hand
+**And every one of the last five was found the way the method above says**, by
+running something: §1.7 by writing `use std::rust` in a program to check a
+sentence this file was about to claim; §1.8 by building an experiment to see what
+a new column changed about it; §1.9 by writing the shape
+[ADR-106](specification/adr/adr-106.md) D1 had just made writable and building it
+from the other side; §1.10 by handing that now-writable function a type that
+implements nothing; §1.11 by writing a fixture for §1.9 and having it refused for
+something else. And a **sixth**, fixed in the same package as §1.8 and never
+given a number, by trying the same change twice and getting two answers: a hand
 edit to a `contracts/<crate>.contracts` did not reach the build cache's key, and
 failed **open** while it did not.
 
@@ -153,51 +157,6 @@ backend's words. Nothing is miscompiled.
 
 *Found by* fixing §1.9 and then handing the now-writable function a type that
 implements nothing — the same method one step further on.
-
-### 1.11. A field handed back out of a lent parameter is `rustc`'s to refuse
-
-Four lines:
-
-```nika
-pub struct Answer { pub text: String }
-
-pub fn say(answer: Answer) -> String {
-    return answer.text
-}
-```
-
-lowers to `pub fn say(answer: &Answer) -> String { answer.text }` and `rustc`
-says
-
-```text
-error: cannot move out of `answer.text` which is behind a shared reference
-     = consider cloning the value if the performance cost is acceptable
-```
-
-about a file the author never opened, which is [Part III
-C.1](specification/30-nikaia-tooling.md).
-
-*What it is:* the `keeps` column ([ADR-094](specification/adr/adr-094.md) D1) is
-inferred from what a body does with each parameter, and `hand_over` reads a bare
-name — `return answer` keeps, `return answer.text` does not. So the parameter is
-**lent**, the declaration is written `&Answer`, and the body takes a piece out of
-a loan.
-
-*It is `NK1131` one position over.* That refusal says exactly this sentence about
-a **`ref self`** subject — *`self` is borrowed here, so `text` cannot be returned
-by value* — and it asks it of `self` alone, because until [ADR-094](specification/adr/adr-094.md)
-D1 nothing else was lent without the word.
-
-*What it needs, and the direction matters:* **not a refusal.** The program is
-correct — a caller that hands its `Answer` over and never uses it again is
-exactly what `keeps` is for — so the answer is to **widen the inference**: a
-`return` or an assignment of `param.field`, where the field's type **moves**,
-keeps the parameter, and the declaration is written by value as it already is for
-`return answer`. A field that **copies** must not, or a parameter would be taken
-away from its caller for an `i64`. The field's type is readable from the
-declaration, which is what makes the narrow version possible.
-
-*Found by* writing a fixture for §1.9 and having it refused for something else.
 
 **Every entry this section has ever held was found by *running* something** —
 the specification's own programs, the corpus at both settings, a two-file

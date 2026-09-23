@@ -4,6 +4,41 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.173] — 2026-09-23
+
+**A field handed back out of a parameter keeps it** —
+[`open-work.md`](docs/open-work.md) §1.11 closed, the package after the one that
+found it.
+
+### Four lines were enough
+
+```nika
+pub struct Answer { pub text: String }
+
+pub fn say(answer: Answer) -> String {
+    return answer.text
+}
+```
+
+lowered to `pub fn say(answer: &Answer) -> String { answer.text }`, and `rustc`
+answered *cannot move out of `answer.text` which is behind a shared reference*
+about a file the author never opened — [Part III C.1](docs/specification/30-nikaia-tooling.md).
+
+### The answer is a widening, not a refusal
+
+- The program is **correct**: a caller that hands its `Answer` over and never uses it again is exactly what the `keeps` column is for ([ADR-094](docs/specification/adr/adr-094.md) D1). So `hand_over` — which read a **bare name**, so `return answer` kept and `return answer.text` did not — now reads a field of a parameter too, and the declaration is written by value as it already was for the whole value.
+- **It is `NK1131` one position over.** That refusal says this exact sentence about a `ref self` subject, and asks it of `self` alone because until D1 nothing else was lent without the word. Here the lending is the compiler's, so the lending is what changes.
+
+### The two halves it has to get right
+
+- **A field that copies must not keep.** `return point.x` for an `i64` takes nothing away, and owning the parameter for it would take the value from a caller that still wants it — a correct program refused, one call up ([Part III C.4](docs/specification/30-nikaia-tooling.md)). Measured both ways: `across(p)` then `p.y` on the next line compiles and prints `34`.
+- **`self` is not this rule's**, deliberately: a `ref self` is a word the author wrote, so what a method does with its subject may not silently turn it into `fn(self)`. A test holds that line.
+- **An unknown field keeps**, which is the polarity the whole column already has — `keeps_its` reads an unknown callee as one that keeps, and an unknown field is the same question one level in. The cost of guessing the other way is `rustc` about a file nobody wrote; the cost of guessing this way is one value the caller has to `.clone()`.
+
+### Where §1 stands
+
+One entry: **§1.10**, a call into a *dependency's* generic function not checked against its bound, which needs a ledger column no record decides. The five before it were each found by running something, and the last three by running what the package before them had just made possible — which is what this section's method produces.
+
 ## [0.0.172] — 2026-09-23
 
 **A dependency's unit is checked in its own namespace** — [`open-work.md`](docs/open-work.md)

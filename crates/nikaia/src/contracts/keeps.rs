@@ -399,6 +399,23 @@ fn uses_of(
     // `-> String` that moves the value out of the call.
     let returns_a_view = ret_type.as_ref().is_some_and(super::holds_view);
 
+    // **The fields of each parameter whose type this file declares.** A
+    // parameter of a type from a package or from `std` has none here, and
+    // `hand_over` reads that absence as *unknown*, which keeps.
+    let declared = crate::views::fields_of(parsed);
+    let fields: BTreeMap<String, BTreeMap<String, super::ty::Ty>> = args
+        .iter()
+        .filter_map(|arg| {
+            let of = declared.get(&arg.ty.name)?;
+            Some((
+                parsed.text(arg.name).to_string(),
+                of.iter()
+                    .map(|(name, ty)| (name.clone(), super::ty::Ty::from_ast(parsed, ty)))
+                    .collect(),
+            ))
+        })
+        .collect();
+
     let mut uses = Uses::default();
     // **Whether this body's method calls resolved at all.** A receiver whose
     // method nothing describes may be a `self`-by-value method, and a parameter
@@ -409,6 +426,7 @@ fn uses_of(
     let mut walk = Walk {
         parsed,
         parameters: &parameters,
+        fields: &fields,
         returns_a_view,
         unresolved,
         ledger,
@@ -422,6 +440,12 @@ fn uses_of(
 struct Walk<'a> {
     parsed: &'a Parsed,
     parameters: &'a BTreeSet<String>,
+    /// **What each parameter's fields are**, for the one shape a bare name does
+    /// not cover: `return answer.text` takes a piece out of `answer`.
+    ///
+    /// Empty for a parameter whose type this file does not declare, which
+    /// [`Walk::hand_over`] reads as *unknown*.
+    fields: &'a BTreeMap<String, BTreeMap<String, super::ty::Ty>>,
     returns_a_view: bool,
     /// Whether any method call in this body went to an entry no ledger has.
     unresolved: bool,
@@ -477,9 +501,49 @@ impl Walk<'_> {
 
     /// This expression's value leaves the call, so a parameter standing at its
     /// top is kept.
+    /// **A parameter handed out of the call keeps**, whether it is handed out
+    /// whole or in pieces.
+    ///
+    /// `return answer` is the bare name. `return answer.text` is the second
+    /// shape, and it was missing: the parameter stayed **lent**, the declaration
+    /// was written `&Answer`, and the body took a piece out of a loan — *cannot
+    /// move out of `answer.text` which is behind a shared reference*, about a
+    /// file nobody wrote ([Part III
+    /// C.1](../../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// **A field that copies does not keep**, and that is the half this has to
+    /// get right: `return point.x` for an `i64` takes nothing away, and owning
+    /// the parameter for it would take the value from a caller that still wants
+    /// it — a correct program refused, one call up. Where the field's type is
+    /// not known it **keeps**, which is the polarity this whole column already
+    /// has ([`keeps_its`]: *unknown keeps*).
+    ///
+    /// **`self` is not this rule's**, and deliberately: a `ref self` is a word
+    /// the author wrote, so what a method does with its subject may not silently
+    /// turn it into `fn(self)`. That shape is `NK1131`, which names `.clone()`
+    /// and `fn …(self)` as the two ways out.
     fn hand_over(&mut self, expr: &Expr) {
         if let Some(name) = parameter_named(self.parsed, self.parameters, expr) {
             self.uses.kept.insert(name);
+            return;
+        }
+        let Expr::Field { base, name } = expr else {
+            return;
+        };
+        let Some(parameter) = parameter_named(self.parsed, self.parameters, base) else {
+            return;
+        };
+        if parameter == "self" {
+            return;
+        }
+        let field = self.parsed.text(*name);
+        let copies = self
+            .fields
+            .get(&parameter)
+            .and_then(|fields| fields.get(field))
+            .is_some_and(|ty| !moves(ty));
+        if !copies {
+            self.uses.kept.insert(parameter);
         }
     }
 }

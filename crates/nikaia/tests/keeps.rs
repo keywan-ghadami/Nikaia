@@ -34,7 +34,10 @@ fn a_parameter_that_is_only_read_is_not_kept() {
     )
     .is_empty());
 
-    // A field read is a read of the field and not of the parameter.
+    // A field read is a read of the field and not of the parameter — **where
+    // the field copies**. An `i64` handed back takes nothing away, and owning
+    // the parameter for it would take the value from a caller that still wants
+    // it. A field that *moves* is the test at the bottom of this file.
     assert!(keeps(
         "struct Row { total: i64 }\n\
          fn of(row: Row) -> i64 { return row.total }",
@@ -346,4 +349,54 @@ fn the_column_renders_and_parses_back() {
     let plain = parse_to_ast("fn width(text: String) -> i64 { return text.len() as i64 }")
         .expect("the source parses");
     assert!(!Ledger::infer(&plain).render().contains("keeps"));
+}
+
+// --- A field handed out of a lent parameter ---
+
+/// **`return answer.text` keeps `answer`**
+/// ([ADR-094](../../../docs/specification/adr/adr-094.md) D1,
+/// [`open-work.md`](../../../docs/open-work.md) §1.11).
+///
+/// It did not, and four lines were enough to see it: the parameter stayed
+/// **lent**, the declaration was written `&Answer`, and the body took a piece
+/// out of a loan — *cannot move out of `answer.text` which is behind a shared
+/// reference*, about a file nobody wrote ([Part III
+/// C.1](../../../docs/specification/30-nikaia-tooling.md)).
+///
+/// `hand_over` read a bare name, so `return answer` kept and `return
+/// answer.text` did not.
+#[test]
+fn a_field_that_moves_keeps_the_parameter_it_came_out_of() {
+    let source = "struct Answer { text: String }\n\
+                  fn say(answer: Answer) -> String { return answer.text }";
+    assert_eq!(keeps(source, "say"), ["answer"]);
+}
+
+/// **And `self` is not this rule's**, deliberately: a `ref self` is a word the
+/// author wrote, so what a method does with its subject may not silently turn it
+/// into `fn(self)`. That shape is `NK1131`, which names `.clone()` and
+/// `fn …(self)` as the two ways out — and this test is what would notice the
+/// widening reaching it.
+#[test]
+fn a_field_of_a_borrowed_subject_does_not_keep_it() {
+    let source = "struct Answer { text: String }\n\
+                  impl Answer {\n\
+                  \x20   fn say(ref self) -> String { return self.text }\n\
+                  }";
+    assert!(
+        keeps(source, "Answer::say").is_empty(),
+        "{:?}",
+        keeps(source, "Answer::say")
+    );
+}
+
+/// **A field of a parameter whose type this file does not declare keeps**, which
+/// is the polarity the whole column has: `keeps_its` reads an unknown callee as
+/// one that keeps, and an unknown field is the same question one level in. The
+/// cost of guessing the other way is `rustc` about a file nobody wrote; the cost
+/// of guessing this way is one value the caller has to `.clone()`.
+#[test]
+fn a_field_of_a_type_this_file_does_not_declare_keeps() {
+    let source = "fn first(m: Mapped) -> String { return m.text }";
+    assert_eq!(keeps(source, "first"), ["m"]);
 }

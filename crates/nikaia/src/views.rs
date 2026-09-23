@@ -286,7 +286,7 @@ fn finding(stored: &Stored) -> Finding {
 /// An enum's variants are flattened into it: for the one question this map is
 /// asked - does this field hold a view - a variant's field is a field of the
 /// enum.
-fn fields_of(parsed: &Parsed) -> HashMap<Ident, Vec<(String, Type)>> {
+pub(crate) fn fields_of(parsed: &Parsed) -> HashMap<Ident, Vec<(String, Type)>> {
     let mut out: HashMap<Ident, Vec<(String, Type)>> = HashMap::new();
     for item in &parsed.program.items {
         match &item.node {
