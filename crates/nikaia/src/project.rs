@@ -1500,10 +1500,11 @@ pub fn explain(program: &modules::Program, settings: &Settings, want: Explain) -
         if want.trust {
             print!(
                 "{}",
-                crate::contracts::trust::render(&crate::contracts::trust::analyse(
-                    &unit.parsed,
-                    &library
-                ))
+                crate::contracts::trust::render(
+                    &crate::contracts::trust::analyse(&unit.parsed, &library),
+                    &unit.path.display().to_string(),
+                    &unit.source,
+                )
             );
         }
     }

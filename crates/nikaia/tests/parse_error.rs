@@ -77,7 +77,7 @@ fn what_a_parse_throws_reaches_its_caller() {
 fn a_parse_beside_a_read_is_a_named_sum() {
     let source = format!(
         "{GRAMMAR}\nfn both(path: ref String) -> i64 throws {{\n\
-         \x20   let data = fs::read_to_string(path)\n\
+         \x20   let data = fs::read_to_string(path, fs::Root::Anywhere)\n\
          \x20   let n = Tiny::number(data)\n\
          \x20   return n\n\
          }}\n\
@@ -114,7 +114,7 @@ fn a_parse_beside_a_read_is_a_named_sum() {
 fn the_two_member_channel_compiles() {
     let rust = rust(&format!(
         "{GRAMMAR}\nfn both(path: ref String) -> i64 throws {{\n\
-         \x20   let data = fs::read_to_string(path)\n\
+         \x20   let data = fs::read_to_string(path, fs::Root::Anywhere)\n\
          \x20   let n = Tiny::number(data)\n\
          \x20   return n\n\
          }}\n\

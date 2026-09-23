@@ -150,7 +150,7 @@ fn a_non_pausing_acquisition_leaves_the_idiom_sync() {
 fn the_lambda_still_decides_under_from() {
     let source = "use std::fs\n\
                   fn tally(counter: SharedMut[i32]) {\n\
-                      counter.access fn { fs::write(\"log\", \"x\") }\n\
+                      counter.access fn { fs::write(\"log\", fs::Root::Anywhere, \"x\") }\n\
                   }\n\
                   fn outer(counter: SharedMut[i32]) { tally(counter) }";
     let answers = sync_of(source, &with_access("sync = \"from(f)\"\n"), true);

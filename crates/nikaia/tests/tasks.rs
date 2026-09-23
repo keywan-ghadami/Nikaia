@@ -140,7 +140,7 @@ fn two_tasks_are_in_flight_before_either_finishes() {
     let source = "use std::fs\n\
          \n\
          fn size(path: ref String) -> i64 {\n\
-         \x20   let text = fs::read_to_string(path) catch { return 0 }\n\
+         \x20   let text = fs::read_to_string(path, fs::Root::Anywhere) catch { return 0 }\n\
          \x20   println(f\"read {path}\")\n\
          \x20   return text.len()\n\
          }\n\
@@ -316,13 +316,16 @@ fn a_task_is_an_async_block_and_never_a_closure() {
     let rust = lower(
         "use std::fs\n\
          fn main() {\n\
-         \x20   spawn fn { fs::read_to_string(\"x\") catch { \"\".to_string() } }\n\
+         \x20   spawn fn { fs::read_to_string(\"x\", fs::Root::Anywhere) catch { \"\".to_string() } }\n\
          }",
     );
     assert!(rust.contains("TaskHandle::start(async move"), "{rust}");
     // The pausing call inside the task takes its `.await`, which is the thing a
     // closure could not have held.
-    assert!(rust.contains("read_to_string(\"x\").await"), "{rust}");
+    assert!(
+        rust.contains("read_to_string(\"x\", &fs::Root::Anywhere).await"),
+        "{rust}"
+    );
     assert!(!rust.contains("start(|| "), "{rust}");
 }
 
@@ -357,7 +360,7 @@ fn a_task_that_never_finishes_is_abandoned_at_the_deadline() {
          \n\
          fn forever() {\n\
          \x20   while true {\n\
-         \x20       let text = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
+         \x20       let text = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
          \x20       if text.len() < 0 { return }\n\
          \x20   }\n\
          }\n\

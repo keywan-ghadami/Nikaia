@@ -23,11 +23,11 @@ use std::process::Command;
 const READS_AND_WRITES: &str = "use std::fs\n\
      \n\
      fn main() throws {\n\
-     \x20   let a = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
-     \x20   let b = fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+     \x20   let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+     \x20   let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
      \x20   println(f\"{a.len()} {b.len()}\")\n\
-     \x20   fs::write(\"drei.txt\", f\"{a}{b}\") catch { return }\n\
-     \x20   let back = fs::read_to_string(\"drei.txt\") catch { \"\".to_string() }\n\
+     \x20   fs::write(\"drei.txt\", fs::Root::Anywhere, f\"{a}{b}\") catch { return }\n\
+     \x20   let back = fs::read_to_string(\"drei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
      \x20   println(f\"{back.len()}\")\n\
      }";
 
@@ -195,12 +195,12 @@ const READS_OVERLAPPED: &str = "use std::fs\n\
      \n\
      fn main() throws {\n\
      \x20   let r = overlap {\n\
-     \x20       fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
-     \x20       fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+     \x20       fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+     \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
      \x20   }\n\
      \x20   println(f\"{r.0.len()} {r.1.len()}\")\n\
-     \x20   fs::write(\"drei.txt\", f\"{r.0}{r.1}\") catch { return }\n\
-     \x20   let back = fs::read_to_string(\"drei.txt\") catch { \"\".to_string() }\n\
+     \x20   fs::write(\"drei.txt\", fs::Root::Anywhere, f\"{r.0}{r.1}\") catch { return }\n\
+     \x20   let back = fs::read_to_string(\"drei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
      \x20   println(f\"{back.len()}\")\n\
      }";
 

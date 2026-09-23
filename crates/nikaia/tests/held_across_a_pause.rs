@@ -80,7 +80,7 @@ fn a_value_used_after_a_pause_is_held() {
              fn main() {\n\
              \x20   spawn fn {\n\
              \x20       let n = work()\n\
-             \x20       let text = fs::read_to_string(\"log\") catch { return }\n\
+             \x20       let text = fs::read_to_string(\"log\", fs::Root::Anywhere) catch { return }\n\
              \x20       println(f\"{n} {text.len()}\")\n\
              \x20   }\n\
              }\n"
@@ -101,7 +101,7 @@ fn a_value_finished_with_before_the_pause_is_not_held() {
              \x20   spawn fn {\n\
              \x20       let n = work()\n\
              \x20       println(f\"{n}\")\n\
-             \x20       let text = fs::read_to_string(\"log\") catch { return }\n\
+             \x20       let text = fs::read_to_string(\"log\", fs::Root::Anywhere) catch { return }\n\
              \x20       println(f\"{text.len()}\")\n\
              \x20   }\n\
              }\n"
@@ -138,7 +138,7 @@ fn a_captured_name_is_the_other_halfs_question() {
         "use std::fs\n\nfn main() {\n\
          \x20   let message = \"hello\"\n\
          \x20   spawn fn {\n\
-         \x20       let text = fs::read_to_string(\"log\") catch { return }\n\
+         \x20       let text = fs::read_to_string(\"log\", fs::Root::Anywhere) catch { return }\n\
          \x20       println(f\"{message} {text.len()}\")\n\
          \x20   }\n\
          }\n"

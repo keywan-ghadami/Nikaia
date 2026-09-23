@@ -332,12 +332,12 @@ fn options_are_not_counted_as_arguments() {
 #[test]
 fn an_option_of_a_library_function_is_checked_from_its_ledger() {
     assert!(
-        findings("use std::fs\n\nfn main() throws { fs::write(\"o\", \"x\"; append: true) }")
+        findings("use std::fs\n\nfn main() throws { fs::write(\"o\", fs::Root::Anywhere, \"x\"; append: true) }")
             .is_empty()
     );
 
     let (code, message) =
-        one("use std::fs\n\nfn main() throws { fs::write(\"o\", \"x\"; apend: true) }");
+        one("use std::fs\n\nfn main() throws { fs::write(\"o\", fs::Root::Anywhere, \"x\"; apend: true) }");
     assert_eq!(code, "NK1109");
     assert_eq!(message, "`fs::write` has no option `apend`");
 }
@@ -571,13 +571,14 @@ fn a_parameter_that_accepts_several_types_claims_none() {
         "use std::fs\nuse std::io\n\nfn main() throws {\n\
          \x20   let text = io::read_to_string()\n\
          \x20   let path = \"out.txt\"\n\
-         \x20   fs::write(path, text)\n\
+         \x20   fs::write(path, fs::Root::Anywhere, text)\n\
          }"
     )
     .is_empty());
 
     // …and the arity is still checked, which is the half that survives.
-    let (code, _) = one("use std::fs\n\nfn main() throws { fs::write(\"out.txt\") }");
+    let (code, _) =
+        one("use std::fs\n\nfn main() throws { fs::write(\"out.txt\", fs::Root::Anywhere) }");
     assert_eq!(code, "NK1101");
 }
 
@@ -700,7 +701,7 @@ fn the_type_of_a_literal_is_read_off_its_first_character() {
 #[test]
 fn a_written_call_that_can_fail_in_a_function_that_does_not_say_so_is_reported() {
     let (code, message) = one(
-        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
          fn ruft() -> String { return liest() }",
     );
     assert_eq!(code, "NK2605");
@@ -737,12 +738,12 @@ fn the_note_quotes_the_callees_contract_and_the_help_is_a_way_out() {
 #[test]
 fn a_declared_throws_or_a_catch_is_the_end_of_it() {
     let declared =
-        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
                     fn ruft() -> String throws { return liest() }";
     assert!(findings(declared).is_empty(), "{:#?}", findings(declared));
 
     let caught =
-        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
                   fn ruft() -> String { return liest() catch { return \"\".to_string() } }";
     assert!(findings(caught).is_empty(), "{:#?}", findings(caught));
 }
@@ -756,7 +757,7 @@ fn a_declared_throws_or_a_catch_is_the_end_of_it() {
 #[test]
 fn a_catch_handler_is_not_itself_caught() {
     let (code, _) = one(
-        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
          fn ruft() -> String { return liest() catch { return liest() } }",
     );
     assert_eq!(code, "NK2605");
@@ -973,7 +974,7 @@ fn a_view_of_a_transparent_container_fits_what_it_derefs_to() {
     assert!(
         findings(
             "use std::fs\n\nfn count(text: ref String) -> i64 { return 1 }\n\
-             fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(m) }"
+             fn probe() -> i64 throws { let m = fs::map(\"x\", fs::Root::Anywhere)\n return count(m) }"
         )
         .is_empty(),
         "a mapped file must fit a text view"
@@ -986,7 +987,7 @@ fn a_view_of_a_transparent_container_fits_what_it_derefs_to() {
 #[test]
 fn a_transparent_container_does_not_fit_just_anything() {
     let (code, message) = one("use std::fs\n\nfn count(n: ref i64) -> i64 { return 1 }\n\
-         fn probe() -> i64 throws { let m = fs::map(\"x\")\n return count(ref m) }");
+         fn probe() -> i64 throws { let m = fs::map(\"x\", fs::Root::Anywhere)\n return count(ref m) }");
     assert_eq!(code, "NK1102");
     assert!(message.contains("ref Mapped"), "{message}");
 }
@@ -1499,7 +1500,7 @@ fn a_name_something_declares_is_not_refused() {
         // a struct declared here
         "struct Conn { id: i64 }\n\nfn f() {\n    Conn\n}",
         // `error`, which a `catch` block binds
-        "use std::fs\n\nfn f(p: ref String) {\n    fs::read_to_string(p) catch { println(f\"{error}\") }\n}",
+        "use std::fs\n\nfn f(p: ref String) {\n    fs::read_to_string(p, fs::Root::Anywhere) catch { println(f\"{error}\") }\n}",
     ] {
         assert!(
             findings(source).is_empty(),

@@ -226,7 +226,7 @@ fn main() throws {
     // constant-memory alternative. Parallelism is asked for here so the
     // grammar's `par_fold` uses every core, not for the mapping - and at
     // `user_parallelism = no` the same program still runs, on one core.
-    let data = fs::map(ref path) catch {
+    let data = fs::map(ref path, fs::Root::Anywhere) catch {
         eprintln(f"cannot open {path}: {error}")
         return
     }

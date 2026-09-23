@@ -632,8 +632,8 @@ mod io_tests {
         std::fs::write(&two, "zweizwei").expect("write");
 
         let (a, b) = super::block_on(crate::task::overlap2(
-            crate::fs::read_to_string(&one),
-            crate::fs::read_to_string(&two),
+            crate::fs::read_to_string(&one, &crate::fs::Root::Anywhere),
+            crate::fs::read_to_string(&two, &crate::fs::Root::Anywhere),
         ));
         assert_eq!(a.expect("eins"), "eins");
         assert_eq!(b.expect("zwei"), "zweizwei");
@@ -651,7 +651,10 @@ mod io_tests {
     fn a_read_of_a_file_that_is_not_there_fails_rather_than_hangs() {
         let missing = std::env::temp_dir().join(format!("nikaia-absent-{}", std::process::id()));
         let _ = std::fs::remove_file(&missing);
-        let outcome = super::block_on(crate::fs::read_to_string(&missing));
+        let outcome = super::block_on(crate::fs::read_to_string(
+            &missing,
+            &crate::fs::Root::Anywhere,
+        ));
         assert!(outcome.is_err(), "a missing file read as something");
     }
 
@@ -682,7 +685,7 @@ mod io_tests {
             // any answer is taken.
             let mut futures: Vec<_> = paths
                 .iter()
-                .map(|path| Box::pin(crate::fs::read_to_string(path)))
+                .map(|path| Box::pin(crate::fs::read_to_string(path, &crate::fs::Root::Anywhere)))
                 .collect();
             for future in &mut futures {
                 out.push(future.as_mut().await);

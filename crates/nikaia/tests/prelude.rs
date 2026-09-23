@@ -171,7 +171,7 @@ fn a_prelude_name_with_a_module_in_front_is_refused() {
 #[test]
 fn a_real_module_entry_and_an_unknown_name_are_left_alone() {
     for source in [
-        "use std::fs\n\nfn main() throws {\n\x20   let t = fs::read_to_string(\"a\")\n\x20   println(f\"{t}\")\n}\n",
+        "use std::fs\n\nfn main() throws {\n\x20   let t = fs::read_to_string(\"a\", fs::Root::Anywhere)\n\x20   println(f\"{t}\")\n}\n",
         "use std::db\n\nfn main() {\n\x20   db::connect(\"x\")\n}\n",
     ] {
         assert!(

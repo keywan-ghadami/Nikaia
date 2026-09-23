@@ -69,9 +69,9 @@ const THREE_READS: &str = "use std::fs\n\
      \n\
      fn main() {\n\
      \x20   let r = overlap {\n\
-     \x20       fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
-     \x20       fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
-     \x20       fs::read_to_string(\"drei.txt\") catch { \"\".to_string() }\n\
+     \x20       fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+     \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+     \x20       fs::read_to_string(\"drei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
      \x20   }\n\
      \x20   println(f\"{r.0.len()} {r.1.len()} {r.2.len()}\")\n\
      }";
@@ -109,8 +109,8 @@ fn a_branch_that_cannot_pause_is_started_last_and_answered_in_place() {
          fn main() {\n\
          \x20   let r = overlap {\n\
          \x20       expensive(10)\n\
-         \x20       fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
-         \x20       fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+         \x20       fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+         \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
          \x20   }\n\
          \x20   println(f\"{r.0} {r.1.len()} {r.2.len()}\")\n\
          }";
@@ -178,6 +178,29 @@ fn two_branches_that_meet_on_nothing_are_accepted() {
     );
 }
 
+/// **A path in an argument is a constant, and it does not stop an overlap.**
+///
+/// The three branches above each write `fs::Root::Anywhere`
+/// ([ADR-108](../../../docs/specification/adr/adr-108.md) D1 gives every path
+/// call a root), and a path used to be accounted as *a value read from somewhere
+/// else* — which is true of a field and an index and not of a path. A path names
+/// an **item**: a unit variant, a constructor handed over as a value, an
+/// associated constant. There is nothing to read, so there is nothing for the
+/// branch's closure to capture.
+///
+/// Asserted separately from the block above because it is a different claim: that
+/// one says three reads overlap, and this one says the *reason* they still do is
+/// the narrowing and not something else in the pair.
+#[test]
+fn a_path_in_an_argument_does_not_stop_an_overlap() {
+    let with_a_root = findings(THREE_READS);
+    assert!(with_a_root.is_empty(), "{with_a_root:?}");
+    // And the lowering is the overlapped one rather than three statements in a
+    // row, which is what says the verdict was `Operation` and not a refusal.
+    let rust = lower(THREE_READS);
+    assert!(rust.contains("task::overlap3("), "{rust}");
+}
+
 /// A branch that **binds** is refused: the block's value already carries every
 /// branch's result, so a `let` inside one would name a thing that leaves by two
 /// doors (D2).
@@ -187,8 +210,8 @@ fn a_branch_that_binds_a_name_is_refused() {
         "use std::fs\n\
          fn main() {\n\
          \x20   let r = overlap {\n\
-         \x20       let x = fs::read_to_string(\"eins.txt\") catch { \"\".to_string() }\n\
-         \x20       fs::read_to_string(\"zwei.txt\") catch { \"\".to_string() }\n\
+         \x20       let x = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+         \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
          \x20   }\n\
          \x20   println(f\"{r.1.len()}\")\n\
          }",
@@ -213,8 +236,8 @@ fn an_uncaught_failure_in_a_branch_fails_the_block() {
          \n\
          fn main() throws {\n\
          \x20   let r = overlap {\n\
-         \x20       fs::read_to_string(\"eins.txt\")\n\
-         \x20       fs::read_to_string(\"zwei.txt\")\n\
+         \x20       fs::read_to_string(\"eins.txt\", fs::Root::Anywhere)\n\
+         \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere)\n\
          \x20   }\n\
          \x20   println(f\"{r.0.len()} {r.1.len()}\")\n\
          }";

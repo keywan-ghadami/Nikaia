@@ -9,11 +9,11 @@ pub use nikaia_std::error::Full;
 // use std::fs
 
 async fn control() -> Result<(), Box<dyn std::error::Error>> {
-    let a = match fs::read_to_string("eins.txt").await {
+    let a = match fs::read_to_string("eins.txt", &fs::Root::Anywhere).await {
         Ok(value) => value,
         Err(_error) => { "".to_string() },
     };
-    let b = match fs::read_to_string("zwei.txt").await {
+    let b = match fs::read_to_string("zwei.txt", &fs::Root::Anywhere).await {
         Ok(value) => value,
         Err(_error) => { "".to_string() },
     };
@@ -29,7 +29,7 @@ async fn foreign_against_foreign() {
 
 async fn foreign_against_a_read() -> Result<(), Box<dyn std::error::Error>> {
     let served = hyper_shim::serve_once(18082);
-    let file = match fs::read_to_string("eins.txt").await {
+    let file = match fs::read_to_string("eins.txt", &fs::Root::Anywhere).await {
         Ok(value) => value,
         Err(_error) => { "".to_string() },
     };
@@ -38,7 +38,7 @@ async fn foreign_against_a_read() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn a_read_against_foreign() -> Result<(), Box<dyn std::error::Error>> {
-    let file = match fs::read_to_string("zwei.txt").await {
+    let file = match fs::read_to_string("zwei.txt", &fs::Root::Anywhere).await {
         Ok(value) => value,
         Err(_error) => { "".to_string() },
     };

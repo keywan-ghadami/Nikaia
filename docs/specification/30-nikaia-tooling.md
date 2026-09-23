@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.177 (Draft)
+**Version:** 0.0.178 (Draft)
 **Date:** 2026-09-23
 
 ---
@@ -879,7 +879,7 @@ The surface is `std::fs`'s shape minus what a stream cannot keep. A read looks b
 > **Implementation status:** Partially implemented. `read_to_string`, `read` and `lines` are implemented; `bytes` is not. `fs::read`, `fs::read_to_string` and `fs::write` go through [ADR-038](adr/adr-038.md) D3's mechanism, and all three of `io`'s reads are performed on an I/O worker and **awaited** ([ADR-121](adr/adr-121.md) D4, [ADR-172](adr/adr-172.md) D4) — a stream has no size to `stat`, so it is the blocking read moved off the program's thread rather than a ring path. `io::lines` asks for a **chunk** per hop and finds the line endings itself, because a hop per line would cost more than the suspension saves.
 
 `lines()` yields **owned** text, where a file's lines are views into the mapping they came from
-(`fs::map(path)` and `.lines()`, below): a file is still there to point at, and a stream's bytes
+(`fs::map(path, root)` and `.lines()`, below): a file is still there to point at, and a stream's bytes
 are gone once consumed. An iterator may hand out views into a buffer it does not own, and never
 into one it does ([ADR-025](adr/adr-025.md)).
 
@@ -968,7 +968,7 @@ answering with it duplicates the handle rather than moving it ([ADR-040](adr/adr
 use std::fs
 
 fn main() throws {
-    let page = fs::map("index.html")
+    let page = fs::map("index.html", fs::Root::Dir("site"))
 
     http::Server::new()
         .route("/") fn { page }
@@ -999,7 +999,7 @@ Every `std` function that takes a path takes its root right after it, with no de
 ([ADR-108](adr/adr-108.md) D1): `http::File` like `fs::map`, `fs::read` and `fs::write`. The
 root is an `fs::Root`: `Dir(store)`, under which the joined name is resolved and compared
 component by component, or `Anywhere`, the one way around the check, recorded per site and
-listed by `nikaia --trust` (D2, D4). A name that leaves its `Dir` is `fs::Outside`, and the
+listed by `nikaia --trust` (D2, D4). A name that leaves its `Dir` is `io::IoError::Outside`, and the
 handler answers 404: the call refuses, it does not rewrite (D3). Nothing is inferred about where
 the name came from and no analysis follows it; a `../../etc/shadow` is stopped at the call,
 before the headers are written (D6). `trusted: false` on `fs::map` is about the file's
@@ -1010,7 +1010,7 @@ modification time moves, and sized by the operator rather than the program
 ([ADR-058](adr/adr-058.md) D8). A page that must be held for certain is mapped by the program
 itself, outside the handler, as in the first example above.
 
-> **Implementation status:** Not implemented. `http` is not built ([ADR-038](adr/adr-038.md) §4.5), so neither the `Bytes` row nor `http::File` exists, and `fs::Root` is not built ([ADR-108](adr/adr-108.md) §5). `fs::map` exists; **`Bytes` does not** — it is the tether's container and the tether is Part I 6.6's unbuilt half, so `fs::read` hands back a `Vec[u8]` today. `docs/open-decisions.md` carries the question of where it lives.
+> **Implementation status:** Not implemented. `http` is a package with a server in it since 0.0.166, and neither the `Bytes` row nor `http::File` exists. `fs::Root` **is** built ([ADR-108](adr/adr-108.md)), so `http::File` takes the same root the day it is written. `fs::map` exists; **`Bytes` does not** — it is the tether's container and the tether is Part I 6.6's unbuilt half, so `fs::read` hands back a `Vec[u8]` today. `docs/open-decisions.md` carries the question of where it lives.
 
 The request's strings are **views** into the bytes the connection read: `path()`, `header(name)`
 and `query(name)` yield `ref String`, so a parameter used inside the request's scope costs nothing and
@@ -1084,7 +1084,7 @@ the function around the template. The position check runs through a loop's body;
 **`std::fs` (Compiler Magic)**
 File system access looks **blocking**. The compiler transforms each call into a **non-blocking** state machine backed by the runtime's reactor. User code never blocks the thread and never writes a callback.
 
-Every function below may fail for environmental reasons, so every one of them `throws` (Appendix A.1); a missing file is not a bug in the program. **What they throw is `io::IoError`** ([ADR-158](adr/adr-158.md) D1), with `NotFound`, `PermissionDenied`, `NotText` and `Other` — a handler that only passes the failure on names nothing, and one that takes it apart writes `use std::io` and `io::IoError::NotFound(p)` (D2). None of them takes an `async` marker, and none is awaited.
+Every function below may fail for environmental reasons, so every one of them `throws` (Appendix A.1); a missing file is not a bug in the program. **What they throw is `io::IoError`** ([ADR-158](adr/adr-158.md) D1), with `NotFound`, `PermissionDenied`, `NotText`, `Outside` — where a name would leave the `fs::Root` it was given ([ADR-108](adr/adr-108.md) D3) — and `Other` — a handler that only passes the failure on names nothing, and one that takes it apart writes `use std::io` and `io::IoError::NotFound(p)` (D2). None of them takes an `async` marker, and none is awaited.
 
 **Whole-file access**
 
@@ -1096,8 +1096,9 @@ pub fn write(path: Path, root: Root, data: ref Array[u8]; append: bool = false, 
 ```
 
 **Every path names its root** ([ADR-108](adr/adr-108.md)). `root` is an `fs::Root`.
-`Dir(store)` resolves the name under that directory and throws `fs::Outside` where it would leave
-it. `Anywhere` performs no check; it is the word a review looks for, and `nikaia --trust` lists
+`Dir(store)` resolves the name under that directory and throws `io::IoError::Outside` where it
+would leave it — one case beside `NotFound` rather than an error type of its own, so the root check
+adds no member to any program's failure set. `Anywhere` performs no check; it is the word a review looks for, and `nikaia --trust` lists
 every site that writes it (D4). There is no default and no exception for a literal: a relative
 name is resolved against the working directory, which is somebody's to change (D1).
 `fs::map(ref path, fs::Root::Anywhere)` is what a command-line program whose path the operator typed
@@ -1117,7 +1118,7 @@ something else while it is in flight ([ADR-055](adr/adr-055.md) §6). What puts 
 flight is a program writing `overlap { … }` (Part I 8.1.2) or a `spawn`, never the compiler
 ([ADR-050](adr/adr-050.md) D1).
 
-> **Implementation status:** Partially implemented. `read`, `read_to_string`, `write` with both of its options, and `map` are implemented, each without its `root` parameter ([ADR-108](adr/adr-108.md) §5); `open`, `File` and the directory functions are not implemented. The reactor and the state machine are implemented ([ADR-038](adr/adr-038.md) D3, [ADR-055](adr/adr-055.md) §6).
+> **Implementation status:** Partially implemented. `read`, `read_to_string`, `write` with both of its options, and `map` are implemented, **each with its `root`** ([ADR-108](adr/adr-108.md) D1, D2, D3, D4): `fs::Root` has its two variants, a name is resolved and compared by component against a `Dir`, one that leaves it fails with `io::IoError::Outside`, a call that leaves the root out is `NK1101` with the two forms in its help, and `nikaia --trust` lists every site that writes `Anywhere` or `Dir("/")`. `open`, `File` and the directory functions are not implemented, so D1's list of them waits on those. The reactor and the state machine are implemented ([ADR-038](adr/adr-038.md) D3, [ADR-055](adr/adr-055.md) §6).
 
 `read` returns **`Bytes`**, not a `Vec[u8]`: it is one shared buffer, and slices that outlive its scope are tethered to it (Part I 6.6). A parser can therefore hand back thousands of names that all point into a single allocation.
 
@@ -1127,7 +1128,7 @@ flight is a program writing `overlap { … }` (Part I 8.1.2) or a `spawn`, never
 
 There is no `fs::lines` and no `fs::bytes` ([ADR-025](adr/adr-025.md) D3). A program maps the file and walks the mapping's lines.
 
-*Design rationale:* `lines(path)` would open the file and yield tethered `ref String`, so the returned value would own the buffer and hand out views into itself, which is the one thing an iterator may not do. `fs::map(path)` owns the pages and `.lines()` borrows views of them: one value owns a buffer and another borrows from it, which is what Part I 6.6 and [ADR-008](adr/adr-008.md) rest on. The properties `lines` was for, tethered `ref String`, no allocation per line and constant memory, are properties of the mapping ([ADR-025](adr/adr-025.md) D3).
+*Design rationale:* `lines(path)` would open the file and yield tethered `ref String`, so the returned value would own the buffer and hand out views into itself, which is the one thing an iterator may not do. `fs::map(path, root)` owns the pages and `.lines()` borrows views of them: one value owns a buffer and another borrows from it, which is what Part I 6.6 and [ADR-008](adr/adr-008.md) rest on. The properties `lines` was for, tethered `ref String`, no allocation per line and constant memory, are properties of the mapping ([ADR-025](adr/adr-025.md) D3).
 
 ```nika
 let data = fs::map(ref path, fs::Root::Anywhere)
@@ -1215,7 +1216,7 @@ The hasher follows from the provenance: untrusted keys get a keyed hash with a p
 ```nika
 // A service that processes files uploaded by strangers:
 // a local path, but bytes nobody vetted.
-let data = fs::map(path; trusted: false)
+let data = fs::map(path, fs::Root::Anywhere; trusted: false)
 ```
 
 The reverse, `trusted: true`, exists for the case where the program knows the peer. Both are recorded in the ledger, so every place the program declared something safe is one list in one file, and it shows up in review when it changes. A grammar for a wire format can pin the floor for everyone who uses it, `@untrusted grammar HttpHeaders`, so that no application can lower it by accident (Part II, 10.7 and [ADR-010](adr/adr-010.md)).

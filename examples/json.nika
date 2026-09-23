@@ -244,7 +244,7 @@ fn longest(value: ref Json) -> i64 {
 fn main() throws {
     let path = cli::args().nth(1) ?? "data.json"
 
-    let text = fs::read_to_string(ref path) catch {
+    let text = fs::read_to_string(ref path, fs::Root::Anywhere) catch {
         eprintln(f"cannot read {path}: {error}")
         return
     }

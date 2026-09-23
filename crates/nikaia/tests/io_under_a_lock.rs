@@ -36,7 +36,7 @@ fn a_mapping_read_inside_a_door_is_refused() {
         "use std::fs\n\
          \n\
          fn main() throws {\n\
-         \x20   let page = fs::map(\"eins.txt\")\n\
+         \x20   let page = fs::map(\"eins.txt\", fs::Root::Anywhere)\n\
          \x20   let counter = SharedMut(0)\n\
          \x20   counter.update fn(mut n) { n = n + page.len() }\n\
          }\n"
@@ -51,7 +51,7 @@ fn an_index_of_a_mapping_inside_a_door_is_refused() {
         "use std::fs\n\
          \n\
          fn main() throws {\n\
-         \x20   let page = fs::map(\"eins.txt\")\n\
+         \x20   let page = fs::map(\"eins.txt\", fs::Root::Anywhere)\n\
          \x20   let seen = SharedMut(0)\n\
          \x20   seen.access fn(n) { println(f\"{page[0]}\") }\n\
          }\n"
@@ -67,7 +67,7 @@ fn the_refusal_names_the_page_fault_and_the_way_out() {
         "use std::fs\n\
          \n\
          fn main() throws {\n\
-         \x20   let page = fs::map(\"eins.txt\")\n\
+         \x20   let page = fs::map(\"eins.txt\", fs::Root::Anywhere)\n\
          \x20   let counter = SharedMut(0)\n\
          \x20   counter.update fn(mut n) { n = n + page.len() }\n\
          }\n",
@@ -102,7 +102,7 @@ fn a_mapping_read_outside_a_door_is_untouched() {
         "use std::fs\n\
          \n\
          fn main() throws {\n\
-         \x20   let page = fs::map(\"eins.txt\")\n\
+         \x20   let page = fs::map(\"eins.txt\", fs::Root::Anywhere)\n\
          \x20   println(f\"{page.len()}\")\n\
          }\n"
     ));
@@ -117,7 +117,7 @@ fn a_door_over_memory_is_untouched() {
         "use std::fs\n\
          \n\
          fn main() throws {\n\
-         \x20   let page = fs::map(\"eins.txt\")\n\
+         \x20   let page = fs::map(\"eins.txt\", fs::Root::Anywhere)\n\
          \x20   let size = page.len()\n\
          \x20   let counter = SharedMut(0)\n\
          \x20   counter.update fn(mut n) { n = n + size }\n\

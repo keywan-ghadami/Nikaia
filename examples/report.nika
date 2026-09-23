@@ -96,7 +96,7 @@ fn main() throws {
     let path = cli::args().nth(1) ?? "stock.csv"
     let out = cli::args().nth(2) ?? "report.html"
 
-    let data = fs::map(ref path) catch {
+    let data = fs::map(ref path, fs::Root::Anywhere) catch {
         eprintln(f"cannot open {path}: {error}")
         return
     }
@@ -119,7 +119,7 @@ fn main() throws {
     // The one line that did not exist before this example. A failure to write
     // is an ordinary failure: the page is worth nothing if it did not land, so
     // the program says so and stops rather than reporting success.
-    fs::write(ref out, ref markup) catch {
+    fs::write(ref out, fs::Root::Anywhere, ref markup) catch {
         eprintln(f"cannot write {out}: {error}")
         return
     }

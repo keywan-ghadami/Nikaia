@@ -91,6 +91,16 @@ one, and it needs [ADR-108](specification/adr/adr-108.md)'s root-at-the-call to
 be built first. Declaring the coarse version would put a word in the language
 that is answered by a question the language cannot yet ask.
 
+*And the half this rested on is built at 0.0.178.* `fs::Root` exists, so a
+handler that reads a file names the directory it may not leave, and
+`nikaia --trust` lists every site that names none. **That is option 3 arriving
+for the filesystem before this question is answered for a route** — which is the
+recommendation below reaching the same place from the `fs` side, and it is worth
+reading against the question rather than as an answer to it: what `--trust`
+lists is every `Anywhere` in the program, and what this asks about is a *route*.
+The `touches` granularity is unchanged, so the first reason above stands as it
+was written.
+
 *The second is that a refusal here has no failure it prevents that the ledger
 does not already show.* A handler that touches the filesystem is not a bug; it
 is most handlers. What is a bug is a handler touching the filesystem **when

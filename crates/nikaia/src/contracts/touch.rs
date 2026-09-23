@@ -429,7 +429,7 @@ mod tests {
 
     /// A resource the compiler could not name might be any of them.
     ///
-    /// This is the fail-closed half: `fs::write(pfad, …)` where `pfad` is
+    /// This is the fail-closed half: `fs::write(pfad, fs::Root::Anywhere, …)` where `pfad` is
     /// computed keeps its order against every other file operation, because the
     /// alternative is a program that is wrong on some inputs and not others.
     #[test]

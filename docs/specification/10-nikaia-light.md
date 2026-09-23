@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.177 (Draft)
+**Version:** 0.0.178 (Draft)
 **Date:** 2026-09-23
 
 ---
@@ -109,8 +109,8 @@ Some names need no `use`. They are these, and there are no others
 * the numeric conversions 2.2 already offers.
 
 Everything else in the standard library is reached the way a package is
-reached: `use std::fs` at the top of the file, and `fs::read_to_string(path)`
-where it is used (9.1, [ADR-140](adr/adr-140.md) D5).
+reached: `use std::fs` at the top of the file, and
+`fs::read_to_string(path, fs::Root::Anywhere)` where it is used (9.1, [ADR-140](adr/adr-140.md) D5).
 
 **The shared types are here for `Bytes`' reason** ([ADR-167](adr/adr-167.md)
 D1): which shape a `SharedMut[T]` gets is decided **per value** by the compiler
@@ -865,7 +865,7 @@ Three rules govern them:
 
   ```nika
   for p in paths {
-      let text = fs::read_to_string(p) catch { break }
+      let text = fs::read_to_string(p, fs::Root::Anywhere) catch { break }
       seen += text.len()
   }
   ```
@@ -2011,7 +2011,7 @@ use std::fs
 
     fn report(config: ref Config) {
         let name = ref config.name       // borrow
-        let data = fs::read("log")    // the function pauses here (I/O)...
+        let data = fs::read("log", fs::Root::Anywhere)    // pauses here (I/O)...
         println(f"{name}: {data}")     // ...and the borrow is still valid.
     }
     ```
@@ -2032,7 +2032,7 @@ field whose type moves, taken out of the parameter and returned, is the value
 leaving the call in pieces; a field that **copies** takes nothing away and leaves
 the parameter a view. Which of the two it is comes from the body, is written
 to the ledger (6.7), and is true for every caller. The caller writes `serve(db)`
-and `fs::map(path)`, and the compiler writes the reference the callee asked
+and `fs::map(path, root)`, and the compiler writes the reference the callee asked
 for, as it writes the pause and the failure a call carries (7.1, 8.1). A `&` in
 a parameter type is an assertion, *this is a view*, as `sync` is (Part II,
 12.1). A parameter the function changes in place says `mut` in the declaration,
@@ -2282,7 +2282,7 @@ use std::fs
 use std::net
 
 fn fetch_config() -> String throws {
-    let text = fs::read_to_string("config.txt")     // can fail
+    let text = fs::read_to_string("config.txt", fs::Root::Anywhere)   // can fail
     let mut peer = net::connect("127.0.0.1:9000")   // can fail too
     peer.write(ref text)
     return text
@@ -2395,7 +2395,7 @@ error[NK2605]: this function can fail because `liest` can fail
      help: declare the error: add `throws` to `ruft` - or handle it at the call, `… catch { … }` (Part I, 7.1)
 ```
 
-for `fn liest() -> String throws { return fs::read_to_string("x.txt") }` one
+for `fn liest() -> String throws { return fs::read_to_string("x.txt", fs::Root::Anywhere) }` one
 line above. The shape is Appendix C.4's: the caret is on the statement, the
 note is the contract quoted from the ledger the call was resolved against, and
 the help is one of the two things user code can write.
@@ -2593,7 +2593,7 @@ mechanism is **asynchronous execution**.
 A function that performs I/O, such as reading a file or downloading a URL,
 **pauses** without blocking the program. There is no `await` keyword.
 
-Within one task, the order is the written order: `let a = fs::read("x")`
+Within one task, the order is the written order: `let a = fs::read("x", root)`
 pauses, and the line after it does not run until `a` is there. What runs
 meanwhile is some *other* task; a pause never forks one. A task exists only
 where the program writes one (`spawn`, `par_iter`, `task::scope`), and

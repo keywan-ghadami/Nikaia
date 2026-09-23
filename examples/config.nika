@@ -92,7 +92,7 @@ fn main() throws {
     // `read_to_string` rather than `map`: a configuration file is small, and
     // the text has to outlive nothing here. `fs::map` is the other half of the
     // same module and what 1BRC needs (Part III, 17.1).
-    let text = fs::read_to_string(ref path) catch {
+    let text = fs::read_to_string(ref path, fs::Root::Anywhere) catch {
         eprintln(f"cannot read {path}: {error}")
         return
     }

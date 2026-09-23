@@ -362,7 +362,7 @@ fn a_librarys_error_type_is_a_channel() {
     let rust = lowered(
         "use std::fs\n\
          fn load(path: ref String) -> String throws {\n\
-         \x20   return fs::read_to_string(ref path)\n\
+         \x20   return fs::read_to_string(ref path, fs::Root::Anywhere)\n\
          }\n\
          fn main() { }\n",
     );
@@ -378,12 +378,17 @@ fn a_librarys_error_needs_no_envelope() {
     let rust = lowered(
         "use std::fs\n\
          fn load(path: ref String) -> String throws {\n\
-         \x20   return fs::read_to_string(ref path)\n\
+         \x20   return fs::read_to_string(ref path, fs::Root::Anywhere)\n\
          }\n\
          fn main() { }\n",
     );
     assert!(!rust.contains("Thrown<"), "{rust}");
-    assert!(rust.contains("fs::read_to_string(&path).await?"), "{rust}");
+    // **The root gets its own `&` from the compiler** (ADR-094 D1): the entry only
+    // reads it, so the declaration is `&Root` and the call writes no reference.
+    assert!(
+        rust.contains("fs::read_to_string(&path, &fs::Root::Anywhere).await?"),
+        "{rust}"
+    );
 }
 
 /// **The whole of it, as a program that runs**: a failure crosses a function
@@ -395,7 +400,7 @@ fn a_failure_from_std_is_matched_by_variant() {
         "use std::fs\n\
          use std::io\n\
          fn load(path: ref String) -> String throws {\n\
-         \x20   return fs::read_to_string(ref path)\n\
+         \x20   return fs::read_to_string(ref path, fs::Root::Anywhere)\n\
          }\n\
          fn main() {\n\
          \x20   let text = load(\"nope.txt\") catch {\n\
@@ -420,7 +425,7 @@ fn the_long_form_says_there_is_no_site() {
         "library-error-full",
         "use std::fs\n\
          fn load(path: ref String) -> String throws {\n\
-         \x20   return fs::read_to_string(ref path)\n\
+         \x20   return fs::read_to_string(ref path, fs::Root::Anywhere)\n\
          }\n\
          fn main() {\n\
          \x20   let text = load(\"nope.txt\") catch {\n\

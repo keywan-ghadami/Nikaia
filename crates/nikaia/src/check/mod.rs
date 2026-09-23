@@ -1968,7 +1968,7 @@ struct Checker<'a> {
     throwing: bool,
     /// Whether the expression being walked is the guarded half of a `catch`.
     ///
-    /// `fs::read_to_string(p) catch { … }` handles the failure where it
+    /// `fs::read_to_string(p, fs::Root::Anywhere) catch { … }` handles the failure where it
     /// happens, so nothing leaves the function and `NK2605` has nothing to
     /// say. It covers the **whole** guarded expression, because that is what
     /// the handler runs for: in `outer(inner())` both calls are caught. The
@@ -6814,7 +6814,7 @@ impl<'a> Checker<'a> {
     /// ([ADR-154](../../docs/specification/adr/adr-154.md), Part I 9.1's D4 for
     /// `std` rather than for a package).
     ///
-    /// `fs::read_to_string(p)` without `use std::fs` at the top. A file lists
+    /// `fs::read_to_string(p, fs::Root::Anywhere)` without `use std::fs` at the top. A file lists
     /// what it depends on, and a reader should not have to know which module a
     /// prefix belongs to in order to find out.
     ///
@@ -7778,14 +7778,14 @@ impl<'a> Checker<'a> {
                 notes: vec![format!("`{key}{}`", signature.text())],
                 help: Some(match wanted.len() {
                     0 => format!("call it as `{key}()`"),
-                    _ => format!(
-                        "it takes {}",
-                        wanted
+                    _ => {
+                        let takes = wanted
                             .iter()
                             .map(|(n, t)| format!("`{n}: {}`", t.text()))
                             .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
+                            .join(", ");
+                        format!("it takes {takes}{}", a_root_is_one_of_two(wanted))
+                    }
                 }),
             });
             return signature.result_or_unit();
@@ -12136,7 +12136,7 @@ impl<'a> Checker<'a> {
             ],
             help: Some(
                 "write `comptime NAME = …` if the bytes belong in the program, or \
-                 `fs::read(…)` to read the file while the program runs"
+                 `fs::read(…, root)` to read the file while the program runs"
                     .to_string(),
             ),
         });
@@ -14315,6 +14315,31 @@ fn an(what: &str) -> String {
     match first.to_ascii_lowercase() {
         'a' | 'e' | 'i' | 'o' | 'u' => format!("an {what}"),
         _ => format!("a {what}"),
+    }
+}
+
+/// **The two forms of a root**, where that is the argument a call left out
+/// ([ADR-108](../../docs/specification/adr/adr-108.md) D1: *a call that leaves
+/// it out is `NK1101`, and the message names the two forms of D2*).
+///
+/// A sentence about one `std` type, written here because the ledger has no
+/// column for an `enum`'s variants: what `it takes `root: ref Root`` leaves a
+/// reader with is a type name and a question. The two lines beside `PROMISED`
+/// and `NOT_A_MODULE` in this file are there for the same reason — a thing the
+/// compiler has to know and the ledger does not carry.
+///
+/// **Empty for every other missing argument**, which is what keeps this from
+/// being a habit: the parameter has to be named `root` *and* typed `Root`.
+fn a_root_is_one_of_two(wanted: &[(String, Ty)]) -> String {
+    let is_a_root = wanted
+        .iter()
+        .any(|(name, ty)| name == "root" && ty.text().trim_start_matches("ref ") == "Root");
+    match is_a_root {
+        false => String::new(),
+        true => ". The root is `fs::Root::Dir(store)`, under which the name is resolved and \
+                 may not leave, or `fs::Root::Anywhere`, which performs no check and says so \
+                 in the word a review looks for"
+            .to_string(),
     }
 }
 

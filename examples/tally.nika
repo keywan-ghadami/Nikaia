@@ -85,7 +85,7 @@ fn main() throws {
     let log = cli::args().nth(1) ?? ""
     if log.len() > 0 {
         let row = summary(lines, blank; separator: "\t")
-        fs::write(ref log, f"{row}\n"; append: true) catch {
+        fs::write(ref log, fs::Root::Anywhere, f"{row}\n"; append: true) catch {
             eprintln(f"cannot append to {log}: {error}")
             return
         }

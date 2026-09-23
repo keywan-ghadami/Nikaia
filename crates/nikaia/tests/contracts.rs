@@ -936,7 +936,7 @@ fn provenance(source: &str) -> trust::Trust {
 fn a_program_that_reads_a_file_is_trusted() {
     let t = provenance(
         "use std::fs\n\
-         fn main() throws { let data = fs::map(\"x\") }",
+         fn main() throws { let data = fs::map(\"x\", fs::Root::Anywhere) }",
     );
     assert_eq!(t.provenance, Provenance::Trusted);
     assert_eq!(t.reasons.len(), 1);
@@ -950,11 +950,8 @@ fn a_program_that_reads_nothing_is_trusted_and_says_why() {
     let t = provenance("fn main() { println(\"hello\") }");
     assert_eq!(t.provenance, Provenance::Trusted);
     assert!(t.reasons.is_empty());
-    assert!(
-        trust::render(&t).contains("no source is read"),
-        "{}",
-        trust::render(&t)
-    );
+    let rendered = trust::render(&t, "main.nika", "fn main() { println(\"hello\") }");
+    assert!(rendered.contains("no source is read"), "{rendered}");
 }
 
 /// The join is over every source, so one untrusted input decides the answer -
@@ -978,7 +975,7 @@ fn one_untrusted_source_decides() {
 
     let parsed = parse_to_ast(
         "use std::fs\n\
-         fn main() throws { let a = fs::map(\"x\") let b = http::body() }",
+         fn main() throws { let a = fs::map(\"x\", fs::Root::Anywhere) let b = http::body() }",
     )
     .expect("parses");
 
@@ -986,11 +983,122 @@ fn one_untrusted_source_decides() {
     assert_eq!(t.provenance, Provenance::Untrusted);
     assert_eq!(t.reasons.len(), 2);
 
-    let rendered = trust::render(&t);
+    let rendered = trust::render(&t, "main.nika", "");
     assert!(rendered.contains("http::body is untrusted"), "{rendered}");
     assert!(
         rendered.contains("keyed, per-process random seed"),
         "{rendered}"
+    );
+}
+
+// --- ADR-108: a path names its root at the call ------------------------------
+
+/// **D4's third place**: every site that writes a root with nothing to check
+/// against, in the report a review reads before a release.
+///
+/// Which argument is the root comes from the **ledger** — an entry whose
+/// signature names a parameter `root` — so the day `fs::open` or `http::File` is
+/// written, its sites are listed without a line changing in the compiler.
+#[test]
+fn the_trust_report_lists_every_root_with_nothing_to_check_against() {
+    let source = "use std::fs\n\
+                  fn main() throws {\n\
+                  \x20   let a = fs::read_to_string(\"a\", fs::Root::Anywhere)\n\
+                  \x20   let b = fs::read_to_string(\"b\", fs::Root::Dir(\"/\"))\n\
+                  \x20   let c = fs::read_to_string(\"c\", fs::Root::Dir(\"/srv\"))\n\
+                  }\n";
+    let t = provenance(source);
+    assert_eq!(t.roots.len(), 2, "{:#?}", t.roots);
+    assert_eq!(t.roots[0].wrote, trust::Wrote::Anywhere);
+    // `Dir("/")` is `Anywhere` in another spelling, which is why D4 lists it too.
+    assert_eq!(t.roots[1].wrote, trust::Wrote::TheFilesystemRoot);
+    assert!(t.roots.iter().all(|r| r.entry == "fs::read_to_string"));
+
+    let rendered = trust::render(&t, "main.nika", source);
+    assert!(rendered.contains("main.nika:3:5"), "{rendered}");
+    assert!(rendered.contains("writes Anywhere"), "{rendered}");
+    assert!(rendered.contains("every directory"), "{rendered}");
+}
+
+/// **And a `Dir` the program worked out is not listed**, because it is the
+/// checked case: the report is the list of ways *around* the check.
+#[test]
+fn a_root_that_names_a_directory_is_not_in_the_report() {
+    let source = "use std::fs\n\
+                  fn main() throws {\n\
+                  \x20   let store = \"/srv/www\".to_string()\n\
+                  \x20   let a = fs::read_to_string(\"a\", fs::Root::Dir(store))\n\
+                  }\n";
+    let t = provenance(source);
+    assert!(t.roots.is_empty(), "{:#?}", t.roots);
+    let rendered = trust::render(&t, "main.nika", source);
+    assert!(
+        rendered.contains("none - every path here names a directory it may not leave"),
+        "{rendered}"
+    );
+}
+
+/// **A call that leaves the root out is `NK1101`, and the message names the two
+/// forms** ([ADR-108](../../../docs/specification/adr/adr-108.md) D1).
+///
+/// The root is a *subject* and not an option, which is Part I 5.1's rule doing
+/// the work: an option has a default, and a default here is the hole.
+#[test]
+fn a_call_with_no_root_is_refused_and_told_what_to_write() {
+    let parsed = parse_to_ast(
+        // Deliberately short of its root, which is the whole of the test.
+        "use std::fs\n\
+         fn main() throws { let text = fs::read_to_string(\"x\") }",
+    )
+    .expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's ledger parses");
+    let found = nikaia::check::check(&parsed, &own, &library).findings;
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1101")
+        .unwrap_or_else(|| panic!("a path call with no root is refused: {found:#?}"));
+    let help = refusal.help.as_deref().expect("every refusal has one");
+    assert!(help.contains("fs::Root::Dir(store)"), "{help}");
+    assert!(help.contains("fs::Root::Anywhere"), "{help}");
+}
+
+/// **And the sentence is for a root and not for every missing argument.** The
+/// parameter has to be named `root` and typed `Root`, which is what keeps a
+/// message about one `std` type from becoming a habit.
+#[test]
+fn another_missing_argument_says_nothing_about_a_root() {
+    let parsed = parse_to_ast(
+        "use std::fs\n\
+         fn main() throws { fs::write(\"x\", fs::Root::Anywhere) }",
+    )
+    .expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    let library = Ledger::parse(STD).expect("std's ledger parses");
+    let found = nikaia::check::check(&parsed, &own, &library).findings;
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1101")
+        .unwrap_or_else(|| panic!("a call short of its data is refused: {found:#?}"));
+    // The root *is* among the parameters here, so the sentence appears — what it
+    // may not do is appear for a call that names no root at all.
+    assert!(refusal.help.is_some());
+
+    let plain = parse_to_ast(
+        "fn take(a: i64, b: i64) -> i64 { return a + b }\n\
+                              fn main() { print(f\"{take(1)}\") }\n",
+    )
+    .expect("the source parses");
+    let own = Ledger::infer(&plain);
+    let found = nikaia::check::check(&plain, &own, &library).findings;
+    let refusal = found
+        .iter()
+        .find(|f| f.code == "NK1101")
+        .unwrap_or_else(|| panic!("a call short of an argument is refused: {found:#?}"));
+    assert!(
+        !refusal.help.as_deref().unwrap_or_default().contains("Root"),
+        "{:?}",
+        refusal.help
     );
 }
 

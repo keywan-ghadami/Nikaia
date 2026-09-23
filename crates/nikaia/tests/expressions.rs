@@ -353,15 +353,18 @@ fn an_option_becomes_a_positional_argument_in_declaration_order() {
 /// …and `std`'s options come from the ledger `std` ships, by the same path.
 #[test]
 fn a_library_option_is_filled_in_from_the_shipped_ledger() {
-    let rust = emit("use std::fs\n\nfn main() throws { fs::write(\"o\", \"x\"; append: true) }");
+    let rust = emit("use std::fs\n\nfn main() throws { fs::write(\"o\", fs::Root::Anywhere, \"x\"; append: true) }");
     assert!(
-        rust.contains(r#"fs::write("o", "x", true, true)"#),
+        // The root gets the `&` the compiler writes for a parameter the callee
+        // only reads (ADR-094 D1); the options are filled in behind it.
+        rust.contains(r#"fs::write("o", &fs::Root::Anywhere, "x", true, true)"#),
         "{rust}"
     );
 
-    let rust = emit("use std::fs\n\nfn main() throws { fs::write(\"o\", \"x\") }");
+    let rust =
+        emit("use std::fs\n\nfn main() throws { fs::write(\"o\", fs::Root::Anywhere, \"x\") }");
     assert!(
-        rust.contains(r#"fs::write("o", "x", false, true)"#),
+        rust.contains(r#"fs::write("o", &fs::Root::Anywhere, "x", false, true)"#),
         "{rust}"
     );
 }

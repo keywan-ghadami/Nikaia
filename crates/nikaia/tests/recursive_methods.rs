@@ -55,7 +55,7 @@ fn a_method_that_calls_itself_and_pauses_is_boxed() {
          impl Node {\n\
          \x20   fn walk(ref self, depth: i64) -> i64 {\n\
          \x20       if depth == 0 { return self.n }\n\
-         \x20       let text = fs::read_to_string(\"x\") catch { return 0 }\n\
+         \x20       let text = fs::read_to_string(\"x\", fs::Root::Anywhere) catch { return 0 }\n\
          \x20       return self.walk(depth - 1) + (text.len() as i64)\n\
          \x20   }\n\
          }\n\
@@ -79,7 +79,7 @@ fn a_cycle_of_two_pausing_methods_is_boxed() {
          impl Node {\n\
          \x20   fn down(ref self, depth: i64) -> i64 {\n\
          \x20       if depth == 0 { return self.n }\n\
-         \x20       let text = fs::read_to_string(\"x\") catch { return 0 }\n\
+         \x20       let text = fs::read_to_string(\"x\", fs::Root::Anywhere) catch { return 0 }\n\
          \x20       return self.up(depth - 1) + (text.len() as i64)\n\
          \x20   }\n\
          \x20   fn up(ref self, depth: i64) -> i64 {\n\
@@ -108,7 +108,7 @@ fn a_pausing_method_that_does_not_recur_is_not_boxed() {
          \n\
          impl Node {\n\
          \x20   fn read(ref self) -> i64 {\n\
-         \x20       let text = fs::read_to_string(\"x\") catch { return 0 }\n\
+         \x20       let text = fs::read_to_string(\"x\", fs::Root::Anywhere) catch { return 0 }\n\
          \x20       return text.len() as i64\n\
          \x20   }\n\
          \x20   fn twice(ref self) -> i64 { return self.read() + self.read() }\n\
@@ -155,7 +155,7 @@ fn a_recursive_pausing_function_is_still_boxed() {
         "free",
         "use std::fs\n\nfn walk(depth: i64) -> i64 {\n\
          \x20   if depth == 0 { return 0 }\n\
-         \x20   let text = fs::read_to_string(\"x\") catch { return 0 }\n\
+         \x20   let text = fs::read_to_string(\"x\", fs::Root::Anywhere) catch { return 0 }\n\
          \x20   return walk(depth - 1) + (text.len() as i64)\n\
          }\n\
          \n\

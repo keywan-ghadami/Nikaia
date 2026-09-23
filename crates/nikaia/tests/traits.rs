@@ -374,7 +374,7 @@ struct File {
 
 impl Loader for File {
     fn load(ref self) -> String throws {
-        return fs::read_to_string(self.path.clone())
+        return fs::read_to_string(self.path.clone(), fs::Root::Anywhere)
     }
 }
 
@@ -539,7 +539,7 @@ struct File {
 
 impl Loader for File {
     fn load(ref self) -> String throws {
-        return fs::read_to_string(self.path.clone())
+        return fs::read_to_string(self.path.clone(), fs::Root::Anywhere)
     }
 }
 

@@ -253,7 +253,7 @@ fn a_written_ampersand_at_a_method_call_is_left_alone() {
 }
 
 /// **A `&` in front of an argument whose type this compiler could not work out
-/// is the program's own.** `fs::write(path: ?)` is the absence of a claim
+/// is the program's own.** `fs::write(path: ?, fs::Root::Anywhere)` is the absence of a claim
 /// ([ADR-024](../../../docs/specification/adr/adr-024.md) D1), and refusing the
 /// `&` there would take away the only way to say what the line means before an
 /// inference that could answer exists — [Part III
@@ -265,7 +265,7 @@ fn an_argument_no_signature_describes_keeps_its_written_ampersand() {
         "use std::fs\n\nfn main() {\n\
          \x20   let out = \"/tmp/x\".to_string()\n\
          \x20   let text = \"hi\".to_string()\n\
-         \x20   fs::write(ref out, ref text) catch { return }\n\
+         \x20   fs::write(ref out, fs::Root::Anywhere, ref text) catch { return }\n\
          }\n"
     ));
 }

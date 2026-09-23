@@ -249,7 +249,7 @@ The **ownership** half is why `fs::lines` is *gone* rather than waiting: `lines(
 the file and yield tethered `ref String`, so the returned value would own the buffer and hand out views
 into itself — the one thing an iterator may not do, and the reason the language below allocates a
 string per line when it offers the same function. The shape that works is two calls,
-`fs::map(path)` + `.lines()`, and that separation *is* the model Part I 6.6 rests on. For a
+`fs::map(path, root)` + `.lines()`, and that separation *is* the model Part I 6.6 rests on. For a
 record-per-line file the language has something better than a sequence of lines anyway:
 `@frame(boundary: "\n")`, which is what `1brc.nika`, `access-log.nika` and `config.nika` all use.
 None of them iterates lines.
@@ -345,7 +345,7 @@ and at the level where the user actually knows the answer — the place the inpu
 classified by `std` (network, IPC and database rows untrusted; files, argv, env and compile-time data
 trusted), the state travels the edges ADR-008 already tracks and lands in the same Ledger, joins
 conservatively, and fails safe at `dyn`/FFI barriers. The user overrides it at the source
-(`fs::map(path; trusted: false)`) and a DSL for a wire format can pin an `@untrusted` floor its
+(`fs::map(path, root; trusted: false)`) and a DSL for a wire format can pin an `@untrusted` floor its
 callers cannot lower. Only then does the compiler pick an implementation: keyed hash with a random
 seed for untrusted keys, fast hash for trusted ones — the switch enters as *how*, never as
 *whether*. 1BRC keeps the fast path without a word about hashing; `fortunes` gets hardened without

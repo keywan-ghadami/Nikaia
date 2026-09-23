@@ -41,8 +41,8 @@ fn project(purpose: &str, manifest: &str) -> PathBuf {
         dir.join("main.nika"),
         "use std::fs\n\
          fn main() throws {\n\
-         \x20   fs::write(\"eins.txt\", \"a\") catch { }\n\
-         \x20   fs::write(\"zwei.txt\", \"bb\") catch { }\n\
+         \x20   fs::write(\"eins.txt\", fs::Root::Anywhere, \"a\") catch { }\n\
+         \x20   fs::write(\"zwei.txt\", fs::Root::Anywhere, \"bb\") catch { }\n\
          \x20   println(\"fertig\")\n\
          }",
     )

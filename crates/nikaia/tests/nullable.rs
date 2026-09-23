@@ -541,7 +541,7 @@ struct Store { root: String }
 
 impl Store {
     fn read(ref self, path: ref String) -> String throws {
-        return fs::read_to_string(path)
+        return fs::read_to_string(path, fs::Root::Anywhere)
     }
 }
 
@@ -553,7 +553,7 @@ fn open(yes: bool) -> Store? {
 }
 
 fn main() throws {
-    fs::write(\"note.txt\", \"hallo\")
+    fs::write(\"note.txt\", fs::Root::Anywhere, \"hallo\")
     let text = open(true)?.read(\"note.txt\") ?? \"\".to_string()
     let none = open(false)?.read(\"note.txt\") ?? \"missing\".to_string()
     println(f\"{text} | {none}\")

@@ -41,7 +41,7 @@
 // So a statement is now reduced where it is
 //
 //   * a **`let`**, as before, or a **bare expression statement**: `println(x)`,
-//     `fs::write(p, d)` - an operation the ledger can account for that nothing
+//     `fs::write(p, fs::Root::Anywhere, d)` - an operation the ledger can account for that nothing
 //     binds;
 //   * built out of **literals and calls**, at any depth, rather than being one
 //     call: `f("a") + g("b")` performs two operations and its touch set is
@@ -122,7 +122,7 @@ pub enum Accounted {
     /// succeeded, exactly as a diverting handler makes it (ADR-034 D2).
     ///
     /// The same rule as [`Accounted::DivertingHandler`] reached from the other
-    /// side, and it has to be here: an uncaught `fs::write(…)` is precisely the
+    /// side, and it has to be here: an uncaught `fs::write(…, fs::Root::Anywhere)` is precisely the
     /// shape a bare expression statement makes common.
     UncaughtFailure(String),
     /// Nothing describes what the call reaches, so it reaches everything (D4).
@@ -218,7 +218,7 @@ impl Accounted {
 pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -> Accounted {
     // Two shapes, and the second is ADR-033 §8.3's first item: an operation
     // the ledger can account for is not always bound to a name. `println(x)`,
-    // `out.push(y)` and `fs::write(p, d)` are statements a program is mostly
+    // `out.push(y)` and `fs::write(p, fs::Root::Anywhere, d)` are statements a program is mostly
     // made of, and reading only `let` is what produced §8.1's 101.
     //
     // An **assignment** is not among them and must not be: `x = 1` changes a
@@ -253,7 +253,7 @@ pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -
         _ => return Accounted::NotAnOperation,
     };
 
-    // A real program writes `fs::read_to_string(p) catch { … }`, so the call is
+    // A real program writes `fs::read_to_string(p, fs::Root::Anywhere) catch { … }`, so the call is
     // usually wrapped. Looking through the wrapper is what makes this apply to
     // code anyone actually writes.
     //
@@ -594,7 +594,21 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
             walk(parsed, base, out);
             walk(parsed, index, out);
         }
-        Expr::Path(_) => out.note(Accounted::Opaque("a value read from somewhere else")),
+        // **A path names an item, and an item is not a place.** A unit variant
+        // (`fs::Root::Anywhere`), a constructor handed over as a value
+        // ([ADR-140](../../../docs/specification/adr/adr-140.md) D2) and an
+        // associated constant are all *static*: there is nothing to read, so
+        // there is nothing for a closure to capture and nothing to carry to
+        // another thread. It performs no operation either, so this notes
+        // nothing at all — the same as a literal.
+        //
+        // It was `Opaque("a value read from somewhere else")`, beside the field
+        // and the index reads below, where the sentence is true. Nothing wrote a
+        // path in an argument until [ADR-108](../../../docs/specification/adr/adr-108.md)
+        // gave every path call an `fs::Root`, and then the over-approximation
+        // took the *control pair* of the ADR-038 D7 experiment with it: two reads
+        // of two files, which have to overlap or that test proves nothing.
+        Expr::Path(_) => {}
         Expr::StructLit { fields, .. } => {
             out.note(Accounted::Opaque("a value read from somewhere else"));
             for field in fields {
@@ -717,7 +731,7 @@ pub enum Verdict {
         /// rather than because the kind has only one of it.
         ///
         /// Two answers that both say "no name" and mean opposite things: there
-        /// is exactly one `stdout`, and `fs::write(pfad, …)` reaches a file
+        /// is exactly one `stdout`, and `fs::write(pfad, fs::Root::Anywhere, …)` reaches a file
         /// nobody here can identify. A report that called the first one
         /// unnameable would be telling a reader to go and name something that
         /// has no name to give.
@@ -830,9 +844,9 @@ pub fn verdict(earlier: &Operation, later: &Operation) -> Verdict {
 /// than a missed optimisation:
 ///
 /// ```text
-/// let a = fs::read_to_string("eins.txt")   // reads eins.txt
-/// let b = fs::read_to_string("zwei.txt")   // reads zwei.txt
-/// fs::write("eins.txt", "x")               // writes eins.txt
+/// let a = fs::read_to_string("eins.txt", fs::Root::Anywhere)   // reads eins.txt
+/// let b = fs::read_to_string("zwei.txt", fs::Root::Anywhere)   // reads zwei.txt
+/// fs::write("eins.txt", fs::Root::Anywhere, "x")               // writes eins.txt
 /// ```
 ///
 /// The two adjacent pairs are each disjoint. The run is not: the third meets
@@ -960,7 +974,7 @@ fn holds_throw(expr: &Expr, bound: bool) -> bool {
 
 /// The text of a literal argument, where the argument is one.
 ///
-/// Only a literal. `fs::read(pfad)` names a file this compiler cannot identify,
+/// Only a literal. `fs::read(pfad, root)` names a file this compiler cannot identify,
 /// and ADR-033 D4 says what happens then - it is not that the compiler guesses.
 fn literal_text(expr: &Expr) -> Option<String> {
     match expr {

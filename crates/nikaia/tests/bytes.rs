@@ -97,7 +97,7 @@ fn fs_read_hands_back_bytes() {
 fn a_program_may_declare_what_fs_read_hands_back() {
     let source = "use std::fs\n\
                   fn load(path: ref String) -> Bytes throws {\n\
-                  \x20   return fs::read(ref path)\n\
+                  \x20   return fs::read(ref path, fs::Root::Anywhere)\n\
                   }\n\
                   fn main() { }\n";
     assert!(findings(source).is_empty(), "{:#?}", findings(source));
@@ -113,7 +113,7 @@ fn a_program_may_declare_what_fs_read_hands_back() {
 fn a_view_of_a_local_buffer_is_refused() {
     let source = "use std::fs\n\
                   fn header(path: ref String) -> ref String throws {\n\
-                  \x20   let data = fs::read_to_string(ref path)\n\
+                  \x20   let data = fs::read_to_string(ref path, fs::Root::Anywhere)\n\
                   \x20   return data.trim()\n\
                   }\n\
                   fn main() { }\n";
@@ -135,7 +135,7 @@ fn a_view_of_a_local_buffer_is_refused() {
 fn a_view_of_a_local_bytes_is_refused() {
     let source = "use std::fs\n\
                   fn first(path: ref String) -> ref String throws {\n\
-                  \x20   let data = fs::read(ref path)\n\
+                  \x20   let data = fs::read(ref path, fs::Root::Anywhere)\n\
                   \x20   return data.text()\n\
                   }\n\
                   fn main() { }\n";
@@ -150,7 +150,7 @@ fn a_view_of_a_local_bytes_is_refused() {
 fn a_tail_expression_is_handed_back_too() {
     let source = "use std::fs\n\
                   fn header(path: ref String) -> ref String throws {\n\
-                  \x20   let data = fs::read_to_string(ref path)\n\
+                  \x20   let data = fs::read_to_string(ref path, fs::Root::Anywhere)\n\
                   \x20   data.trim()\n\
                   }\n\
                   fn main() { }\n";
@@ -165,7 +165,7 @@ fn a_method_is_refused_the_same_way() {
                   struct Loader { }\n\
                   impl Loader {\n\
                   \x20   fn header(ref self, path: ref String) -> ref String throws {\n\
-                  \x20       let data = fs::read_to_string(ref path)\n\
+                  \x20       let data = fs::read_to_string(ref path, fs::Root::Anywhere)\n\
                   \x20       return data.trim()\n\
                   \x20   }\n\
                   }\n\
@@ -239,7 +239,7 @@ fn a_call_nothing_describes_never_raises_it() {
 fn an_owned_result_is_left_alone() {
     let source = "use std::fs\n\
                   fn header(path: ref String) -> String throws {\n\
-                  \x20   let data = fs::read_to_string(ref path)\n\
+                  \x20   let data = fs::read_to_string(ref path, fs::Root::Anywhere)\n\
                   \x20   return data\n\
                   }\n\
                   fn main() { }\n";

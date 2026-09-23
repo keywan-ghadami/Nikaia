@@ -86,6 +86,21 @@ pub enum IoError {
     PermissionDenied(String),
     /// The bytes are not text, and text in this language is UTF-8.
     NotText(String),
+    /// **The name would leave the root it was given**
+    /// ([ADR-108](../../../docs/specification/adr/adr-108.md) D3), and this is
+    /// a refusal rather than a rewritten name: a program that quietly serves a
+    /// *different* file than the one asked for is a worse bug than one that
+    /// serves nothing.
+    ///
+    /// The payload is what was asked for, as it was asked for — the resolved
+    /// name is not in it, because a message that printed where the name landed
+    /// would tell whoever sent it what is on the machine.
+    ///
+    /// A case beside `NotFound` and not an error type of its own, which is what
+    /// D3's *one case beside not found among the errors the entry already names*
+    /// asks for: every path-taking entry already `throws = ["io::IoError"]`, so
+    /// the root check adds no member to any program's failure set.
+    Outside(String),
     /// Everything else, as the operating system said it.
     Other(String),
 }
@@ -112,6 +127,7 @@ impl IoError {
             IoError::NotFound(what)
             | IoError::PermissionDenied(what)
             | IoError::NotText(what)
+            | IoError::Outside(what)
             | IoError::Other(what) => what,
         }
     }
@@ -123,6 +139,9 @@ impl std::fmt::Display for IoError {
             IoError::NotFound(what) => write!(f, "no such file or directory: {what}"),
             IoError::PermissionDenied(what) => write!(f, "permission denied: {what}"),
             IoError::NotText(what) => write!(f, "not valid UTF-8: {what}"),
+            IoError::Outside(what) => {
+                write!(f, "the name leaves the root it was given: {what}")
+            }
             IoError::Other(what) => f.write_str(what),
         }
     }

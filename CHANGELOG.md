@@ -4,6 +4,89 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.178] — 2026-09-23
+
+**A path names its root at the call** — [ADR-108](docs/specification/adr/adr-108.md),
+whose §5 said *nothing* and now says D1 through D4.
+[`open-work.md`](docs/open-work.md) §2.20 closes.
+
+The hole it shuts is path traversal: a name somebody else chose, joined under a
+directory, reaching the filesystem and leaving the directory through `..` or a
+symlink. The record's reasoning is why the check is **in the call** rather than a
+taint per value: a programmer sees a missing argument and not a taint, the check
+is `std`'s so *checked* and *correctly checked* are the same thing, and the way
+around it is one word that a report lists.
+
+### The root
+
+```nika
+let data = fs::map(name, fs::Root::Dir(store))              // name may not leave store
+let text = fs::read_to_string("eins.txt", fs::Root::Anywhere)
+fs::write(out, fs::Root::Dir(site), markup; append: true)
+```
+
+- **`fs::Root`, with two variants and no shorthand** (D2). Not a bare `String` where a `Root` is wanted, which would be a conversion rule this language does not have; not a second spelling beside the variant.
+- **No default, and no exception for a literal** (D1). The root is a *subject* because it has none — a call that could leave it out is a call nobody can be sure remembered it — and a relative name is resolved against the working directory, which is somebody's to change. A call that leaves it out is **`NK1101`** with D2's two forms in its help.
+- `map`, `read`, `read_to_string` and `write` take it. `open` and the directory functions of D1's list are not built, so they take it the day they are.
+
+### The check
+
+**By component on a resolved name, never as a string prefix** (D3), because
+`/data` is a prefix of `/data2` — which is a case in the test rather than a
+sentence in a comment. Both sides are canonicalised, so a symlink out of the root
+is the same answer as a `..` out of it. A name whose tail does not exist yet is
+checked all the same: every component that exists is canonicalised and the rest
+applied on top, which is the half a plain `canonicalize` would have got wrong on
+exactly the call that most needs it — a `write` that creates.
+
+**What comes back is the name joined under the root and not the resolved one**,
+which is D3's *never a rewritten name*. `sub/../ok.txt` where `sub` does not
+exist resolves onto `ok.txt`; handing that to the operating system would serve a
+file that an `open` of the written name does not find. So the check answers
+*inside*, the operating system answers *not found*, and each says what it knows.
+
+**The refusal is `io::IoError::Outside(what)`** — D3's *one case beside not found
+among the errors the entry already names*. A case and not an error type of its
+own, so no program's `throws` set grows a member, and the payload is what was
+asked for rather than where it landed: a message that printed the resolved name
+would tell whoever sent it what is on the machine.
+
+### The listing
+
+`nikaia --trust` grows D4's third place: every site that writes `Anywhere`, and
+every `Dir("/")`, which is the same thing in more characters — by file and line,
+because *the security review of a program's file access is that list* and a list
+without line numbers is not one. A `Dir` the program worked out is **not** listed:
+the report is the list of ways around the check.
+
+**Which argument is the root comes from the ledger**, not from a list of function
+names in the compiler: an entry's signature names a parameter `root`. So the day
+`fs::open` or `http::File` is written, its sites are listed without a line
+changing there.
+
+### The corpus
+
+Fifteen calls in `examples/` and `benches/`, every one of them a command-line
+program whose path the operator typed, so every one of them honestly
+`fs::Root::Anywhere` — an operator's own argument may point anywhere. The
+specification's own blocks and `examples/README.md` are written the same way.
+
+### And one over-approximation the root found
+
+**A path in an argument is a constant, and the ordering analysis said it was a
+value read from somewhere else.** That sentence is true of a field and of an
+index and not of a path: a path names an **item** — a unit variant, a
+constructor handed over as a value ([ADR-140](docs/specification/adr/adr-140.md)
+D2), an associated constant — so there is nothing to read, nothing for an
+overlapped branch's closure to capture, and nothing to carry to another thread.
+
+Nothing wrote a path in an argument until every path call took a root, and then
+the over-approximation took the **control pair** of
+[ADR-038](docs/specification/adr/adr-038.md) §4.5's D7 experiment with it: two
+reads of two files, which have to overlap or that test proves nothing about a
+foreign call. So the narrowing arrives with the root rather than on its own, and
+`overlap { }` over three reads is what holds it there.
+
 ## [0.0.177] — 2026-09-23
 
 **A view of the subject is handed back without a `ref`** —

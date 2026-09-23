@@ -141,7 +141,7 @@ impl Report {
 fn main() throws {
     let path = cli::args().nth(1) ?? "access.log"
 
-    let data = fs::map(ref path) catch {
+    let data = fs::map(ref path, fs::Root::Anywhere) catch {
         eprintln(f"cannot open {path}: {error}")
         return
     }

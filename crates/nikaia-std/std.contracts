@@ -179,7 +179,7 @@ pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
-signature = "(path: ?) -> Mapped"
+signature = "(path: ?, root: ref Root) -> Mapped"
 doc = "A file as memory, without reading it into any of its own.\n\nWhat comes back reads as text and the pages arrive as they are touched, which\nis what makes a file larger than memory workable. It fails where the file\ncannot be opened."
 
 [fn."fs::Mapped::deref"]
@@ -199,7 +199,7 @@ pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
-signature = "(path: ?) -> Bytes"
+signature = "(path: ?, root: ref Root) -> Bytes"
 doc = "The whole of a file, as bytes.\n\nIt hands back one shared buffer and not a copy, so passing the file on costs a\nreference count. It fails where the file cannot be read. The bytes came from\nthe program's own machine, so what it hands back is **trusted**."
 
 [fn."fs::read_to_string"]
@@ -207,14 +207,14 @@ pub = true
 touches = ["file(path) read"]
 throws = ["io::IoError"]
 provenance = "trusted"
-signature = "(path: ?) -> String"
+signature = "(path: ?, root: ref Root) -> String"
 doc = "The whole of a file, as text.\n\nIt fails where the file cannot be read or is not UTF-8. The bytes came from\nthe program's own machine, so what it hands back is **trusted**: a map keyed\non it is hashed with the fast function."
 
 [fn."fs::write"]
 pub = true
 touches = ["file(path) write"]
 throws = ["io::IoError"]
-signature = "(path: ?, data: ?; append: bool = false, create: bool = true)"
+signature = "(path: ?, root: ref Root, data: ?; append: bool = false, create: bool = true)"
 doc = "Write data to a file.\n\n`create` makes the file where there is none and `append` adds to the end\nrather than replacing what is there. It fails where the path cannot be\nwritten."
 
 [fn."print"]
@@ -1273,6 +1273,20 @@ pub = true
 crosses = true
 doc = "The arguments the program was started with.\n\nIt may cross to another thread, so a task may be handed one."
 
+# **Where a path may go** ([ADR-108](../../docs/specification/adr/adr-108.md) D2),
+# and the one type in this file whose whole job is to be a **required argument**.
+# `Dir(store)` resolves the name under that directory and refuses one that would
+# leave it; `Anywhere` performs no check and says so in the word a review looks
+# for, which `nikaia --trust` lists per site (D4).
+#
+# **Two variants and no shorthand.** Not a bare `String` where a `Root` is wanted,
+# which would be a conversion rule this language does not have, and not a second
+# spelling beside the variant.
+[type."fs::Root"]
+pub = true
+crosses = true
+doc = "Where a path may go.\n\n`fs::Root::Dir(store)` resolves the name under that directory and throws\n`io::IoError::Outside` where it would leave it — resolved and compared\ncomponent by component, so `/data` is not a prefix of `/data2` and a symlink out\nis the same answer as a `..` out. `fs::Root::Anywhere` performs no check: it does\nnot say *checked*, it says *I answer for this*, and `nikaia --explain --trust`\nlists every site that writes it.\n\nEvery path-taking entry takes one, right after the path, with no default and no\nexception for a literal — a relative name is resolved against the working\ndirectory, and whoever controls that directory has changed what the name means\nwithout changing a line of the program."
+
 [type."fs::Mapped"]
 pub = true
 # **Reading it is a page fault** (ADR-169 D1): the pages arrive as they are
@@ -1288,7 +1302,7 @@ doc = "A file held as memory: the pages arrive as they are touched rather than b
 [type."io::IoError"]
 pub = true
 crosses = true
-doc = "What a `std` call fails with.\n\nPart I 7.1's error type, for the library: `NotFound(what)` where the thing is\nnot there, `PermissionDenied(what)` where this program may not have it,\n`NotText(what)` where the bytes are not UTF-8, and `Other(what)` for\neverything else the operating system said. A `catch` that only passes the\nfailure on names nothing; one that takes it apart writes `use std::io` and\n`io::IoError::NotFound(p)`."
+doc = "What a `std` call fails with.\n\nPart I 7.1's error type, for the library: `NotFound(what)` where the thing is\nnot there, `PermissionDenied(what)` where this program may not have it,\n`NotText(what)` where the bytes are not UTF-8, `Outside(what)` where a name\nwould leave the `fs::Root` it was given, and `Other(what)` for\neverything else the operating system said. A `catch` that only passes the\nfailure on names nothing; one that takes it apart writes `use std::io` and\n`io::IoError::NotFound(p)`."
 
 # **What a parse fails with** ([ADR-173](../../docs/specification/adr/adr-173.md)
 # D1), and the end of the last `"?"` in this tree. A `dsl` entry rule's ledger

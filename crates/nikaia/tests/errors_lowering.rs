@@ -600,7 +600,7 @@ fn a_function_that_cannot_fail_has_no_entry() {
 #[test]
 fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
     let source =
-        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
                   fn ruft() -> String { return liest() }\n\
                   fn main() { }";
 
@@ -651,7 +651,7 @@ fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
     // [ADR-024](../../../docs/specification/adr/adr-024.md) D1's absence of a
     // claim, and the entry said no more than the boolean before it.
     let declared = ledger_for(
-        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\") }\n\
+        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
          fn ruft() -> String throws { return liest() }\n\
          fn main() { }",
     );

@@ -415,7 +415,7 @@ fn a_build_time_index_the_array_does_not_have_is_named() {
 #[test]
 fn a_forbidden_callee_is_also_said_once() {
     let source = "use std::fs\n\
-                  fn read() -> i64 { let t = fs::read_to_string(\"x\") catch { \"\" } return t.len() }\n\
+                  fn read() -> i64 { let t = fs::read_to_string(\"x\", fs::Root::Anywhere) catch { \"\" } return t.len() }\n\
                   comptime N: i64 = read()\n\
                   fn main() { println(f\"{N}\") }\n";
     let found = findings(source);
@@ -579,7 +579,7 @@ fn an_unevaluable_body_does_not_also_blame_its_declaration() {
     let source = "use std::fs\n\
                   fn lines() -> Vec[i64] {\n\
                   \x20   let mut xs = []\n\
-                  \x20   let t = fs::read_to_string(\"x\") catch { \"\" }\n\
+                  \x20   let t = fs::read_to_string(\"x\", fs::Root::Anywhere) catch { \"\" }\n\
                   \x20   xs.push(t.len())\n\
                   \x20   return xs\n\
                   }\n\
@@ -797,7 +797,7 @@ fn a_method_the_rule_forbids_is_named_by_its_key() {
                   struct Reader { n: i64 }\n\
                   impl Reader {\n\
                   \x20   fn read(ref self) -> i64 {\n\
-                  \x20       let t = fs::read_to_string(\"x\") catch { \"\" }\n\
+                  \x20       let t = fs::read_to_string(\"x\", fs::Root::Anywhere) catch { \"\" }\n\
                   \x20       return t.len() + self.n\n\
                   \x20   }\n\
                   }\n\

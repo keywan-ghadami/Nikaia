@@ -198,7 +198,7 @@ fn a_program_with_both_kinds_runs() {
          }\n\
          \n\
          fn size(path: ref String) -> i64 throws {\n\
-         \x20   let text = fs::read_to_string(path)\n\
+         \x20   let text = fs::read_to_string(path, fs::Root::Anywhere)\n\
          \x20   return text.len()\n\
          }\n\
          \n\

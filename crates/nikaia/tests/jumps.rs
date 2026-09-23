@@ -172,7 +172,7 @@ fn a_break_in_a_catch_handler_leaves_the_loop() {
          fn read_them(paths: Vec[ref String]) -> i64 {\n\
          \x20   let mut seen = 0\n\
          \x20   for p in paths {\n\
-         \x20       let text = fs::read_to_string(p) catch {\n\
+         \x20       let text = fs::read_to_string(p, fs::Root::Anywhere) catch {\n\
          \x20           break\n\
          \x20       }\n\
          \x20       seen += text.len()\n\
@@ -287,8 +287,8 @@ fn a_break_in_an_overlap_branch_cannot_reach_the_loop_outside_it() {
          \x20   let mut t = 0\n\
          \x20   for i in 0..<n {\n\
          \x20       let r = overlap {\n\
-         \x20           fs::read_to_string(\"a\") catch { break }\n\
-         \x20           fs::read_to_string(\"b\") catch { \"\".to_string() }\n\
+         \x20           fs::read_to_string(\"a\", fs::Root::Anywhere) catch { break }\n\
+         \x20           fs::read_to_string(\"b\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
          \x20       }\n\
          \x20       t += 1\n\
          \x20   }\n\

@@ -3,6 +3,119 @@
 use rayon::prelude::*;
 use std::path::Path;
 
+/// **Where a path may go** ([ADR-108](../../../docs/specification/adr/adr-108.md)
+/// D2): the directory the name is resolved under, or the word that says the
+/// program answers for the name itself.
+///
+/// Every path-taking entry of this module takes one, right after the path, with
+/// **no default** (D1). That is Part I 5.1's rule doing the work: an option has a
+/// default, and a default here is the hole — a call that could leave the root out
+/// is a call nobody can be sure remembered it. A call that leaves it out is
+/// `NK1101`, the same refusal as any other missing argument.
+///
+/// Two variants and no shorthand (D2). Not a bare `String` where a `Root` is
+/// wanted, which would be a conversion rule this language does not have; and not
+/// a second spelling beside the variant, which would be two ways to write one
+/// thing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Root {
+    /// The name is resolved under this directory and may not leave it.
+    ///
+    /// A `String` and not a `PathBuf`, because the caller is a Nikaia program
+    /// and text in this language is one type: `fs::Root::Dir(store)` hands over
+    /// what the program has.
+    Dir(String),
+    /// No check — the program answers for the name.
+    ///
+    /// It does not say *checked*. It says *I answer for this*, and it is visible
+    /// three times (D4): at the line, in the ledger, and in `nikaia --trust`.
+    Anywhere,
+}
+
+/// The name this call hands the operating system, or the refusal that it leaves
+/// its root.
+///
+/// **Resolved and compared by component, never as a string prefix** (D3),
+/// because `/data` is a prefix of `/data2`. Both sides are canonicalised —
+/// symlinks followed, `..` applied — which is what makes a symlink out of the
+/// directory the same answer as a `..` out of it.
+///
+/// **What comes back is the name joined under the root, and not the resolved
+/// one.** The resolution is for the *comparison*; what the operating system is
+/// given is what the program asked for, under the directory it was given. D3's
+/// *never a rewritten name* is the reason, and the case that shows it is
+/// `sub/../ok.txt` where `sub` does not exist: resolved it lands on `ok.txt`,
+/// and handing that over would serve a file a POSIX `open` of the written name
+/// says is not there. So the check answers *inside*, and the operating system
+/// answers *not found* — each about the thing it knows.
+///
+/// **A name that does not exist yet is checked all the same.** `fs::write`
+/// creates, so canonicalising the whole name would fail on exactly the call that
+/// most needs the check; the walk below canonicalises every component that
+/// exists and applies the rest on top.
+///
+/// **`Anywhere` resolves nothing**, which is the whole of what it costs at run
+/// time: the name goes to the operating system exactly as the program wrote it.
+fn resolve(path: &Path, root: &Root) -> Result<std::path::PathBuf, crate::io::IoError> {
+    let Root::Dir(dir) = root else {
+        return Ok(path.to_path_buf());
+    };
+    let asked = path.display().to_string();
+    let outside = || crate::io::IoError::Outside(asked.clone());
+
+    // The root itself has to resolve. One that does not is not a directory a
+    // name may be used under, and answering `Outside` for it is the fail-closed
+    // direction ([ADR-010](../../../docs/specification/adr/adr-010.md) D1).
+    let base = std::fs::canonicalize(Path::new(dir)).map_err(|_| outside())?;
+
+    // **An absolute name gets the same treatment**: resolved, compared, and fine
+    // where it lies inside. A relative one is joined under the root, which is
+    // what makes the root this call's working directory and closes D1's
+    // *whoever controls the working directory has changed what the name means*.
+    let joined = match path.is_absolute() {
+        true => path.to_path_buf(),
+        false => base.join(path),
+    };
+    let landed = climb(&joined).ok_or_else(outside)?;
+    match landed.starts_with(&base) {
+        true => Ok(joined),
+        false => Err(outside()),
+    }
+}
+
+/// `path` with every symlink followed and every `..` applied, for a name whose
+/// tail may not exist yet.
+///
+/// `std::fs::canonicalize` answers only for a name that is there, and a write
+/// creates. So this walks the components: each ordinary one is pushed and the
+/// result canonicalised **where it exists**, so a symlink is followed the moment
+/// it can be; a `.` is dropped; and a `..` pops.
+///
+/// **A `..` with nothing to pop is `None`**, because a name that climbs above the
+/// filesystem root has left every directory it could have been joined to. The
+/// caller reads that as *outside*.
+fn climb(path: &Path) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            other => {
+                out.push(other);
+                if let Ok(real) = std::fs::canonicalize(&out) {
+                    out = real;
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
 /// A file's bytes, addressable as text for as long as the value lives.
 ///
 /// Part III, 17.1: a memory mapping. The pages *are* the buffer, so a 13 GB
@@ -59,12 +172,16 @@ impl AsRef<str> for Mapped {
 /// poll ([ADR-055](../../../docs/specification/adr/adr-055.md) D1). A page
 /// fault later is not a suspension point this language can see, and pretending
 /// otherwise would be a promise nothing keeps.
-pub async fn map(path: impl AsRef<Path>) -> Result<Mapped, crate::io::IoError> {
+pub async fn map(path: impl AsRef<Path>, root: &Root) -> Result<Mapped, crate::io::IoError> {
     // **The path, held**: an operating system's error does not carry what was
     // asked for, and `NotFound` without it is the round trip to the user
-    // [ADR-023](../../../docs/specification/adr/adr-023.md) D3 names.
-    let path = path.as_ref();
-    let named = |e| crate::io::IoError::of(e, &path.display().to_string());
+    // [ADR-023](../../../docs/specification/adr/adr-023.md) D3 names. What is
+    // *held* is what the caller asked for and what is *used* is what the root
+    // resolved it to, so a refusal names the name the program wrote.
+    let asked = path.as_ref().display().to_string();
+    let path = resolve(path.as_ref(), root)?;
+    let path = path.as_path();
+    let named = |e| crate::io::IoError::of(e, &asked);
     let file = std::fs::File::open(path).map_err(named)?;
     if file.metadata().map_err(named)?.len() == 0 {
         return Ok(Mapped {
@@ -81,8 +198,7 @@ pub async fn map(path: impl AsRef<Path>) -> Result<Mapped, crate::io::IoError> {
 
     if let Err(at) = validate(&pages) {
         return Err(crate::io::IoError::NotText(format!(
-            "{} (at byte {at})",
-            path.display()
+            "{asked} (at byte {at})"
         )));
     }
 
@@ -112,10 +228,13 @@ pub async fn map(path: impl AsRef<Path>) -> Result<Mapped, crate::io::IoError> {
 /// The read is `rt::io`'s rather than [`read`]'s, and deliberately: `read`
 /// hands back a shared buffer and this wants the bytes themselves, so going
 /// through it would buy a handle only to copy out of it.
-pub async fn read_to_string(path: impl AsRef<Path>) -> Result<String, crate::io::IoError> {
-    let path = path.as_ref();
-    let what = path.display().to_string();
-    let bytes = crate::rt::io::reading(path)
+pub async fn read_to_string(
+    path: impl AsRef<Path>,
+    root: &Root,
+) -> Result<String, crate::io::IoError> {
+    let what = path.as_ref().display().to_string();
+    let path = resolve(path.as_ref(), root)?;
+    let bytes = crate::rt::io::reading(&path)
         .await
         .map_err(|e| crate::io::IoError::of(e, &what))?;
     text(bytes, &what)
@@ -184,12 +303,16 @@ pub fn read_both(
 /// said and [ADR-156](../../../docs/specification/adr/adr-156.md) D3 makes
 /// true: one shared buffer, so handing the file on costs a count rather than a
 /// copy of it.
-pub async fn read(path: impl AsRef<Path>) -> Result<crate::bytes::Bytes, crate::io::IoError> {
-    let path = path.as_ref();
-    crate::rt::io::reading(path)
+pub async fn read(
+    path: impl AsRef<Path>,
+    root: &Root,
+) -> Result<crate::bytes::Bytes, crate::io::IoError> {
+    let asked = path.as_ref().display().to_string();
+    let path = resolve(path.as_ref(), root)?;
+    crate::rt::io::reading(&path)
         .await
         .map(crate::bytes::Bytes::from)
-        .map_err(|e| crate::io::IoError::of(e, &path.display().to_string()))
+        .map_err(|e| crate::io::IoError::of(e, &asked))
 }
 
 /// A whole file, written.
@@ -227,6 +350,7 @@ pub async fn read(path: impl AsRef<Path>) -> Result<crate::bytes::Bytes, crate::
 /// does I/O, and the bytes travel out of the program rather than in.
 pub async fn write(
     path: impl AsRef<Path>,
+    root: &Root,
     data: impl AsRef<[u8]>,
     append: bool,
     create: bool,
@@ -235,11 +359,12 @@ pub async fn write(
     // borrowed slice and the runtime owns the copy only where the *kernel*
     // needs one to outlive the submission - which is the completion path, and
     // is `rt::uring`'s soundness rule rather than a convenience.
-    let path = path.as_ref();
-    crate::rt::io::writing(path, data.as_ref(), append, create)
+    let asked = path.as_ref().display().to_string();
+    let path = resolve(path.as_ref(), root)?;
+    crate::rt::io::writing(&path, data.as_ref(), append, create)
         .await
         .map(|_| ())
-        .map_err(|e| crate::io::IoError::of(e, &path.display().to_string()))
+        .map_err(|e| crate::io::IoError::of(e, &asked))
 }
 
 /// Below this, the pool costs more than the check does.
@@ -297,6 +422,8 @@ fn char_boundaries(bytes: &[u8], n: usize) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::{validate, CHUNKED_ABOVE};
 
     /// Half of a pair finished by `task::as_text` is finished exactly as
@@ -324,7 +451,7 @@ mod tests {
                     crate::rt::io::reading(&text).await,
                     &text.display().to_string(),
                 ),
-                super::read_to_string(&text).await,
+                super::read_to_string(&text, &super::Root::Anywhere).await,
             )
         });
         assert_eq!(mine.expect("text"), theirs.expect("text"));
@@ -339,7 +466,7 @@ mod tests {
                     crate::rt::io::reading(&bytes).await,
                     &bytes.display().to_string(),
                 ),
-                super::read_to_string(&bytes).await,
+                super::read_to_string(&bytes, &super::Root::Anywhere).await,
             )
         });
         let one = one.expect_err("not text");
@@ -366,19 +493,23 @@ mod tests {
         // executor drives `main` and every read and write inside it (ADR-055 §6
         // step 2 and step 3).
         crate::rt::exec::block_on(async {
-            super::write(&path, "Hamburg;12.0\n", false, true)
+            super::write(&path, &super::Root::Anywhere, "Hamburg;12.0\n", false, true)
                 .await
                 .expect("write");
             assert_eq!(
-                super::read_to_string(&path).await.expect("read back"),
+                super::read_to_string(&path, &super::Root::Anywhere)
+                    .await
+                    .expect("read back"),
                 "Hamburg;12.0\n"
             );
 
-            super::write(&path, "Bremen;9.5\n", false, true)
+            super::write(&path, &super::Root::Anywhere, "Bremen;9.5\n", false, true)
                 .await
                 .expect("write again");
             assert_eq!(
-                super::read_to_string(&path).await.expect("read back"),
+                super::read_to_string(&path, &super::Root::Anywhere)
+                    .await
+                    .expect("read back"),
                 "Bremen;9.5\n",
                 "a second write truncates rather than appends"
             );
@@ -386,15 +517,26 @@ mod tests {
             // Bytes are bytes: what `read` hands back is what `write` was
             // given, with no check in between - which is the difference from
             // `read_to_string` and the reason both exist.
-            super::write(&path, [0xFFu8, 0x00, 0xFE], false, true)
-                .await
-                .expect("write bytes");
+            super::write(
+                &path,
+                &super::Root::Anywhere,
+                [0xFFu8, 0x00, 0xFE],
+                false,
+                true,
+            )
+            .await
+            .expect("write bytes");
             assert_eq!(
-                super::read(&path).await.expect("read bytes").as_slice(),
+                super::read(&path, &super::Root::Anywhere)
+                    .await
+                    .expect("read bytes")
+                    .as_slice(),
                 [0xFF, 0x00, 0xFE]
             );
             assert!(
-                super::read_to_string(&path).await.is_err(),
+                super::read_to_string(&path, &super::Root::Anywhere)
+                    .await
+                    .is_err(),
                 "the same bytes are not text, and the text half says so"
             );
         });
@@ -409,7 +551,14 @@ mod tests {
         let path = std::env::temp_dir()
             .join("nikaia-no-such-directory")
             .join("report.html");
-        assert!(crate::rt::exec::block_on(super::write(&path, "x", false, true)).is_err());
+        assert!(crate::rt::exec::block_on(super::write(
+            &path,
+            &super::Root::Anywhere,
+            "x",
+            false,
+            true
+        ))
+        .is_err());
     }
 
     /// The two options Part III 17.1 names, doing what it says they do.
@@ -422,35 +571,169 @@ mod tests {
         let _ = std::fs::remove_file(&missing);
 
         crate::rt::exec::block_on(async {
-            super::write(&path, "one\n", false, true)
+            super::write(&path, &super::Root::Anywhere, "one\n", false, true)
                 .await
                 .expect("write");
-            super::write(&path, "two\n", true, true)
+            super::write(&path, &super::Root::Anywhere, "two\n", true, true)
                 .await
                 .expect("append");
             assert_eq!(
-                super::read_to_string(&path).await.expect("read back"),
+                super::read_to_string(&path, &super::Root::Anywhere)
+                    .await
+                    .expect("read back"),
                 "one\ntwo\n",
                 "appending kept what was there"
             );
 
             // …and `create: false` is how a program says it means to overwrite
             // something in particular, rather than to make a file.
-            assert!(super::write(&missing, "x", false, false).await.is_err());
+            assert!(
+                super::write(&missing, &super::Root::Anywhere, "x", false, false)
+                    .await
+                    .is_err()
+            );
             assert!(!missing.exists(), "`create: false` made the file anyway");
 
             // On a file that *is* there it writes, and truncates as `write`
             // does.
-            super::write(&path, "three\n", false, false)
+            super::write(&path, &super::Root::Anywhere, "three\n", false, false)
                 .await
                 .expect("overwrite");
             assert_eq!(
-                super::read_to_string(&path).await.expect("read back"),
+                super::read_to_string(&path, &super::Root::Anywhere)
+                    .await
+                    .expect("read back"),
                 "three\n"
             );
         });
 
         std::fs::remove_file(&path).expect("clean up");
+    }
+
+    /// **[ADR-108](../../../docs/specification/adr/adr-108.md) D3, case by
+    /// case**, on a real directory with a real symlink in it.
+    ///
+    /// The comparison is what the record is about, so it is measured rather than
+    /// reasoned about: a sibling whose name begins with the root's (`/data` and
+    /// `/data2`) is the case a string prefix gets wrong, and it is in here.
+    #[test]
+    fn a_name_is_checked_against_the_root_it_was_given() {
+        let dir = std::env::temp_dir().join(format!("nikaia-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = dir.join("store");
+        // `store2` begins with `store`, which is the whole reason the comparison
+        // is by component: as a string, `store` is a prefix of `store2`.
+        let sibling = dir.join("store2");
+        std::fs::create_dir_all(store.join("sub")).expect("scratch");
+        std::fs::create_dir_all(&sibling).expect("scratch");
+        std::fs::write(store.join("ok.txt"), "inside").expect("write");
+        std::fs::write(dir.join("outside.txt"), "secret").expect("write");
+        std::fs::write(sibling.join("near.txt"), "near").expect("write");
+
+        let root = super::Root::Dir(store.display().to_string());
+        let inside = |name: &str| super::resolve(Path::new(name), &root).is_ok();
+
+        assert!(inside("ok.txt"), "a plain name under the root");
+        assert!(inside("./ok.txt"), "a `.` is not a way out");
+        assert!(inside("sub/deep.txt"), "a name that does not exist yet");
+        assert!(inside("sub/../ok.txt"), "a `..` that stays inside");
+        assert!(
+            inside(store.join("ok.txt").to_str().expect("utf-8")),
+            "an absolute name that lies inside is fine"
+        );
+
+        assert!(!inside("../outside.txt"), "a `..` out of the root");
+        assert!(!inside("sub/../../outside.txt"), "and a longer climb");
+        assert!(
+            !inside(dir.join("outside.txt").to_str().expect("utf-8")),
+            "an absolute name outside"
+        );
+        assert!(
+            !inside(sibling.join("near.txt").to_str().expect("utf-8")),
+            "`store2` is not under `store`, and a string prefix would have said it was"
+        );
+        assert!(
+            !inside("../store2/near.txt"),
+            "the same, reached relatively"
+        );
+
+        // **A symlink is followed before the comparison**, which is what makes it
+        // the same answer as a `..`: the name inside the root is polite and what
+        // it points at is not.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("outside.txt"), store.join("link.txt"))
+                .expect("symlink");
+            assert!(!inside("link.txt"), "a symlink out of the root");
+        }
+
+        // **What comes back is the name joined under the root, not the resolved
+        // one** — D3's *never a rewritten name*. `sub/../ok.txt` resolves onto
+        // `ok.txt`, and handing that to the operating system would serve a file
+        // that an `open` of the written name does not find.
+        let handed = super::resolve(Path::new("sub/../ok.txt"), &root).expect("inside");
+        assert_eq!(handed, store.join("sub/../ok.txt"));
+
+        // A root that does not resolve is not a directory a name may be used
+        // under, and the answer is the fail-closed one (ADR-010 D1).
+        let nowhere = super::Root::Dir(dir.join("no-such-store").display().to_string());
+        assert!(super::resolve(Path::new("ok.txt"), &nowhere).is_err());
+
+        // **`Anywhere` resolves nothing**: the name goes over exactly as written.
+        let free = super::resolve(Path::new("../outside.txt"), &super::Root::Anywhere)
+            .expect("`Anywhere` checks nothing");
+        assert_eq!(free, Path::new("../outside.txt"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// And the refusal travels as a failure of the call, with the name the
+    /// program asked for in it.
+    #[test]
+    fn a_read_and_a_write_outside_the_root_fail_with_the_name_that_was_asked_for() {
+        let dir = std::env::temp_dir().join(format!("nikaia-root-io-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = dir.join("store");
+        std::fs::create_dir_all(&store).expect("scratch");
+        std::fs::write(dir.join("outside.txt"), "secret").expect("write");
+        let root = super::Root::Dir(store.display().to_string());
+
+        crate::rt::exec::block_on(async {
+            let refused = super::read_to_string("../outside.txt", &root)
+                .await
+                .expect_err("the name leaves the root");
+            assert_eq!(refused.what(), "../outside.txt");
+            assert!(refused.to_string().contains("leaves the root"), "{refused}");
+
+            // A write is checked before it creates anything, which is the half a
+            // canonicalising check would have got wrong.
+            assert!(super::write("../made.txt", &root, "x", false, true)
+                .await
+                .is_err());
+            assert!(
+                !dir.join("made.txt").exists(),
+                "the write created it anyway"
+            );
+
+            // And a name inside the root is written where the root says, not
+            // where the working directory does.
+            super::write("made.txt", &root, "x", false, true)
+                .await
+                .expect("inside");
+            assert_eq!(
+                super::read_to_string("made.txt", &root)
+                    .await
+                    .expect("read"),
+                "x"
+            );
+            assert!(store.join("made.txt").exists(), "under the root");
+
+            // `map` takes the same root, and refuses on the same comparison.
+            assert!(super::map("../outside.txt", &root).await.is_err());
+            assert!(super::read("../outside.txt", &root).await.is_err());
+        });
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// What `validate` has to agree with, on every input.

@@ -76,7 +76,7 @@ const TWO_WAYS: &str = "use std::fs\n\
                         }\n\
                         \n\
                         fn load(path: ref String) -> String throws {\n\
-                        \x20   let text = fs::read_to_string(ref path)\n\
+                        \x20   let text = fs::read_to_string(ref path, fs::Root::Anywhere)\n\
                         \x20   if text == \"\" { throw ConfigError::Empty(path) }\n\
                         \x20   return text\n\
                         }\n\n";

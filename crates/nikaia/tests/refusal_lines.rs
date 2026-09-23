@@ -45,7 +45,7 @@ fn a_pausing_lambda_is_refused_on_its_line() {
          \n\
          fn main() throws {\n\
          \x20   let names = Vec()\n\
-         \x20   let sizes = names.map fn(n) { fs::read_to_string(n) catch { \"\".to_string() } }\n\
+         \x20   let sizes = names.map fn(n) { fs::read_to_string(n, fs::Root::Anywhere) catch { \"\".to_string() } }\n\
          \x20   println(f\"{sizes.len()}\")\n\
          }\n",
         "pausing",

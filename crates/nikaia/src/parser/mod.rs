@@ -2348,7 +2348,7 @@ grammar! {
             c:closure_expr -> { c }
           | e:catch_expr -> { e }
 
-        // Kap 7.1: `fs::map(path) catch { … }` - the error is `error` inside.
+        // Kap 7.1: `fs::map(path, fs::Root::Anywhere) catch { … }` - the error is `error` inside.
         rule catch_expr -> Expr =
             value:coalesce_expr handler:catch_tail? -> {
                 match handler {

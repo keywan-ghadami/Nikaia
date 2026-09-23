@@ -44,8 +44,8 @@ const B: &str = "zwei.txt";
 /// for.
 fn sequential() -> usize {
     rt::exec::block_on(async {
-        let a = fs::read(A).await.unwrap_or_default();
-        let b = fs::read(B).await.unwrap_or_default();
+        let a = fs::read(A, &fs::Root::Anywhere).await.unwrap_or_default();
+        let b = fs::read(B, &fs::Root::Anywhere).await.unwrap_or_default();
         a.len() + b.len()
     })
 }

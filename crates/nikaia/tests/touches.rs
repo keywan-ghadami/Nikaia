@@ -105,7 +105,7 @@ fn a_call_nothing_describes_takes_the_claim_away() {
 #[test]
 fn a_resource_named_by_a_parameter_does_not_travel() {
     let (known, _) = touches(
-        "use std::fs\nfn load(p: ref String) -> String { return fs::read_to_string(p) }",
+        "use std::fs\nfn load(p: ref String) -> String { return fs::read_to_string(p, fs::Root::Anywhere) }",
         "load",
     );
     assert!(

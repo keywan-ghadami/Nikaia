@@ -172,8 +172,8 @@ fn a_branch_that_pauses_still_makes_the_block_pause() {
                   \n\
                   fn main() throws {\n\
                   \x20   let r = overlap {\n\
-                  \x20       fs::read_to_string(\"eins.txt\")\n\
-                  \x20       fs::read_to_string(\"zwei.txt\")\n\
+                  \x20       fs::read_to_string(\"eins.txt\", fs::Root::Anywhere)\n\
+                  \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere)\n\
                   \x20   }\n\
                   \x20   println(f\"{r.0} {r.1}\")\n\
                   }\n";
@@ -263,8 +263,8 @@ fn a_branch_travels_in_a_librarys_channel_too() {
                   \n\
                   fn main() throws {\n\
                   \x20   let r = overlap {\n\
-                  \x20       fs::read_to_string(\"eins.txt\")\n\
-                  \x20       fs::read_to_string(\"zwei.txt\")\n\
+                  \x20       fs::read_to_string(\"eins.txt\", fs::Root::Anywhere)\n\
+                  \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere)\n\
                   \x20   }\n\
                   \x20   println(f\"{r.0} {r.1}\")\n\
                   }\n";

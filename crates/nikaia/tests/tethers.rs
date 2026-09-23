@@ -63,7 +63,7 @@ fn a_result_built_from_a_local_buffer_tethers() {
          struct Entry { pub name: ref String }\n\
          \n\
          pub fn load() -> Vec[Entry] throws {\n\
-         \x20   let text = fs::read_to_string(\"/etc/hostname\")\n\
+         \x20   let text = fs::read_to_string(\"/etc/hostname\", fs::Root::Anywhere)\n\
          \x20   return [Entry { name: text.trim() }]\n\
          }\n\
          \n\
@@ -158,7 +158,7 @@ fn the_column_renders_and_parses_back() {
          struct Entry { pub name: ref String }\n\
          \n\
          pub fn load() -> Vec[Entry] throws {\n\
-         \x20   let text = fs::read_to_string(\"/etc/hostname\")\n\
+         \x20   let text = fs::read_to_string(\"/etc/hostname\", fs::Root::Anywhere)\n\
          \x20   return [Entry { name: text.trim() }]\n\
          }\n\
          \n\

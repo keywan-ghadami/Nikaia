@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.177 (Draft)
+**Version:** 0.0.178 (Draft)
 **Date:** 2026-09-23
 
 ---
@@ -491,7 +491,7 @@ pub rule file -> Summary =
 `par_fold` is `fold` plus that merge, and it must be the whole body of its rule. With both declarations the compiler generates the rest. The file is cut into one piece per core. Each piece repairs its own start to the next boundary, so every frame belongs to exactly one worker. Each worker folds into its own accumulator with nothing shared. The accumulators are merged at the end. A failing piece reports its error at its position in the whole file. Nothing about chunks appears in user code:
 
 ```nika
-let data = fs::map(path)
+let data = fs::map(path, fs::Root::Anywhere)
 let totals = Measurements::file(data)
 ```
 
@@ -704,7 +704,7 @@ use std::fs
 // 'sync' guarantees one thing: I will never pause.
 fn calculate_physics(mut obj: Object) sync {   // `mut`: it changes the caller's value (6.5)
     obj.x += obj.velocity
-    // fs::read("log.txt") // Compiler Error: that call can pause, and this cannot
+    // fs::read("log.txt", fs::Root::Anywhere) // Compiler Error: that call can pause, and this cannot
 }
 
 // Usage in Parallel Iterator
@@ -747,7 +747,7 @@ counter.access fn(n) { n + xs.sort_by_key fn(x) { x } }  // pure lambda, pure ca
 and this is refused:
 
 ```nika
-counter.access fn(n) { xs.map fn(x) { fs::read("log") } } // the lambda does I/O
+counter.access fn(n) { xs.map fn(x) { fs::read("log", fs::Root::Anywhere) } } // the lambda does I/O
 ```
 
 User code writes nothing for this. Without it no iterator method could appear

@@ -13,7 +13,7 @@ pub use nikaia_std::error::Full;
 async fn __nikaia_main() -> Result<(), Box<dyn std::error::Error>> {
     let path = nikaia_std::index::or(cli::args().nth(1), || "stock.csv".into());
     let out = nikaia_std::index::or(cli::args().nth(2), || "report.html".into());
-    let data = match fs::map(&path).await {
+    let data = match fs::map(&path, &fs::Root::Anywhere).await {
         Ok(value) => value,
         Err(error) => {
             eprintln!("cannot open {}: {}", path, error);
@@ -31,7 +31,7 @@ async fn __nikaia_main() -> Result<(), Box<dyn std::error::Error>> {
     let total = total(entries);
     let count = entries.len() as i64;
     let markup = render(entries, total);
-    match fs::write(&out, &markup, false, true).await {
+    match fs::write(&out, &fs::Root::Anywhere, &markup, false, true).await {
         Ok(value) => value,
         Err(error) => {
             eprintln!("cannot write {}: {}", out, error);

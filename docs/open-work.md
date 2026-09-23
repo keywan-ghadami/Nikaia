@@ -458,9 +458,11 @@ What waits inside it:
 A name the request chose reaching the filesystem is
 [ADR-108](specification/adr/adr-108.md): the root is an argument of the call,
 `http::File(path, root)` exactly as `fs::map(path, root)`, and there is no
-provenance on a path and no refusal to build before the server. The `fs` half
-is the entry below about a path naming its root at the call, and `http::File`
-inherits it the day it exists.
+provenance on a path and no refusal to build before the server. **The `fs` half
+is built at 0.0.178** — `fs::Root` with its two variants, the comparison by
+component, `io::IoError::Outside`, `NK1101` for a call that leaves the root out,
+and `nikaia --trust`'s listing — so `http::File` inherits a root that exists the
+day it is written.
 
 Nothing of [ADR-058](specification/adr/adr-058.md) is built. What is built is the
 bench that decided it (`benches/sendfile/`) and the write-up
@@ -868,26 +870,6 @@ where a `String` was declared; `Response(content_type:
 directions with D2's refusal; text represented as `Bytes` is, with the state
 from the tether analysis; `NK1106`'s help and the thirteen sites; the
 foreign-boundary copy once crates are described; `--tethers` over text.
-
-### 2.20. A path names its root at the call
-
-[ADR-108](specification/adr/adr-108.md). Every `std` function that takes a
-path takes its root right after it, with no default: an `fs::Root`, which is
-`Dir(store)` — the name is resolved under it and `fs::Outside` where it would
-leave it — or `Anywhere`, the one way around the check, recorded per site and
-listed by `nikaia --trust`. No exception for a literal. **Nothing of it is
-built**: `fs::map(path)` takes one argument, `fs::Root` does not exist, and
-the ledger describes the path functions without a root.
-
-*Evidence:* 15 calls in `examples/` — 8 `fs::map`, 6 `fs::read_to_string`,
-3 `fs::write` (one of them in `examples/README.md`), 1 `fs::read`, 1
-`fs::exists` — every one of them a command-line program whose path the
-operator typed, so every one of them writes `fs::Root::Anywhere`.
-
-*What it needs, in the record's order (§5):* `fs::Root` and the root in every
-path-taking entry's `signature`; the check in the Rust half of `fs`; the
-sites in `examples/`, its README and Part III 17.1; `--trust` listing
-`Anywhere` and a literal `"/"` root; `http::File` when it is built.
 
 ### 2.21. An `update` block says `mut`, may run more than once, and the compiler picks the lock
 
