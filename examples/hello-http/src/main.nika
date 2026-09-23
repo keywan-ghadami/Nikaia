@@ -34,12 +34,12 @@ fn main() throws {
         // two different facts, and `??` is where a program says what it does
         // about the second.
         if request.path() == "/" {
-            let who = request.head.query("name") ?? "world"
+            let who = request.query("name") ?? "world"
             return http::Response::text(f"Hello, {who}")
         }
         // And a header, case-insensitive as the protocol is.
         if request.path() == "/who" {
-            let host = request.head.header("host") ?? "nobody"
+            let host = request.header("host") ?? "nobody"
             return http::Response::text(f"you asked {host}")
         }
         return http::Response::not_found()

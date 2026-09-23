@@ -35,14 +35,9 @@ use std::io
 // read (Part I 6.6), so one used inside the handler's scope costs nothing and
 // one kept past it has to be owned. Nothing here allocates.
 pub struct Request {
-    // **D4's `query()` and `header()` are not here**, and the field is `pub` so
-    // that a handler can still ask: `request.head.query("name")`. Neither
-    // accessor can be written today — a `ref String` name is `NK2302`, because
-    // the views analysis carries no ledger and so cannot read that
-    // `http1::Head::query` **borrows its receiver** rather than its argument;
-    // and an owned `String` name refuses the literal every caller writes, which
-    // is [ADR-107](../../../docs/specification/adr/adr-107.md)'s *text is one
-    // type*, unbuilt. `open-work.md` §1.13 carries the first.
+    // The head as `std` parsed it. **`pub`**, because a handler that wants
+    // something D4 does not name — the header count, the declared length — asks
+    // it directly, and hiding it would buy nothing.
     pub head: http1::Head,
     // What the client sent after the head, empty where it sent nothing.
     //
@@ -77,6 +72,17 @@ impl Request {
         return self.head.target()
     }
 
+    // What the query string says under this name, or nothing where it says
+    // nothing. **Nothing is decoded** — see `std::http1`, which says why.
+    pub fn query(ref self, name: ref String) -> ref String? {
+        return self.head.query(name)
+    }
+
+    // What the client sent under this header, or nothing where it sent none.
+    // **Case-insensitive, as the protocol is** (D4).
+    pub fn header(ref self, name: ref String) -> ref String? {
+        return self.head.header(name)
+    }
 }
 
 // What a handler gives back (ADR-018 D3).

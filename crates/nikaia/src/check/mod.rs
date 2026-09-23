@@ -923,8 +923,13 @@ fn walked<'a>(
     checker.checked.findings.extend(crate::dsl::check(parsed));
     // A naked view parameter that is kept past the call (`NK2302`). Also a
     // separate walk, and for the same reason: it asks where a *value* goes
-    // rather than what a type is, and it needs no ledger to answer it.
-    checker.checked.findings.extend(crate::views::check(parsed));
+    // rather than what a type is. It reads both ledgers, because **a call says
+    // which of its arguments its result may point into** and a parameter that
+    // is none of them does not escape through it.
+    checker
+        .checked
+        .findings
+        .extend(crate::views::check(parsed, own, library));
     // A view handed back that points into a buffer the body owns (`NK2303`).
     // The tether's own refusal
     // ([ADR-156](../../docs/specification/adr/adr-156.md) D4), and a walk of

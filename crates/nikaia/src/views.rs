@@ -93,6 +93,7 @@ use winnow_grammar::Symbol as Ident;
 
 use crate::ast::{Block, Expr, Item, Span, Stmt, Type, VariantFields};
 use crate::check::{Finding, Severity};
+use crate::contracts::Ledger;
 use crate::emit::{borrowing_structs, holds_view, names_borrowing};
 use crate::parser::Parsed;
 
@@ -145,30 +146,33 @@ pub enum Destination {
 }
 
 /// Every naked view parameter in this unit whose view is stored.
-pub fn analyse(parsed: &Parsed) -> Vec<Stored> {
+///
+/// **The ledgers, for the one question a walk of the source cannot answer**: a
+/// call says which of its arguments its result may point into
+/// (`returns = "borrows(…)"`), and without that column a parameter handed to
+/// `self.head.query(name)` looks like a parameter handed *out* of the function
+/// — a correct program refused, which is what [Part III
+/// C.4](../../docs/specification/30-nikaia-tooling.md) forbids.
+pub fn analyse(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Stored> {
     let borrowing = borrowing_structs(parsed);
     let fields = fields_of(parsed);
+    let unit = Unit {
+        parsed,
+        borrowing: &borrowing,
+        fields: &fields,
+        borrows: Borrows { own, library },
+    };
     let mut found = Vec::new();
 
     for item in &parsed.program.items {
         match &item.node {
-            Item::Fn { .. } => scan(
-                parsed,
-                &borrowing,
-                &fields,
-                None,
-                item.span.start,
-                &item.node,
-                &mut found,
-            ),
+            Item::Fn { .. } => scan(unit, None, item.span.start, &item.node, &mut found),
             Item::Impl {
                 target, methods, ..
             } => {
                 for method in methods {
                     scan(
-                        parsed,
-                        &borrowing,
-                        &fields,
+                        unit,
                         Some(target),
                         method.span.start,
                         &method.node,
@@ -184,8 +188,8 @@ pub fn analyse(parsed: &Parsed) -> Vec<Stored> {
 }
 
 /// The refusals: every stored naked view whose destination names no buffer.
-pub fn check(parsed: &Parsed) -> Vec<Finding> {
-    analyse(parsed)
+pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<Finding> {
+    analyse(parsed, own, library)
         .iter()
         .filter(|stored| !stored.carried)
         .map(finding)
@@ -198,9 +202,9 @@ pub fn check(parsed: &Parsed) -> Vec<Finding> {
 /// This is the whole of the extension in the emitter: a parameter in here is
 /// spelled with the buffer named, where before the choice was between an
 /// unwritable signature and a refusal.
-pub fn carried(parsed: &Parsed) -> HashMap<usize, HashSet<Ident>> {
+pub fn carried(parsed: &Parsed, own: &Ledger, library: &Ledger) -> HashMap<usize, HashSet<Ident>> {
     let mut out: HashMap<usize, HashSet<Ident>> = HashMap::new();
-    for stored in analyse(parsed) {
+    for stored in analyse(parsed, own, library) {
         if stored.carried {
             out.entry(stored.method).or_default().insert(stored.symbol);
         }
@@ -325,16 +329,26 @@ pub(crate) fn fields_of(parsed: &Parsed) -> HashMap<Ident, Vec<(String, Type)>> 
     out
 }
 
+/// Everything about the unit that does not change from one function to the next.
+///
+/// One parameter rather than four, which is what the walk reads it as: these are
+/// facts about the file, and the three below are facts about the function.
+#[derive(Clone, Copy)]
+struct Unit<'p> {
+    parsed: &'p Parsed,
+    borrowing: &'p HashSet<Ident>,
+    fields: &'p HashMap<Ident, Vec<(String, Type)>>,
+    borrows: Borrows<'p>,
+}
+
 /// One function or method, asked about each of its naked view parameters.
-fn scan(
-    parsed: &Parsed,
-    borrowing: &HashSet<Ident>,
-    fields: &HashMap<Ident, Vec<(String, Type)>>,
-    target: Option<&Type>,
-    method: usize,
-    item: &Item,
-    out: &mut Vec<Stored>,
-) {
+fn scan(unit: Unit<'_>, target: Option<&Type>, method: usize, item: &Item, out: &mut Vec<Stored>) {
+    let Unit {
+        parsed,
+        borrowing,
+        fields,
+        borrows,
+    } = unit;
     let Item::Fn {
         name,
         receiver,
@@ -398,6 +412,8 @@ fn scan(
             fields,
             subject: target,
             subject_fields,
+            borrows,
+            declared: &declared,
             result: if result_holds_view && !result_is_ours {
                 ret_type.as_ref()
             } else {
@@ -509,6 +525,35 @@ pub(crate) fn write_type(parsed: &Parsed, ty: &Type) -> String {
     out
 }
 
+/// **Which of a call's arguments its result may point into**, read off the two
+/// ledgers.
+///
+/// `returns = "borrows(self)"` is the column, and it names *parameters*. A
+/// carrier that is not one of them cannot reach the result through that call,
+/// which is the fact [`Scanner::returned`] was missing.
+#[derive(Clone, Copy)]
+struct Borrows<'p> {
+    own: &'p Ledger,
+    library: &'p Ledger,
+}
+
+impl Borrows<'_> {
+    /// The one entry a call goes to, by the key that names it.
+    ///
+    /// **By the whole key and not by the method name**, because a wrapper keeps
+    /// the name it wraps: `Request::query` calling `http1::Head::query` matched
+    /// itself when the lookup was by name alone, and its own `borrows` column —
+    /// the very thing being decided — answered for the callee's. The receiver
+    /// has to be typed for this, and where it cannot be the caller reads the
+    /// absence as *nobody said*, which is the fail-closed direction.
+    fn of(&self, key: &str) -> Option<&crate::contracts::FnContract> {
+        self.own
+            .functions
+            .get(key)
+            .or_else(|| self.library.functions.get(key))
+    }
+}
+
 /// The walk, for one parameter of one function.
 struct Scanner<'p> {
     parsed: &'p Parsed,
@@ -516,6 +561,10 @@ struct Scanner<'p> {
     fields: &'p HashMap<Ident, Vec<(String, Type)>>,
     subject: Option<&'p Type>,
     subject_fields: &'p [(String, Type)],
+    /// The two ledgers, for [`Scanner::hands_back_another_buffer`].
+    borrows: Borrows<'p>,
+    /// The parameters and their written types, for [`Scanner::type_of`].
+    declared: &'p [(Ident, &'p Type)],
     /// The declared result, where handing the view back would be storing it.
     result: Option<&'p Type>,
     /// Names that may carry this parameter's view. Monotone: a name that ever
@@ -619,13 +668,157 @@ impl Scanner<'_> {
     /// A value handed back, where the result holds a view of another buffer.
     fn returned(&mut self, value: &Expr, span: &Span) {
         let Some(result) = self.result else { return };
-        if self.mentions(value) {
-            self.found.push((
-                span.clone(),
-                Destination::Result {
-                    ty: write_type(self.parsed, result),
-                },
-            ));
+        if !self.mentions(value) {
+            return;
+        }
+        // **A call says which of its arguments its result may point into**, and
+        // a carrier that is none of them does not reach the result through it.
+        // Without this, `return self.head.query(name)` read as *`name` goes into
+        // the value this function hands back* — a correct program refused,
+        // because `http1::Head::query` is written `returns = "borrows(self)"`
+        // and its result points into the **head**.
+        if self.hands_back_another_buffer(value) {
+            return;
+        }
+        self.found.push((
+            span.clone(),
+            Destination::Result {
+                ty: write_type(self.parsed, result),
+            },
+        ));
+    }
+
+    /// Whether this expression is a call whose result points into something that
+    /// is **not** a carrier of the view.
+    ///
+    /// `returns = "borrows(a | b)"` names the positions a result may point into
+    /// ([ADR-098](../../../docs/specification/adr/adr-098.md)). An argument that
+    /// is none of them does not reach the result through the call, which is what
+    /// makes `return self.head.query(name)` a correct program: the result points
+    /// into the head, and `name` is only read.
+    ///
+    /// Everything unwritten reads as *nobody said*: no entry, an empty column, a
+    /// receiver this walk cannot type. The refusal stands there, which is where
+    /// an analysis that cannot see belongs (ADR-010 D1).
+    fn hands_back_another_buffer(&self, value: &Expr) -> bool {
+        let (key, receiver, args): (String, Option<&Expr>, &Vec<Expr>) = match value {
+            Expr::MethodCall {
+                method,
+                receiver,
+                args,
+                ..
+            }
+            | Expr::SafeMethod {
+                method,
+                receiver,
+                args,
+                ..
+            } => {
+                let Some(ty) = self.type_of(receiver) else {
+                    return false;
+                };
+                let subject = self.parsed.text(ty.name);
+                let method = self.parsed.text(*method);
+                (
+                    format!("{subject}::{method}"),
+                    Some(receiver.as_ref()),
+                    args,
+                )
+            }
+            // A free call names its callee with an expression, and only two
+            // shapes of one are a key a ledger could hold: a bare name and a
+            // path. Anything else is code decided at run time, which no column
+            // describes.
+            Expr::Call { func, args, .. } => match func.as_ref() {
+                Expr::Variable(name) => (self.parsed.text(*name).to_string(), None, args),
+                Expr::Path(parts) => (
+                    parts
+                        .iter()
+                        .map(|part| self.parsed.text(*part))
+                        .collect::<Vec<_>>()
+                        .join("::"),
+                    None,
+                    args,
+                ),
+                _ => return false,
+            },
+            _ => return false,
+        };
+        let Some(contract) = self.borrows.of(&key) else {
+            return false;
+        };
+        let Some(signature) = contract.signature.as_ref() else {
+            return false;
+        };
+        // A column nothing wrote says nothing: the result may point anywhere, so
+        // the carrier is not ruled out.
+        if contract.borrows.is_empty() {
+            return false;
+        }
+        // **The receiver is a position too**, and `self` is what names it.
+        // `self.head.query(name)` borrows its receiver, and the receiver is
+        // `self.head` - which carries nothing, so the carrier is clear.
+        let takes_a_receiver = signature.takes_a_receiver();
+        contract.borrows.iter().all(|borrowed| {
+            if borrowed == "self" {
+                return match receiver {
+                    Some(receiver) => !self.mentions(receiver),
+                    // A free function with a `self` in its column is a ledger
+                    // this walk does not understand.
+                    None => false,
+                };
+            }
+            let Some(at) = signature
+                .params
+                .iter()
+                .position(|(param, _)| param == borrowed)
+            else {
+                return false;
+            };
+            let Some(at) = at.checked_sub(usize::from(takes_a_receiver)) else {
+                return false;
+            };
+            match args.get(at) {
+                Some(argument) => !self.mentions(argument),
+                None => false,
+            }
+        })
+    }
+
+    /// The declared type of a receiver, where the source wrote one down.
+    ///
+    /// Three places have one: the subject, a field of the subject, and a
+    /// parameter. A local has none - its type is the checker's business and this
+    /// walk runs beside the checker, not after it.
+    fn type_of(&self, receiver: &Expr) -> Option<&Type> {
+        match receiver {
+            Expr::Variable(name) => {
+                let name = self.parsed.text(*name);
+                if name == "self" {
+                    return self.subject;
+                }
+                self.declared
+                    .iter()
+                    .find(|(param, _)| self.parsed.text(*param) == name)
+                    .map(|(_, ty)| *ty)
+            }
+            Expr::Field { base, name } => {
+                let fields = match base.as_ref() {
+                    Expr::Variable(base) if self.parsed.text(*base) == "self" => {
+                        self.subject_fields
+                    }
+                    _ => {
+                        let ty = self.type_of(base)?;
+                        self.fields.get(&ty.name)?.as_slice()
+                    }
+                };
+                let name = self.parsed.text(*name);
+                fields
+                    .iter()
+                    .find(|(field, _)| field == name)
+                    .map(|(_, ty)| ty)
+            }
+            _ => None,
         }
     }
 

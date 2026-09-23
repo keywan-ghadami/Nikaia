@@ -2050,7 +2050,7 @@ impl<'p> Emitter<'p> {
             tethered: tethered_types(&own_contracts),
             declared_errors: declared_errors(parsed),
             joining: joining_bodies(parsed),
-            carries_input: crate::views::carried(parsed),
+            carries_input: crate::views::carried(parsed, &own_contracts, &library),
             grammars,
             structs,
             methods,

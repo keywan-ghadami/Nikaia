@@ -4,6 +4,59 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.176] — 2026-09-23
+
+**A call says which of its arguments its result may point into**, and the view
+analysis now reads that column. [`open-work.md`](docs/open-work.md) §1.13 is
+closed, and with it [ADR-018](docs/specification/adr/adr-018.md) D4's last two
+accessors: `request.query(name)` and `request.header(name)` are written on the
+request itself rather than reached through the head it holds.
+
+### What was wrong
+
+`views::analyse` took no ledger. A view parameter handed to a call whose result
+is returned was treated as escaping through that result, so
+
+```nika
+pub fn query(ref self, name: ref String) -> ref String? {
+    return self.head.query(name)
+}
+```
+
+was `NK2302` — and the program is correct: `http1::Head::query` is written
+`returns = "borrows(self)"`, so its result points into the **head** and never
+into `name`. A correct program refused, which is [Part III
+C.4](docs/specification/30-nikaia-tooling.md). The way around it was not open
+either — declaring the parameter `String` refuses every caller's literal, which
+is [ADR-107](docs/specification/adr/adr-107.md)'s *text is one type*, unbuilt.
+
+### What it reads
+
+The two ledgers, at the call. `returns = "borrows(…)"` names the positions the
+result may point into ([ADR-098](docs/specification/adr/adr-098.md)), and an
+argument that is none of them does not reach the result through it. The receiver
+is one of those positions, and `self` is what names it.
+
+**By the whole key and not by the method name**, which is the mistake worth
+recording: a wrapper keeps the name it wraps, so a lookup by name alone let
+`Request::query` find *itself* among the candidates — and its own column, the
+very thing being decided, answered for the callee's. The receiver is typed from
+what the source wrote down: the subject, a field of the subject, or a parameter.
+
+**Everything unwritten reads as *nobody said*** — no entry, an empty column, a
+receiver this walk cannot type — and the refusal stands there. That is
+[ADR-010](docs/specification/adr/adr-010.md) D1's polarity: an analysis that
+cannot see is not allowed to conclude that nothing happened. A local's type is
+the checker's business and this walk runs beside the checker rather than after
+it, so a call on one still refuses.
+
+### What is open
+
+`open-work.md` §1.12 — a method cannot hand back a view of a field it **owns** —
+is untouched by this: that one is about the `&` at a `return`, not about what a
+callee's column says. `examples/http`'s body is still a `pub` field and still
+says so where the accessor would be.
+
 ## [0.0.175] — 2026-09-23
 
 **A handler can ask its request** — [ADR-018](docs/specification/adr/adr-018.md)

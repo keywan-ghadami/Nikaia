@@ -85,7 +85,9 @@ fn no_program_in_the_repository_keeps_a_naked_view() {
             let parsed = parse_to_ast(&source)
                 .unwrap_or_else(|e| panic!("{} does not parse: {e}", path.display()));
             let name = path.display().to_string();
-            for finding in nikaia::views::check(&parsed) {
+            let own = Ledger::infer(&parsed);
+            let library = Ledger::parse(STD).expect("std's shipped ledger parses");
+            for finding in nikaia::views::check(&parsed, &own, &library) {
                 reported.push_str(&nikaia::diagnostics::render_finding(
                     &finding, &name, &source,
                 ));
@@ -571,4 +573,104 @@ fn a_constructor_inside_a_borrowing_impl_keeps_the_subjects_lifetime() {
         !rust.contains("Summary<'static>"),
         "the subject's `'a` is what the constructor hands back\n{rust}"
     );
+}
+
+// --- what the callee's own column already answers ----------------------------
+
+/// **A call says which of its arguments its result may point into**, and a
+/// parameter that is none of them does not escape through it.
+///
+/// `examples/http`'s `Request::query` is what found this: `http1::Head::query`
+/// is written `returns = "borrows(self)"`, so its result points into the head
+/// and never into the name it was asked about — and the refusal still landed on
+/// the name, because the walk read *a call took it* and stopped there. The
+/// accessor could not be written at all.
+#[test]
+fn a_name_a_borrowing_call_only_reads_does_not_escape_through_its_result() {
+    assert!(
+        findings(
+            r#"
+use std::http1
+
+struct Request { head: http1::Head }
+
+impl Request {
+    pub fn query(ref self, name: ref String) -> ref String? {
+        return self.head.query(name)
+    }
+}
+"#
+        )
+        .is_empty(),
+        "`http1::Head::query` borrows its receiver, not its argument"
+    );
+}
+
+/// **And a wrapper may keep the name it wraps.**
+///
+/// The first fix looked an entry up by method name alone, so `Request::query`
+/// found *itself* among the candidates — and its own column, the very thing
+/// being decided, answered for the callee's. The receiver is typed for this
+/// reason: one key, one entry.
+#[test]
+fn a_wrapper_that_keeps_the_name_it_wraps_still_reads_the_callees_column() {
+    let refused = findings(
+        r#"
+use std::http1
+
+struct Request { head: http1::Head }
+
+impl Request {
+    pub fn header(ref self, header: ref String) -> ref String? {
+        return self.head.header(header)
+    }
+}
+"#,
+    );
+    assert!(refused.is_empty(), "{refused:#?}");
+}
+
+/// **An argument the callee's column *does* name is still kept**, which is the
+/// half that makes the other one worth having.
+///
+/// `str::trim` hands back a view of its subject, and here the subject is the
+/// parameter — so the result does point into it, and a function whose own
+/// result names another buffer cannot hand it back.
+#[test]
+fn an_argument_the_column_does_name_is_still_a_finding() {
+    let refused = findings(
+        r#"
+struct Holder { label: ref String }
+
+impl Holder {
+    pub fn pick(ref self, name: ref String) -> ref String {
+        return name.trim()
+    }
+}
+"#,
+    );
+    assert_eq!(refused.len(), 1, "{refused:#?}");
+}
+
+/// **A receiver this walk cannot type says nothing**, and the refusal stands.
+///
+/// The fail-closed direction (ADR-010 D1): an analysis that cannot see is not
+/// allowed to conclude that nothing happened. A local's type is the checker's,
+/// and this walk runs beside the checker rather than after it — so a call on one
+/// reaches no entry and the parameter is treated as kept.
+#[test]
+fn a_call_on_a_receiver_that_cannot_be_typed_is_still_a_finding() {
+    let refused = findings(
+        r#"
+struct Holder { label: ref String }
+
+impl Holder {
+    pub fn choose(ref self, name: ref String) -> ref String {
+        let held = self.label
+        return held.trim_matches(name)
+    }
+}
+"#,
+    );
+    assert_eq!(refused.len(), 1, "{refused:#?}");
 }
