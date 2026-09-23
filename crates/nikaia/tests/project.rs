@@ -2257,6 +2257,52 @@ fn a_bound_takes_a_path_across_a_package() {
     assert!(ledger.contains("[fn.\"Handler::handle\"]"), "{ledger}");
 }
 
+/// **An `enum` a package declares is a type a consumer can `match` totally**
+/// (Part I 3.4).
+///
+/// Nothing wrote an `enum` to the ledger at all, so a `match` over one of a
+/// dependency's could not be shown complete: `NK1151` asked for an `else`, which
+/// is a correct program refused ([Part III
+/// C.4](../../../docs/specification/30-nikaia-tooling.md)) *and* a way out that
+/// makes **a type gaining a variant** silent in that program forever after —
+/// which is the one thing [ADR-146](../../../docs/specification/adr/adr-146.md)
+/// D1 exists to prevent.
+///
+/// **It has to be two packages**, for the reason the bound above needs two:
+/// inside one, an `enum`'s cases come from the source.
+#[test]
+fn an_enum_a_package_declares_is_matched_completely_by_a_consumer() {
+    let dir = a_program_and_a_package(
+        "package-enum",
+        "verdict",
+        &[
+            (
+                "verdict/src/main.nika",
+                "pub enum Answer {\n                 \x20   Yes,\n                 \x20   No,\n                 }\n                 \n                 pub fn of(word: ref String) -> Answer {\n                 \x20   if word == \"ja\" {\n                 \x20       return Answer::Yes\n                 \x20   }\n                 \x20   return Answer::No\n                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use verdict\n\n                 fn main() {\n                 \x20   let word = \"ja\".to_string()\n                 \x20   match verdict::of(word) {\n                 \x20       verdict::Answer::Yes => { println(\"yes\") }\n                 \x20       verdict::Answer::No => { println(\"no\") }\n                 \x20   }\n                 \x20   let again = \"nein\".to_string()\n                 \x20   if verdict::of(again) == verdict::Answer::No {\n                 \x20       println(\"compared\")\n                 \x20   }\n                 }\n",
+            ),
+        ],
+    );
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "yes\ncompared",
+        "the `match` is total and the comparison has a lowering"
+    );
+
+    // **The cases are in the package's ledger file**, which is what made the
+    // `match` answerable — the same table a `struct`'s `fields` are in, for the
+    // other shape of type.
+    let ledger = std::fs::read_to_string(dir.join("verdict/nikaia.contracts"))
+        .expect("the package writes its ledger");
+    assert!(ledger.contains("[type.\"Answer\"]"), "{ledger}");
+    assert!(ledger.contains("variants = [\"Yes\", \"No\"]"), "{ledger}");
+}
+
 /// **And the `impl` may be the package's**
 /// ([ADR-106](../../../docs/specification/adr/adr-106.md) D4): *whether a type
 /// implements a trait is the union of what the program and its dependencies'

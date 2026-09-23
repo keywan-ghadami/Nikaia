@@ -4,6 +4,76 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.179] — 2026-09-23
+
+**An `enum`'s cases are a column of the ledger** —
+[ADR-203](docs/specification/adr/adr-203.md), and with it
+[ADR-018](docs/specification/adr/adr-018.md) D4's `Method`, which is the last of
+that record's data.
+
+### What was wrong
+
+A `[type."X"]` entry carried a `struct`'s `fields` and nothing at all for an
+`enum` — an `enum` had **no entry**. So a consumer of a package could not see
+that the cases were `Yes` and `No`, and
+
+```nika
+match verdict::of(word) {
+    verdict::Answer::Yes => { println("yes") }
+    verdict::Answer::No  => { println("no") }
+}
+```
+
+was `NK1151`, *this `match` does not cover `else`*. Two things wrong at once: a
+**correct program refused** ([Part III C.4](docs/specification/30-nikaia-tooling.md)),
+and a way out that is the one [ADR-146](docs/specification/adr/adr-146.md) D1
+exists to prevent — an `else` makes *a type gaining a variant* silent in that
+program forever after.
+
+### The column
+
+`variants = ["Yes", "No"]`, one line per case as the source writes it: a bare
+name, a positional payload `Name(T, U)`, or named fields `Name { a: T }`. A
+`struct` has `fields` and an `enum` has these, and neither has the other's. Read
+from every ledger, with this unit's own source winning.
+
+**A column and not a record of its own**, because it is the same fact as `fields`
+for the other shape of type, in the same table. There was no second credible
+spelling — which is what makes it work rather than a question. *How does a bound
+reach a caller across a package boundary?* stays on
+[`open-decisions.md`](docs/open-decisions.md), because that one has two.
+
+### Two more the same program found
+
+**`==` on a unit-only `enum`.** `k == Kind::Post` reached `rustc` as *binary
+operation `==` cannot be applied to type `Kind`*, with *consider annotating
+`Kind` with `#[derive(PartialEq)]`* as the help — the backend's words about a
+file nobody wrote, and a way out the source cannot take. An `enum` whose variants
+hold **nothing** derives `PartialEq` and `Eq` now, which is a derivation rather
+than a caution: such a type has no part that could fail to compare. `==` on a
+`struct` and on a payload-carrying `enum` is `open-work.md` §1.14, with the shape
+a fix takes and the reason a blanket derive is the wrong one — it would refuse
+the *declaration* of every type holding a lock.
+
+**`match error { … }` is a `match` over the type that arrived**, where exactly
+one does. It was *non-exhaustive patterns: `IoError::NotText(_)` not covered*,
+about the generated file. The binding itself stays untyped, so this can only
+**move** a refusal and never add one: where the arms cover everything, nothing
+was said before and nothing is said now. Where several error types arrive the set
+is open and `else` is still the only answer
+([ADR-160](docs/specification/adr/adr-160.md) D4, untouched).
+
+### ADR-018 D4's `Method`
+
+```nika
+pub enum Method { Get, Post }
+```
+
+in `examples/http`, and `request.method()` answers it. **Two variants are the
+whole type**, and that is `std`'s refusal rather than an omission: `http1`
+answers `400` to any other method before a handler runs. `method_text()` is
+beside it for a log.
+
 ## [0.0.178] — 2026-09-23
 
 **A path names its root at the call** — [ADR-108](docs/specification/adr/adr-108.md),

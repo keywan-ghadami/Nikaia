@@ -2584,7 +2584,28 @@ impl<'p> Emitter<'p> {
                 variants,
                 is_public,
             } => {
-                out.push("#[derive(Debug, Clone)]\n");
+                // **`==` on an `enum` whose variants hold nothing**, which is
+                // every `enum` a program compares. Without it the comparison had
+                // no lowering and `rustc` answered about a file nobody wrote —
+                // *an implementation of `PartialEq` might be missing* — with a
+                // help the source cannot take ([Part III C.1 and
+                // C.2](../../../docs/specification/30-nikaia-tooling.md)).
+                //
+                // **Only where every variant holds nothing**, and that is a
+                // derivation rather than a caution: a variant with a payload is
+                // comparable exactly when the payload is, and what a `Locked[T]`
+                // field or a `Mapped` answers to `==` is a question nobody has
+                // asked yet. Deriving it unconditionally would refuse *the
+                // declaration* of every type holding one, which is a worse place
+                // to be wrong than the comparison. `open-work.md` §1.14 carries
+                // the rest.
+                let compares = variants
+                    .iter()
+                    .all(|variant| matches!(variant.fields, VariantFields::Unit));
+                out.push(match compares {
+                    true => "#[derive(Debug, Clone, PartialEq, Eq)]\n",
+                    false => "#[derive(Debug, Clone)]\n",
+                });
                 let vis = if *is_public { "pub " } else { "" };
                 let params = if self.borrowing.contains(name) {
                     format!("<{INPUT_LIFETIME}>")

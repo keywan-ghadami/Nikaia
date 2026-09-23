@@ -25,6 +25,18 @@ use std::net
 use std::http1
 use std::io
 
+// What a request asks for ([ADR-018](../../../docs/specification/adr/adr-018.md)
+// D4).
+//
+// **Two variants and no third**, and that is `std`'s refusal rather than an
+// omission here: `http1` answers `400` to any method but these two, before a
+// handler runs. So a `match` over this covers everything a handler can be given
+// — which is what Part I 3.4 asks of one.
+pub enum Method {
+    Get,
+    Post,
+}
+
 // What a handler is given ([ADR-018](../../../docs/specification/adr/adr-018.md)
 // D1), with D4's surface over it.
 //
@@ -52,10 +64,23 @@ pub struct Request {
 }
 
 impl Request {
-    // `GET` or `POST`, as it was written. D4 says an **enum** here and this is a
-    // `ref String`: the enum is the next step and the refusal that makes it
-    // total is already in `std` — `http1` answers nothing else.
-    pub fn method(ref self) -> ref String {
+    // `GET` or `POST` ([ADR-018](../../../docs/specification/adr/adr-018.md)
+    // D4's **enum**).
+    //
+    // **Total by what `std` refuses**, which is what makes two variants the
+    // whole type rather than two of several: `http1` answers a request whose
+    // method is neither with a `400` before a handler is ever called, so there
+    // is no third case for this to have.
+    pub fn method(ref self) -> Method {
+        if self.head.method() == "POST" {
+            return Method::Post
+        }
+        return Method::Get
+    }
+
+    // The same word, as the client wrote it — for a log, and for a program that
+    // wants the text rather than the decision.
+    pub fn method_text(ref self) -> ref String {
         return self.head.method()
     }
 

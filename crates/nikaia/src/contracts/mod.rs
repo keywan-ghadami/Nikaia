@@ -564,6 +564,98 @@ pub struct FieldContract {
     pub public: bool,
 }
 
+/// One variant of an `enum`, as a caller has to know it.
+///
+/// **Three shapes and one struct**, because that is how the source writes them
+/// (Part I 4.4): a bare name, a positional payload, or named fields. A
+/// positional one keeps its parts under the names `"0"`, `"1"` and so on — which
+/// is the arrangement the checker's own map already uses, so a variant's payload
+/// is looked up exactly as a struct's fields are and there is one field check
+/// rather than two.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariantContract {
+    pub name: String,
+    /// What it holds, in declaration order. Empty for a bare name.
+    pub holds: Vec<FieldContract>,
+    /// `Write(String)` rather than `Move { x: i32 }`: read by position.
+    ///
+    /// A flag rather than two variants of this struct, for the reason `mutable`
+    /// is a list beside `params`: everything that walks the payload walks it the
+    /// same way, and only the *rendering* and the pattern's shape differ.
+    pub positional: bool,
+}
+
+impl VariantContract {
+    /// The one line a ledger writes for it, which is what the source wrote.
+    pub fn text(&self) -> String {
+        if self.holds.is_empty() {
+            return self.name.clone();
+        }
+        let parts: Vec<String> = match self.positional {
+            true => self.holds.iter().map(|f| f.ty.text()).collect(),
+            false => self
+                .holds
+                .iter()
+                .map(|f| format!("{}: {}", f.name, f.ty.text()))
+                .collect(),
+        };
+        match self.positional {
+            true => format!("{}({})", self.name, parts.join(", ")),
+            false => format!("{} {{ {} }}", self.name, parts.join(", ")),
+        }
+    }
+
+    /// The same line, read back.
+    ///
+    /// **Nothing here fails.** A name with no payload is a bare variant, and a
+    /// shape this does not recognise is one too — the list says which cases
+    /// exist, and a payload it could not read is a payload the checker does not
+    /// claim about, which is [Part III
+    /// C.4](../../../../docs/specification/30-nikaia-tooling.md)'s direction.
+    pub fn parse(text: &str) -> VariantContract {
+        let text = text.trim();
+        if let Some((name, rest)) = text.split_once('(') {
+            let inside = rest.trim_end().trim_end_matches(')');
+            return VariantContract {
+                name: name.trim().to_string(),
+                holds: ty::split_args(inside)
+                    .iter()
+                    .enumerate()
+                    .map(|(at, part)| FieldContract {
+                        name: at.to_string(),
+                        ty: ty::Ty::parse(part),
+                        public: true,
+                    })
+                    .collect(),
+                positional: true,
+            };
+        }
+        if let Some((name, rest)) = text.split_once('{') {
+            let inside = rest.trim_end().trim_end_matches('}');
+            return VariantContract {
+                name: name.trim().to_string(),
+                holds: ty::split_args(inside)
+                    .iter()
+                    .filter_map(|part| {
+                        let (name, ty) = part.split_once(':')?;
+                        Some(FieldContract {
+                            name: name.trim().to_string(),
+                            ty: ty::Ty::parse(ty),
+                            public: true,
+                        })
+                    })
+                    .collect(),
+                positional: false,
+            };
+        }
+        VariantContract {
+            name: text.to_string(),
+            holds: Vec::new(),
+            positional: false,
+        }
+    }
+}
+
 /// One option of a function, as a caller has to know it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigContract {
@@ -774,6 +866,23 @@ pub struct TypeContract {
     /// Every field, with its type - what a checker needs to say that `r.nmae`
     /// is not a field of `Row`.
     pub fields: Vec<FieldContract>,
+    /// Every variant of an `enum`, with whatever it holds.
+    ///
+    /// **Empty for a `struct`**, and the two are told apart by that: a `struct`
+    /// has `fields` and an `enum` has these, and neither has the other's.
+    ///
+    /// What a consumer needs it for is the one thing Part I 3.4 promises: *a
+    /// `match` handles every possible case*. Without the list, a `match` over a
+    /// dependency's `enum` could not be shown total, so `NK1151` asked for an
+    /// `else` on a `match` that had covered everything — a correct program
+    /// refused ([Part III C.4](../../../../docs/specification/30-nikaia-tooling.md)),
+    /// with a way out that makes *a type gaining a variant* silent forever
+    /// after.
+    ///
+    /// It is the same fact for the other shape of type, in the same table, which
+    /// is why it is a column here rather than a record of its own
+    /// ([ADR-106](../../../../docs/specification/adr/adr-106.md) D3's table).
+    pub variants: Vec<VariantContract>,
     /// Whether a value of this type **may cross a thread** (ADR-005 §1 Group B),
     /// and *may not* is one of the three things it can say
     /// ([ADR-123](../../../../docs/specification/adr/adr-123.md) D1).
@@ -1328,6 +1437,77 @@ impl Ledger {
                                 .collect(),
                         );
                     }
+                    // **An `enum` is a type a consumer has to know the cases of**
+                    // (Part I 3.4: a `match` handles every possible case), and
+                    // until this was here it had no entry at all — so a `match`
+                    // over a dependency's `enum` could not be shown total and
+                    // `NK1151` asked for an `else` that makes *a type gaining a
+                    // variant* silent forever after.
+                    Item::Enum {
+                        name,
+                        variants,
+                        is_public,
+                        ..
+                    } => {
+                        // An `enum` takes no type parameters in this language
+                        // (Part I 4.4), so there is nothing to erase and the
+                        // payload types travel as they were written.
+                        let cases = variants
+                            .iter()
+                            .map(|variant| VariantContract {
+                                name: parsed.text(variant.name).to_string(),
+                                holds: match &variant.fields {
+                                    crate::ast::VariantFields::Unit => Vec::new(),
+                                    // Positional, so the names are the positions —
+                                    // the arrangement the checker's own map uses
+                                    // for a variant's payload.
+                                    crate::ast::VariantFields::Tuple(types) => types
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(at, ty)| FieldContract {
+                                            name: at.to_string(),
+                                            ty: ty::Ty::from_ast(parsed, ty),
+                                            public: true,
+                                        })
+                                        .collect(),
+                                    crate::ast::VariantFields::Named(fields) => fields
+                                        .iter()
+                                        .map(|f| FieldContract {
+                                            name: parsed.text(f.name).to_string(),
+                                            ty: ty::Ty::from_ast(parsed, &f.ty),
+                                            // A variant carries no visibility word,
+                                            // so its fields are as reachable as the
+                                            // `enum` is (Part I 9.2).
+                                            public: true,
+                                        })
+                                        .collect(),
+                                },
+                                positional: matches!(
+                                    variant.fields,
+                                    crate::ast::VariantFields::Tuple(_)
+                                ),
+                            })
+                            .collect();
+                        ledger.types.insert(
+                            parsed.text(*name).to_string(),
+                            TypeContract {
+                                public: *is_public,
+                                doc: item.doc.clone().filter(|_| *is_public),
+                                // A `struct` has fields and an `enum` has cases,
+                                // and neither has the other's.
+                                fields: Vec::new(),
+                                variants: cases,
+                                crosses: Crosses::Undecided,
+                                iterates_fallibly: false,
+                                touches: Vec::new(),
+                                // The tether is a field's question and a variant's
+                                // payload is not a field a program assigns to;
+                                // `views::fields_of` flattens them for the *view*
+                                // analysis, which is a different walk over the AST.
+                                tethered: Vec::new(),
+                            },
+                        );
+                    }
                     Item::Struct {
                         name,
                         generics,
@@ -1358,6 +1538,7 @@ impl Ledger {
                                 public: *is_public,
                                 doc: item.doc.clone().filter(|_| *is_public),
                                 fields: field_types,
+                                variants: Vec::new(),
                                 // Never inferred: a `struct` declared here records
                                 // its fields, and `contracts::send` walks those.
                                 // The key exists for types whose parts are Rust.
@@ -1998,6 +2179,19 @@ impl Ledger {
                         .join(", ")
                 ));
             }
+            // **The other shape of type**: an `enum`'s cases, which is what lets
+            // a consumer's `match` be total (Part I 3.4).
+            if !contract.variants.is_empty() {
+                out.push_str(&format!(
+                    "variants = [{}]\n",
+                    contract
+                        .variants
+                        .iter()
+                        .map(|variant| format!("\"{}\"", variant.text()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             // Both claims are written and the third is silence, which is what
             // makes every ledger already on disk mean what it meant
             // ([ADR-123](../../../../docs/specification/adr/adr-123.md) D1).
@@ -2240,6 +2434,12 @@ impl Ledger {
                                 ));
                             }
                             entry.iterates_fallibly = true;
+                        }
+                        "variants" => {
+                            entry.variants = string_list(value, at())?
+                                .iter()
+                                .map(|line| VariantContract::parse(line))
+                                .collect()
                         }
                         "fields" => {
                             entry.fields = string_list(value, at())?

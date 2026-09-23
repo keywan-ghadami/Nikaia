@@ -117,3 +117,93 @@ fn an_untyped_scrutinee_is_left_alone() {
     );
     assert!(found.is_empty(), "{found:#?}");
 }
+
+// --- a type whose cases came from a ledger -----------------------------------
+
+/// **`std`'s own error type is complete when its cases are named.**
+///
+/// `io::IoError`'s variants are in `std.contracts`, so a program that takes one
+/// apart and covers every case needs no `else` — and a program that misses one
+/// hears it here rather than from the backend about a generated file.
+#[test]
+fn a_librarys_enum_is_complete_when_its_cases_are_named() {
+    let complete = refusals(
+        "use std::io\n\
+         fn f(e: io::IoError) -> i64 {\n\
+         \x20   return match e {\n\
+         \x20       io::IoError::NotFound(p) => 1\n\
+         \x20       io::IoError::PermissionDenied(p) => 2\n\
+         \x20       io::IoError::NotText(p) => 3\n\
+         \x20       io::IoError::Outside(p) => 4\n\
+         \x20       io::IoError::Other(p) => 5\n\
+         \x20   }\n\
+         }\n",
+    );
+    assert!(complete.is_empty(), "{complete:#?}");
+
+    let missing = refusals(
+        "use std::io\n\
+         fn f(e: io::IoError) -> i64 {\n\
+         \x20   return match e {\n\
+         \x20       io::IoError::NotFound(p) => 1\n\
+         \x20   }\n\
+         }\n",
+    );
+    assert_eq!(missing.len(), 1, "{missing:#?}");
+    // **Named, and every one of them**: the message is the list, not a word.
+    for case in [
+        "io::IoError::PermissionDenied",
+        "io::IoError::NotText",
+        "io::IoError::Outside",
+        "io::IoError::Other",
+    ] {
+        assert!(missing[0].message.contains(case), "{}", missing[0].message);
+    }
+}
+
+/// **A `match` over a `catch`'s error is a `match` over the type that arrived**,
+/// where exactly one does.
+///
+/// It was the backend's words — *non-exhaustive patterns: `IoError::NotText(_)`
+/// not covered*, about a file nobody wrote ([Part III
+/// C.1](../../../docs/specification/30-nikaia-tooling.md)). The binding itself
+/// stays untyped, so this can only *move* the refusal: where the arms cover
+/// everything nothing was said before and nothing is said now.
+#[test]
+fn a_match_over_a_caught_error_is_checked_against_the_type_that_arrived() {
+    let source = |arms: &str| {
+        format!(
+            "use std::fs\n\
+             use std::io\n\
+             fn main() {{\n\
+             \x20   let text = fs::read_to_string(\"x\", fs::Root::Anywhere) catch {{\n\
+             \x20       match error {{\n{arms}\
+             \x20       }}\n\
+             \x20   }}\n\
+             \x20   print(text)\n\
+             }}\n"
+        )
+    };
+    let every = "\x20           io::IoError::NotFound(p) => { return }\n\
+                 \x20           io::IoError::PermissionDenied(p) => { return }\n\
+                 \x20           io::IoError::NotText(p) => { return }\n\
+                 \x20           io::IoError::Outside(p) => { return }\n\
+                 \x20           io::IoError::Other(p) => { return }\n";
+    assert!(
+        refusals(&source(every)).is_empty(),
+        "{:#?}",
+        refusals(&source(every))
+    );
+
+    let one_short = "\x20           io::IoError::NotFound(p) => { return }\n\
+                     \x20           io::IoError::PermissionDenied(p) => { return }\n\
+                     \x20           io::IoError::Outside(p) => { return }\n\
+                     \x20           io::IoError::Other(p) => { return }\n";
+    let found = refusals(&source(one_short));
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert!(
+        found[0].message.contains("io::IoError::NotText"),
+        "{}",
+        found[0].message
+    );
+}

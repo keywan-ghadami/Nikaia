@@ -24,7 +24,7 @@ fn main() throws {
     // handler per path. What a program writes instead is the decision itself,
     // which is also ADR-194 D4's rule — the program says what is exposed.
     http::listen(at) fn(request) {
-        if request.method() == "POST" {
+        if request.method() == http::Method::Post {
             let size = request.body().len()
             return http::Response::text(f"you sent {size} bytes")
         }

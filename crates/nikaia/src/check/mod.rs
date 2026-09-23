@@ -909,6 +909,7 @@ fn walked<'a>(
         walked: Vec::new(),
         receiver_name: None,
         caught_several: false,
+        caught_one: None,
         read_at: Vec::new(),
         written_at: Vec::new(),
         empty_lists: BTreeMap::new(),
@@ -1983,6 +1984,22 @@ struct Checker<'a> {
     /// D4), so no `match` over it can be exhaustive — which is why the question
     /// is about the binding rather than about a type this checker could name.
     caught_several: bool,
+    /// The **one** error type arriving at the nearest `catch`, where exactly one
+    /// does — and `None` where several do, where none is written down, or
+    /// outside a handler.
+    ///
+    /// **For one question only**: whether `match error { … }` covers every case.
+    /// The binding itself stays `Ty::Unknown`, because giving a binding a type
+    /// where it had none can turn a program that compiles into one that is
+    /// refused, and [Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md) makes that its own
+    /// piece of work with its own sweep. This one can only *move* a refusal:
+    /// where the arms miss a case, the words were `rustc`'s about a generated
+    /// file (*non-exhaustive patterns: `IoError::NotText(_)` not covered*),
+    /// which is [Part III C.1](../../docs/specification/30-nikaia-tooling.md);
+    /// where they cover everything, nothing was said before and nothing is said
+    /// now.
+    caught_one: Option<Ty>,
     /// What the guarded expression of the nearest `catch` turned out to hold,
     /// while that expression is being walked - and `None` everywhere else.
     ///
@@ -2421,6 +2438,7 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
+        self.collect_library_enums();
         for item in &self.parsed.program.items {
             match &item.node {
                 Item::Fn { .. } => self.bounds_declared_by(&item.node, None),
@@ -2436,6 +2454,42 @@ impl<'a> Checker<'a> {
             }
         }
         self.collect_field_walks();
+    }
+
+    /// **The `enum`s of a package and of `std`**, under the names a consumer
+    /// writes them.
+    ///
+    /// Part I 3.4 promises that a `match` handles every possible case, and that
+    /// promise is only checkable where the cases are known. They come from the
+    /// source for this unit's own types and from the ledger's `variants` column
+    /// for every other — the same column, read one file over, which is what
+    /// [ADR-028](../../docs/specification/adr/adr-028.md) D5 says the ledger is
+    /// for.
+    ///
+    /// **This unit's own types win**, which is why this runs after the source
+    /// walk and inserts nothing that is already there: a package's ledger is
+    /// absorbed under qualified keys, so a collision would be a program that
+    /// declares a type under a dependency's name — refused elsewhere, and not
+    /// silently taken from the dependency here.
+    fn collect_library_enums(&mut self) {
+        for ledger in [self.own, self.library] {
+            for (name, contract) in &ledger.types {
+                if contract.variants.is_empty() || self.enums.contains_key(name) {
+                    continue;
+                }
+                for variant in &contract.variants {
+                    let key = format!("{name}::{}", variant.name);
+                    self.variant_owner.insert(key.clone(), name.clone());
+                    if !variant.holds.is_empty() {
+                        self.structs.insert(key, variant.holds.clone());
+                    }
+                }
+                self.enums.insert(
+                    name.clone(),
+                    contract.variants.iter().map(|v| v.name.clone()).collect(),
+                );
+            }
+        }
     }
 
     /// **Which functions walk a type's fields, and which parameter each walks**
@@ -5644,6 +5698,18 @@ impl<'a> Checker<'a> {
                 }
                 self.stamped_condition = outer_condition;
                 self.a_match_over_several_error_types(value, arms, span);
+                // **`match error { … }` is a `match` over the type that
+                // arrived**, where exactly one does. The binding itself is
+                // untyped (see [`Checker::caught_one`]); this hands the one
+                // question that can only gain by knowing.
+                let on = match (&on, &**value) {
+                    (Ty::Unknown, Expr::Variable(name))
+                        if self.parsed.text(*name) == "error" && !self.caught_several =>
+                    {
+                        self.caught_one.clone().unwrap_or(Ty::Unknown)
+                    }
+                    _ => on,
+                };
                 self.a_match_that_misses_a_case(&on, arms, span);
                 // Every arm of a `match` is a value of the same type, but what
                 // that type is, is only known when every arm says the same.
@@ -6653,9 +6719,12 @@ impl<'a> Checker<'a> {
                 self.scope
                     .push(vec![Local::free("error".to_string(), Ty::Unknown)]);
                 let arriving = self.several_arrive(expr);
+                let one = self.the_one_error(expr);
                 let several = std::mem::replace(&mut self.caught_several, arriving);
+                let single = std::mem::replace(&mut self.caught_one, one);
                 self.block(handler);
                 self.caught_several = several;
+                self.caught_one = single;
                 self.scope.pop();
                 Ty::Unknown
             }
@@ -9612,6 +9681,47 @@ impl<'a> Checker<'a> {
             .functions
             .get(&key)
             .is_some_and(|contract| contract.throws.len() > 1)
+    }
+
+    /// The **one** error type a guarded expression can fail with, where exactly
+    /// one is written down.
+    ///
+    /// The same resolution [`Checker::several_arrive`] does, asked for the other
+    /// answer and over **both** ledgers: a `std` call's failure is in the
+    /// library's, and that is the one a corpus handler actually catches.
+    ///
+    /// `None` where several arrive, where the callee is not one this compiler
+    /// can resolve, or where the single member is `"?"` — the absence of a claim
+    /// ([ADR-024](../../docs/specification/adr/adr-024.md) D1), which names no
+    /// type and therefore no cases.
+    fn the_one_error(&self, expr: &Expr) -> Option<Ty> {
+        let name = match expr {
+            Expr::Call { func, .. } => match &**func {
+                Expr::Variable(name) => self.parsed.text(*name).to_string(),
+                Expr::Path(segments) => segments
+                    .iter()
+                    .map(|s| self.parsed.text(*s))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+                _ => return None,
+            },
+            Expr::Try(inner) => return self.the_one_error(inner),
+            _ => return None,
+        };
+        let key = self.parsed.unaliased(&name);
+        let contract = self
+            .own
+            .functions
+            .get(&key)
+            .or_else(|| self.library.lookup(&key).map(|(_, c)| c).as_ref().copied())?;
+        match contract.throws.as_slice() {
+            [one] if one != "?" => Some(Ty::Named {
+                name: one.clone(),
+                args: Vec::new(),
+                view: false,
+            }),
+            _ => None,
+        }
     }
 
     /// **`NK1151` for a `match` over a `catch`'s error**

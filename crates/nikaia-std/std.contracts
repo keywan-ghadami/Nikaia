@@ -1302,6 +1302,16 @@ doc = "A file held as memory: the pages arrive as they are touched rather than b
 [type."io::IoError"]
 pub = true
 crosses = true
+# **The cases, so a handler's `match` can be total** (Part I 3.4). Without them
+# `NK1151` asked for an `else` on a `match` that had covered every variant — a
+# correct program refused, with a way out that makes *this type gaining a
+# variant* silent forever after, which is the one thing
+# [ADR-146](../../docs/specification/adr/adr-146.md) D1 exists to prevent.
+#
+# Each carries what it was about, which is
+# [ADR-158](../../docs/specification/adr/adr-158.md) D1's *the variant is the
+# kind and it carries the thing*.
+variants = ["NotFound(String)", "PermissionDenied(String)", "NotText(String)", "Outside(String)", "Other(String)"]
 doc = "What a `std` call fails with.\n\nPart I 7.1's error type, for the library: `NotFound(what)` where the thing is\nnot there, `PermissionDenied(what)` where this program may not have it,\n`NotText(what)` where the bytes are not UTF-8, `Outside(what)` where a name\nwould leave the `fs::Root` it was given, and `Other(what)` for\neverything else the operating system said. A `catch` that only passes the\nfailure on names nothing; one that takes it apart writes `use std::io` and\n`io::IoError::NotFound(p)`."
 
 # **What a parse fails with** ([ADR-173](../../docs/specification/adr/adr-173.md)
