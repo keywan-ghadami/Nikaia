@@ -1037,6 +1037,13 @@ struct Emitter<'p> {
     /// beside it is: it is a question about the type, and this has none
     /// (ADR-028).
     lent_lets: std::collections::BTreeSet<usize>,
+    /// [`crate::check::Checked::lent_returns`]: the `return`s whose value is a
+    /// view of the subject, so the `&` is this file's to write
+    /// ([ADR-094](../../../docs/specification/adr/adr-094.md) D1's third
+    /// position). Handed over exactly as `lent_lets` is, and for the same
+    /// reason: which place is a view of what is a question about types, and
+    /// this file keeps none ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    lent_returns: std::collections::BTreeSet<usize>,
     /// Where a number is read through a `for` binding and therefore through a
     /// **view** ([`check::Checked::viewed_numbers`]), by the statement's byte
     /// and the name. Handed over exactly as `lent_lets` is, and for the same
@@ -2072,6 +2079,7 @@ impl<'p> Emitter<'p> {
             nullable_sites: propagation.nullable,
             concatenations: propagation.concatenations,
             lent_lets: propagation.lent_lets,
+            lent_returns: propagation.lent_returns,
             viewed_numbers: propagation.viewed_numbers,
             array_literals: propagation.array_literals,
             comptime_values: propagation.comptime_values,
@@ -5331,7 +5339,7 @@ impl<'p> Emitter<'p> {
                 out.push(&format!("{word};"));
             }
             Stmt::Return(Some(value)) if tail == Tail::Return => {
-                self.nullable(out, value, span, depth, flow)?;
+                self.handed_back(out, value, span, depth, flow)?;
             }
             Stmt::Return(value) => {
                 // Kap 7.1: a `throws` function returns a `Result`, so what the
@@ -5339,12 +5347,12 @@ impl<'p> Emitter<'p> {
                 match (value, flow.throws) {
                     (Some(value), true) => {
                         out.push("return Ok(");
-                        self.nullable(out, value, span, depth, flow)?;
+                        self.handed_back(out, value, span, depth, flow)?;
                         out.push(");");
                     }
                     (Some(value), false) => {
                         out.push("return ");
-                        self.nullable(out, value, span, depth, flow)?;
+                        self.handed_back(out, value, span, depth, flow)?;
                         out.push(";");
                     }
                     (None, true) => out.push("return Ok(());"),
@@ -5371,6 +5379,12 @@ impl<'p> Emitter<'p> {
                 tail,
             )?,
             Stmt::Expr(expr) => {
+                // **A tail is a `return` written without the word**, so the `&`
+                // it may owe is the same one — `fn text(ref self) -> ref String
+                // { self.text }` and the `return` form are one program.
+                if tail == Tail::Return && self.lent_returns.contains(&span.start) {
+                    out.push("&");
+                }
                 self.expr(out, expr, depth, flow)?;
                 // `if x { … };` is legal and noisy; a block-shaped statement
                 // ends where its brace does.
@@ -5406,12 +5420,39 @@ impl<'p> Emitter<'p> {
         }
     }
 
+    /// What a `return` hands back: the nullable wrap, and **the `&` the compiler
+    /// owes** where the value is a view of the subject
+    /// ([ADR-094](../../../docs/specification/adr/adr-094.md) D1's third
+    /// position).
+    ///
+    /// The `&` goes **inside** the wrap, because `Some(&self.text)` is an
+    /// `Option<&String>` and `&Some(self.text)` is a view of a value built
+    /// here — which also moves the field, the very thing the reference is for.
+    fn handed_back(
+        &self,
+        out: &mut Out,
+        value: &Expr,
+        span: &Span,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
+        out.push(before);
+        if self.lent_returns.contains(&span.start) {
+            out.push("&");
+        }
+        self.expr(out, value, depth, flow)?;
+        out.push(after);
+        Ok(())
+    }
+
     /// An expression, with Part I 2.3's `Some(…)` around it where the checker
     /// says a plain value stands in a nullable slot.
     ///
     /// A `return` needs this and a `let` writes it inline, because a `let` has
     /// the shared-value constructor to nest inside as well and the order of the
-    /// two parentheses is that statement's business.
+    /// two parentheses is that statement's business. A `return` reaches it
+    /// through [`Emitter::handed_back`], which is this and the `&` it may owe.
     fn nullable(
         &self,
         out: &mut Out,

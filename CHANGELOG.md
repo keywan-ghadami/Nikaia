@@ -4,6 +4,72 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.177] — 2026-09-23
+
+**A view of the subject is handed back without a `ref`** —
+[ADR-202](docs/specification/adr/adr-202.md), and
+[ADR-094](docs/specification/adr/adr-094.md) D1's third position.
+[`open-work.md`](docs/open-work.md) §1.12 is closed, and §1 holds one entry.
+
+### What was wrong
+
+```nika
+pub struct Holder { text: String }
+
+impl Holder {
+    pub fn text(ref self) -> ref String {
+        return self.text
+    }
+}
+```
+
+was **two** refusals at once — `NK1131` *`self` is borrowed here, so `text`
+cannot be handed back by value*, and `NK1104` *this returns `String`, and the
+function declares `ref String`*. Both are about one missing character, and
+neither named it.
+
+**And the one spelling that worked was the one the author should not write.**
+`return ref self.text` compiled. So the state of the language was *a reference
+the author writes is required in one position and refused in two others*, which
+is what D1 exists to end — from the side nobody had looked at.
+
+### What the compiler writes now
+
+- **The `&` at a `return`**, where the function declares a view and the value is a place inside a **borrowed** subject. The tail form is the same program: `fn text(ref self) -> ref String { self.text }` and the `return` form lower to one file.
+- **Both halves are required.** A result declared by value is still a move out of a loan and still `NK1131`. A receiver taken **by value** has nothing to lend — the subject dies at the end of the call — so that one is `NK1104`, in this language's words rather than `rustc`'s about a file nobody wrote ([Part III C.1](docs/specification/30-nikaia-tooling.md)).
+- **Decided in the checker and written in the emitter**, which is [ADR-028](docs/specification/adr/adr-028.md)'s division: which place is a view of what is a question about types, and the emitter keeps none. It travels as a set of statement positions, exactly as the `let` position's already does.
+
+### The receiver is a position in `borrows`
+
+A method whose result is a view and whose receiver is `ref self` records
+`returns = "borrows(self)"`. It always belonged there —
+[ADR-098](docs/specification/adr/adr-098.md)'s column names the positions a
+result may point into, and a `ref self` is a view the caller gave. It was left
+out while nothing read the column across a receiver; the reader that does
+arrived at 0.0.176, and read **no position at all** for the accessor a program
+most often writes.
+
+### `NK1131`'s third way out, and only where it can be taken
+
+The help names *declare the result `ref T` and the view is what this line means*
+where the field is **handed back**, and not where it is bound or passed: those
+have nowhere declared to point, so [ADR-083](docs/specification/adr/adr-083.md)
+D2's two ways out are still the whole answer there. Offering a third would be
+[Part III C.2](docs/specification/30-nikaia-tooling.md) from the other side.
+
+### What is open
+
+**The written `ref` is not refused, and one root still needs it** (ADR-202 D2 and
+§4, `open-work.md` §2.45). D1 writes the `&` where the place is inside a borrowed
+*subject* and not where it is inside a lent *parameter* — `fn a(row: ref Row) ->
+ref String { return row.name }` still wants the word — so the two are one piece of
+work: the inference reaches every root, and then the second spelling goes. D4
+already stages its own refusals for this reason.
+
+`examples/http`'s `Request::body()` is written, which is
+[ADR-018](docs/specification/adr/adr-018.md) D4's last accessor — the request's
+whole surface is methods now.
+
 ## [0.0.176] — 2026-09-23
 
 **A call says which of its arguments its result may point into**, and the view

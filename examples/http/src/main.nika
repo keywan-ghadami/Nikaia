@@ -45,9 +45,9 @@ pub struct Request {
     // ([ADR-010](../../../docs/specification/adr/adr-010.md) D2), and
     // provenance travels with the bytes.
     //
-    // A field and not an accessor, which is a limit rather than a design: a
-    // method may hand back a view of a field that already *is* one and not of a
-    // field it owns (`NK1131`, `open-work.md` §1.12).
+    // **`pub`, and `body()` beside it.** The accessor is the one a handler
+    // reads (D4); the field is what `listen` fills and what a program that
+    // wants the bytes owned may take.
     pub body: String,
 }
 
@@ -70,6 +70,16 @@ impl Request {
     // wants.
     pub fn target(ref self) -> ref String {
         return self.head.target()
+    }
+
+    // What the client sent after the head, empty where it sent nothing
+    // ([ADR-018](../../../docs/specification/adr/adr-018.md) D4).
+    //
+    // **Untrusted**, and the language knows it: it came off a socket
+    // ([ADR-010](../../../docs/specification/adr/adr-010.md) D2), and
+    // provenance travels with the bytes.
+    pub fn body(ref self) -> ref String {
+        return self.body
     }
 
     // What the query string says under this name, or nothing where it says

@@ -77,11 +77,11 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Two entries are open** — §1.10 and §1.12 — and both were **revealed by a fix**
-rather than made by one, which is the shape this section's method produces: a
-thing becomes writable, so the next question about it becomes askable. §1.13
-closed at 0.0.176, §1.11 at 0.0.173 and §1.9 at 0.0.172, each the package after
-the one that found it. §1.7 closed at 0.0.168 — `use std::<anything>` is
+**One entry is open** — §1.10 — and it was **revealed by a fix** rather than made
+by one, which is the shape this section's method produces: a thing becomes
+writable, so the next question about it becomes askable. §1.12 closed at 0.0.177,
+§1.13 at 0.0.176, §1.11 at 0.0.173 and §1.9 at 0.0.172, each the package after the
+one that found it. §1.7 closed at 0.0.168 — `use std::<anything>` is
 `NK1186` now, and the list it is answered from is what `std`'s ledger declares
 joined with what a page or a record names and the compiler has not built. §1.8
 closed at 0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132,
@@ -163,44 +163,6 @@ backend's words. Nothing is miscompiled.
 
 *Found by* fixing §1.9 and then handing the now-writable function a type that
 implements nothing — the same method one step further on.
-
-### 1.12. A method cannot hand back a view of a field it owns
-
-```nika
-pub struct Holder { text: String }
-
-impl Holder {
-    pub fn text(ref self) -> ref String {
-        return self.text
-    }
-}
-```
-
-is **two** refusals — `NK1131` *`self` is borrowed here, so `text` cannot be
-handed back by value*, and `NK1104` *this returns `String`, and the function
-declares `ref String`* — so the accessor a program most often writes has no
-spelling. A field that already **is** a view (`text: ref String`) hands back
-fine, which is the shape [ADR-008](specification/adr/adr-008.md) §5 built.
-
-*Its help named a way out that could not be taken*, which is [Part III
-C.2](specification/30-nikaia-tooling.md), and that half is **fixed** at 0.0.175:
-it said *declare the result `&str` and write `return &self.text`*, and `&str`
-stopped being a spelling at [ADR-184](specification/adr/adr-184.md) D4 while a
-`&` a program writes is `NK1137` since
-[ADR-094](specification/adr/adr-094.md) D1. The message names
-[ADR-083](specification/adr/adr-083.md) D2's **two** ways out now — `.clone()`
-and a `self` receiver — and says outright that a view is not a third.
-
-*What is left is the sentence the old help was reaching for.* The result is a
-view of the **subject**, which the ledger already has a column for
-(`returns = "borrows(self)"`), and what is missing is the `&` at the `return` —
-[ADR-094](specification/adr/adr-094.md) D1's *the compiler writes the reference*
-in a third position, beside the declaration and the call. `NK1104`'s fit would
-take the view of a place where the result is declared one, the way
-`the_compiler_writes_the_reference` already does for an argument.
-
-*Found by* writing [ADR-018](specification/adr/adr-018.md) D4's
-`request.body()`, which is the shape a handler reads its request with.
 
 **Every entry this section has ever held was found by *running* something** —
 the specification's own programs, the corpus at both settings, a two-file
@@ -1472,6 +1434,50 @@ and that is the same [ADR-001](specification/adr/adr-001.md) D1 wall that keeps
 rustdoc-JSON out. And a **method** is read and not written down, because what an
 `impl`'s `pub fn` is at a foreign boundary is
 [ADR-104](specification/adr/adr-104.md) D4's own question.
+
+### 2.45. A `ref` a program writes at a `return` is still a second spelling, and one root still needs it
+
+[ADR-202](specification/adr/adr-202.md) D2 and its §4, which together are
+[ADR-094](specification/adr/adr-094.md) D4's staging one position further on.
+
+`return ref self.text` and `return self.text` both work, against a declared
+`-> ref String` out of a `ref self` method. The second is what D1 built at
+0.0.177; the first is what a program had to write before it, and
+[ADR-094](specification/adr/adr-094.md) D1's own sentence — *two spellings for
+one thing is the state a reader cannot tell a rule from a habit in* — is what
+says one of them has to go.
+
+**And it cannot go yet, because one root still needs it.** D1 writes the `&`
+where the place is inside a borrowed **subject**, and not where it is inside a
+lent **parameter**:
+
+```nika
+fn a(row: ref Row) -> ref String {
+    return row.name        // NK1104: this returns `String`, and the function declares `ref String`
+}
+
+fn b(row: ref Row) -> ref String {
+    return ref row.name    // this is the spelling
+}
+```
+
+So the two halves are one piece of work: the inference reaches every root, and
+then the written word is refused. Refusing it first takes away the only way to say
+what `a` means, which is exactly why D4 staged the `let` position too.
+
+*What it needs:* the root's binding has to be a view whose buffer is the
+**caller's**, which is a question about the binding and not about the place — a
+local bound to a view of something this body owns is not it. The subject is the
+one root where that question has a constant answer, which is why it went first.
+Then `NK1137` at the position, which is one condition and one message.
+
+*And the corpus says when the refusal can land.* The one place that writes the
+word today is `crates/nikaia/tests/borrowed_subject.rs`'s
+`a_view_of_the_field_is_the_free_way_out`, which is a test *of* the spelling.
+
+*Why it is here and not in §1:* nothing is miscompiled, and the program above has
+a spelling — `b` — so no correct program is refused. What is open is a language
+with two ways to say one thing.
 
 ## 3. Upkeep
 

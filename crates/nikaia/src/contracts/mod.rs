@@ -1547,9 +1547,25 @@ impl Ledger {
 
         let returns_view = ret_type.as_ref().is_some_and(holds_view);
         let borrows = if returns_view {
-            args.iter()
-                .filter(|a| holds_view(&a.ty))
-                .map(|a| parsed.text(a.name).to_string())
+            // **The receiver is a position too**, and `self` is what names it:
+            // a `ref self` is a view the caller gave, so a result that is a view
+            // may point into the subject. It was left out while nothing read the
+            // column across a receiver, and a reader that does then read *no
+            // position at all* for the accessor a program most often writes.
+            let subject = match item {
+                Item::Fn {
+                    receiver: Some(receiver),
+                    ..
+                } if receiver.is_ref => Some("self".to_string()),
+                _ => None,
+            };
+            subject
+                .into_iter()
+                .chain(
+                    args.iter()
+                        .filter(|a| holds_view(&a.ty))
+                        .map(|a| parsed.text(a.name).to_string()),
+                )
                 .collect()
         } else {
             Vec::new()

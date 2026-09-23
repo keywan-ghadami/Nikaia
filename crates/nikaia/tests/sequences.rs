@@ -261,6 +261,16 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// [ADR-018](../../../docs/specification/adr/adr-018.md) D4's query string
 /// through the head the request holds. Same lambda parameter, same package next
 /// door, same one-file sweep.
+///
+/// **64 at 0.0.177**, and the thirteenth is the eleventh becoming **two calls**.
+/// `request.body` is an accessor now rather than a field
+/// ([ADR-202](../../../docs/specification/adr/adr-202.md) D1 gave a method the
+/// spelling to hand a view of a field back), so `request.body().len()` is a call
+/// on the untyped lambda parameter *and* a call on what it hands back, where the
+/// field form was one. Measured both ways round on this tree: 63 with the field,
+/// 64 with the accessor. So the rise is a line the corpus writes differently and
+/// not a receiver that stopped being typed — which is the one thing this ceiling
+/// exists to tell apart, and the reason it is raised with a sentence.
 #[test]
 fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -297,8 +307,8 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     }
     assert!(files >= 18, "only {files} programs were read");
     assert!(
-        unanswered <= 63,
-        "{unanswered} unanswered method calls in {files} programs, and 63 is the \
+        unanswered <= 64,
+        "{unanswered} unanswered method calls in {files} programs, and 64 is the \
          ceiling this was last measured at - a rise means a receiver stopped \
          being typed, and a fall means this number goes down with a sentence \
          saying what answered them"

@@ -626,6 +626,21 @@ pub struct Checked {
     /// move out of a container — so this is a set that has to be *right* rather
     /// than one that can be safe.
     pub lent_lets: BTreeSet<usize>,
+    /// The `return`s that hand back a **view of the subject**, by the byte the
+    /// statement starts at ([ADR-094](../../docs/specification/adr/adr-094.md)
+    /// D1's third position).
+    ///
+    /// `fn text(ref self) -> ref String { return self.text }` is a view of a
+    /// borrowed subject and not a move out of it, so the `&` is the compiler's
+    /// to write — the same sentence that decides an argument's, one position
+    /// over. Written by the author it is `NK1137`; left out by both it was
+    /// `NK1131` **and** `NK1104`, so the accessor a program most often writes
+    /// had no spelling at all.
+    ///
+    /// **Only where the declared result is a view and the value is a place
+    /// inside a borrowed subject.** Either half missing and the line is what it
+    /// always was: a move out of a loan, which is `NK1131`.
+    pub lent_returns: BTreeSet<usize>,
     /// **Where a number is read through a `for` binding**, by the byte the
     /// statement starts at and the name it was written under
     /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
@@ -1231,6 +1246,8 @@ pub struct Propagation {
     pub concatenations: BTreeSet<usize>,
     /// [`Checked::lent_lets`].
     pub lent_lets: BTreeSet<usize>,
+    /// [`Checked::lent_returns`].
+    pub lent_returns: BTreeSet<usize>,
     /// **Where a number is read through a `for` binding**, by the byte the
     /// statement starts at and the name it was written under
     /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
@@ -1387,6 +1404,7 @@ pub fn propagation_against(
         unrolled_calls: checked.unrolled_calls,
         concatenations: checked.concatenations,
         lent_lets: checked.lent_lets,
+        lent_returns: checked.lent_returns,
         viewed_numbers: checked.viewed_numbers,
         array_literals: checked.array_literals,
         lent_args: checked.lent_args,
@@ -3087,6 +3105,19 @@ impl<'a> Checker<'a> {
         // ([ADR-093](../../../docs/specification/adr/adr-093.md)).
         let ends = !never_ends(body);
         if let (Some(expected), Some(span)) = (&expected, tail_span.filter(|_| ends)) {
+            // **A tail is a `return` written without the word**, so it owes the
+            // same `&`: `fn text(ref self) -> ref String { self.text }` and the
+            // `return` form are one program, and one of the two answering
+            // differently would be a spelling that decides a refusal.
+            let lending = matches!(body.stmts.last().map(|s| &s.node), Some(Stmt::Expr(value))
+                if self.hands_back_a_view_of_the_subject(value));
+            if lending {
+                self.checked.lent_returns.insert(span.start);
+            }
+            let tail = match lending {
+                true => view_of(&tail),
+                false => tail,
+            };
             self.expect(&tail, expected, span, "returns", |found, want| {
                 format!("this function hands back `{found}`, and it declares `{want}`")
             });
@@ -4142,6 +4173,32 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// Whether this value is a **view of the subject**: a place inside a
+    /// borrowed `self`, handed back where the function declares a view.
+    ///
+    /// Purely about what the source wrote — the receiver, the declared result
+    /// and the shape of the place — because it decides whether to *ask*
+    /// `NK1131`, and asking that question types the expression. The types are
+    /// still measured: [`Checker::returns`] compares the view against the
+    /// declared result, so a field of the wrong type is `NK1104` as before.
+    ///
+    /// **A place inside the subject and not the subject itself.** `return self`
+    /// out of a `ref self` method is a different sentence — the subject is
+    /// already a view there, and nothing is owed.
+    fn hands_back_a_view_of_the_subject(&self, value: &Expr) -> bool {
+        if !self.borrowing_self {
+            return false;
+        }
+        if !self.expected.as_ref().is_some_and(Ty::is_a_view) {
+            return false;
+        }
+        let rooted_at_self = |place: &Expr| {
+            matches!(place, Expr::Field { .. } | Expr::Index { .. })
+                && self.rooted_at(place).as_deref() == Some("self")
+        };
+        rooted_at_self(value)
+    }
+
     fn a_field_of_a_borrowed_subject(&mut self, value: &Expr, span: &Span, what: &str) {
         if !self.borrowing_self {
             return;
@@ -4171,31 +4228,37 @@ impl<'a> Checker<'a> {
                  (Part I, 6.5)",
                 ty.text()
             )],
-            // **The two ways out this record names, and no third**
-            // ([ADR-083](../../docs/specification/adr/adr-083.md) D2: *both ways
-            // out are in the message: `.clone()`, written where it happens, or a
-            // `self` receiver*).
+            // **[ADR-083](../../docs/specification/adr/adr-083.md) D2's two ways
+            // out — and, where this is a `return`, the third that is now real.**
             //
-            // A third stood here and could not be taken — *declare the result
-            // `&str` and write `return &self.field`* — which is [Part III
-            // C.2](../../docs/specification/30-nikaia-tooling.md)'s *a way out
-            // that cannot be taken is not one*, twice over: `&str` stopped being
-            // a spelling at [ADR-184](../../docs/specification/adr/adr-184.md)
-            // D4, and a `&` a program writes is `NK1137` since
-            // [ADR-094](../../docs/specification/adr/adr-094.md) D1. Doing what
-            // it asked — declaring `ref String` and writing `return self.field` —
-            // gets this refusal *and* `NK1104`.
+            // The third stood here once and could not be taken: it said *declare
+            // the result `&str` and write `return &self.field`*, and `&str`
+            // stopped being a spelling at
+            // [ADR-184](../../docs/specification/adr/adr-184.md) D4 while a `&` a
+            // program writes is `NK1137` since
+            // [ADR-094](../../docs/specification/adr/adr-094.md) D1. What it was
+            // reaching for is built now: **declaring the result a view is
+            // enough**, and the `&` is the compiler's
+            // ([`Checked::lent_returns`], D1's third position). So the sentence
+            // is back, with the half the author writes and without the half the
+            // author cannot.
             //
-            // **The sentence it was reaching for is real and is not built**, and
-            // the last line says so rather than offering it:
-            // [`open-work.md`](../../docs/open-work.md) §1.12 carries the work.
-            help: Some(format!(
-                "write `self.{field}.clone()` for a copy, where it happens, or \
-                 `fn …(self)` where the method is meant to consume its subject. \
-                 Handing back a **view** of it is not a third way today: a method may \
-                 hand back a view of a field that already *is* one, and not of a field \
-                 it owns"
-            )),
+            // **Only where the value is handed back.** A field *bound* to a name
+            // or *passed* to a call is not a result, so a view of it has nowhere
+            // declared to point — the two ways out are the whole answer there.
+            help: Some(match what {
+                "handed back" => format!(
+                    "declare the result `ref {}` and the view is what this line means - the \
+                     `&` is the compiler's to write (ADR-094 D1). Or `self.{field}.clone()` \
+                     for a copy, where it happens, or `fn …(self)` where the method is meant \
+                     to consume its subject",
+                    ty.text()
+                ),
+                _ => format!(
+                    "write `self.{field}.clone()` for a copy, where it happens, or \
+                     `fn …(self)` where the method is meant to consume its subject"
+                ),
+            }),
         });
     }
 
@@ -13363,8 +13426,18 @@ impl<'a> Checker<'a> {
     /// and the expression are the same `return`, so they ask the same
     /// questions in the same order rather than in two places that drift.
     fn returns(&mut self, value: Option<&Expr>, span: &Span) {
+        // **The `&` at a `return`** ([ADR-094](../../docs/specification/adr/adr-094.md)
+        // D1's third position), asked before the refusal it takes the place of:
+        // a place inside a borrowed subject, handed back where the function
+        // declares a view, is a view *of* the subject and not a move out of it.
+        let lending = value.is_some_and(|value| self.hands_back_a_view_of_the_subject(value));
+        if lending {
+            self.checked.lent_returns.insert(span.start);
+        }
         if let Some(value) = value {
-            self.a_field_of_a_borrowed_subject(value, span, "handed back");
+            if !lending {
+                self.a_field_of_a_borrowed_subject(value, span, "handed back");
+            }
         }
         let found = match value {
             Some(value) => self.expr(value, span),
@@ -13372,6 +13445,14 @@ impl<'a> Checker<'a> {
         };
         let Some(expected) = self.expected.clone() else {
             return;
+        };
+        // The line hands back the **view**, so that is what answers to the
+        // declared type. `view_of` and not a `&` pasted on the front, for the
+        // reason the argument position has it: a view of a `String` is a `ref
+        // String` and the one rewrite Part I 6.5 makes.
+        let found = match lending {
+            true => view_of(&found),
+            false => found,
         };
         let mut found = found;
         if let Some(value) = value {

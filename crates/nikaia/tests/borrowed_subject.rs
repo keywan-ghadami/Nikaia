@@ -290,15 +290,19 @@ fn main() {
 }
 
 /// **And the help names only what can be taken**
-/// ([ADR-083](../../../docs/specification/adr/adr-083.md) D2's two ways out,
-/// [Part III C.2](../../../docs/specification/30-nikaia-tooling.md)'s rule).
+/// ([Part III C.2](../../../docs/specification/30-nikaia-tooling.md)'s rule).
 ///
 /// This test used to be *the help names the field's own view type, not always
-/// `&str`* — a claim about a third way out that reads *declare the result `…`
-/// and write `return &self.tags`*, and which no program can take: `&str` stopped
-/// being a spelling at [ADR-184](../../../docs/specification/adr/adr-184.md) D4,
-/// and a `&` a program writes is `NK1137`. A better spelling for a way out that
-/// does not exist is not better.
+/// `&str`* — a claim about a way out that reads *declare the result `…` and write
+/// `return &self.tags`*, and which no program could take: `&str` stopped being a
+/// spelling at [ADR-184](../../../docs/specification/adr/adr-184.md) D4, and a
+/// `&` a program writes is `NK1137`. A better spelling for a way out that does
+/// not exist is not better.
+///
+/// **The half of it that was real is built**, and the help offers it: declaring
+/// the result a view is enough, and the `&` is the compiler's. What stays
+/// refused is the shape here — the result is declared `Vec[i64]`, so the value
+/// is moved out of a loan whatever the help says.
 #[test]
 fn the_help_names_only_what_can_be_taken() {
     let found = findings(
@@ -322,24 +326,198 @@ fn main() {
         .iter()
         .find(|f| f.code == "NK1131")
         .expect("a Vec field is moved too");
-    // **The help does not depend on the field's type**, and that is the change
-    // this test was turned around by. It used to assert the view a `Vec` field
-    // would have — `&Vec[i64]` — as part of a way out that read *declare the
-    // result `…` and write `return &self.tags`*. Neither half can be taken:
-    // `&str` stopped being a spelling at
-    // [ADR-184](../../../docs/specification/adr/adr-184.md) D4, and a `&` a
-    // program writes is `NK1137` since
-    // [ADR-094](../../../docs/specification/adr/adr-094.md) D1 — so the help
-    // named a way out that does not exist, which is [Part III
-    // C.2](../../../docs/specification/30-nikaia-tooling.md).
+    // **The `&` is never asked of the author**, which is the half of the old
+    // help that could not be taken: a `&` a program writes is `NK1137` since
+    // [ADR-094](../../../docs/specification/adr/adr-094.md) D1, so a help that
+    // asked for one named a way out that does not exist ([Part III
+    // C.2](../../../docs/specification/30-nikaia-tooling.md)). The other half —
+    // *declare the result a view* — is real and is offered, in the field's own
+    // type and never always `&str`.
     assert!(
         refusal
             .help
             .as_deref()
             .is_some_and(|h| h.contains("self.tags.clone()")
                 && h.contains("(self)")
+                && h.contains("declare the result `ref Vec[i64]`")
                 && !h.contains("&self.tags")),
-        "the two ways out, and no third: {:?}",
+        "the ways out, and no `&` for the author to write: {:?}",
         refusal.help
+    );
+}
+
+/// **And the `&` is the compiler's to write**
+/// ([ADR-094](../../../docs/specification/adr/adr-094.md) D1's third position).
+///
+/// `return self.name` against a declared `ref String` was two refusals at once —
+/// `NK1131` for the move and `NK1104` for the type — so the accessor a program
+/// most often writes had no spelling of its own. It has one now, and it is the
+/// one the declaration already implies: the result is a view, the value is a
+/// place inside a borrowed subject, and there is nothing else the line could
+/// mean.
+#[test]
+fn a_field_handed_back_where_a_view_is_declared_needs_no_reference() {
+    let printed = ran(
+        "a view of the field with no reference written",
+        r#"
+struct Row {
+    name: String,
+    tags: Vec[i64],
+}
+
+impl Row {
+    fn name(ref self) -> ref String {
+        return self.name
+    }
+
+    fn tags(ref self) -> ref Vec[i64] {
+        self.tags
+    }
+}
+
+fn main() {
+    let mut v = Vec()
+    v.push(7)
+    let r = Row { name: "a".to_string(), tags: v }
+    println(f"{r.name()} {r.tags()[0]}")
+}
+"#,
+    );
+    assert_eq!(printed.trim(), "a 7");
+}
+
+/// The reference lands in the lowering, and it lands **once**.
+///
+/// The written form and the unwritten one are one program, so they lower to one
+/// file: `&self.name` either way, and never `&&self.name` — which is what a
+/// second `&` on a value that already has one would be, reported about a file
+/// nobody wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+#[test]
+fn the_reference_is_written_once_whichever_way_the_source_says_it() {
+    let both = ["return self.name", "return ref self.name", "self.name"];
+    for body in both {
+        let source = format!(
+            "struct Row {{ name: String }}\n\
+             \n\
+             impl Row {{\n\
+             \x20   fn name(ref self) -> ref String {{\n\
+             \x20       {body}\n\
+             \x20   }}\n\
+             }}\n\
+             \n\
+             fn main() {{ println(\"x\") }}\n"
+        );
+        assert!(
+            findings(&source).is_empty(),
+            "`{body}` is a correct program"
+        );
+        let rust = emit_program(
+            &parse_to_ast(&source).expect("the source parses"),
+            Build::default(),
+        )
+        .expect("the source lowers")
+        .rust;
+        assert!(rust.contains("&self.name"), "`{body}`:\n{rust}");
+        assert!(!rust.contains("&&self.name"), "`{body}`:\n{rust}");
+    }
+}
+
+/// **A view of the subject is a view of the subject, and the ledger says so.**
+///
+/// `returns = "borrows(self)"` is the column a caller reads to know the result
+/// does not point into what it passed — which is what lets a wrapper hand a view
+/// parameter to such a method without being told it escapes. The receiver had
+/// been left out of it while nothing read the column across one.
+#[test]
+fn the_ledger_says_the_result_borrows_the_subject() {
+    let parsed = parse_to_ast(
+        "struct Row { name: String }\n\
+         \n\
+         impl Row {\n\
+         \x20   pub fn name(ref self) -> ref String { return self.name }\n\
+         \x20   pub fn owned(ref self) -> String { return self.name.clone() }\n\
+         }\n",
+    )
+    .expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    assert_eq!(
+        own.functions
+            .get("Row::name")
+            .expect("the accessor is in the ledger")
+            .borrows,
+        vec!["self".to_string()],
+    );
+    // **And only where the result is a view.** A method that hands back an owned
+    // value points into nothing, so there is no position to name.
+    assert!(own
+        .functions
+        .get("Row::owned")
+        .expect("the copy is in the ledger")
+        .borrows
+        .is_empty());
+}
+
+/// **The way out is offered only where it can be taken.**
+///
+/// A field *handed back* may become a view, because the result is a place the
+/// declaration can name. A field *bound* to a local or *passed* to a call has
+/// nowhere declared to point, so the two ways out are the whole answer there —
+/// [Part III C.2](../../../docs/specification/30-nikaia-tooling.md) again, from
+/// the other side.
+#[test]
+fn the_third_way_out_is_named_only_where_the_result_is() {
+    let positions = [
+        (
+            "    fn m(ref self) -> String {\n        return self.name\n    }",
+            true,
+        ),
+        (
+            "    fn m(ref self) -> i64 {\n        let x = self.name\n        return 1\n    }",
+            false,
+        ),
+        (
+            "    fn m(ref self) -> i64 {\n        return takes(self.name)\n    }",
+            false,
+        ),
+    ];
+    for (body, offered) in positions {
+        let found = findings(&around(body, "r.m()"));
+        let refusal = found
+            .iter()
+            .find(|f| f.code == "NK1131")
+            .unwrap_or_else(|| panic!("a field by value is refused: {found:#?}"));
+        let help = refusal.help.as_deref().expect("every refusal has one");
+        assert_eq!(
+            help.contains("declare the result `ref String`"),
+            offered,
+            "{body}\n{help}"
+        );
+    }
+}
+
+/// **And a subject that is not borrowed has nothing to lend.**
+///
+/// `fn m(self) -> ref String` takes the subject by value, so it dies at the end
+/// of the call and a view into it cannot leave. The refusal is `NK1104`'s — the
+/// value is a `String` where a `ref String` was declared — and not a silent
+/// reference the language below would then report about a file nobody wrote.
+#[test]
+fn a_subject_taken_by_value_lends_nothing() {
+    let found = findings(
+        r#"
+struct Row { name: String }
+
+impl Row {
+    fn m(self) -> ref String {
+        return self.name
+    }
+}
+
+fn main() { println("x") }
+"#,
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1104"),
+        "a view out of a subject taken by value is refused: {found:#?}"
     );
 }
