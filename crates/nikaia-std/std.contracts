@@ -1765,7 +1765,41 @@ sync = true
 touches = []
 returns = "borrows(self)"
 signature = "(ref Head) -> ref String"
-doc = "The path, with its query string if there is one, and **not decoded**."
+doc = "The path, **without** the query string, and **not decoded** (ADR-018 D4, which\nwrites `path()` and `query()` as two things)."
+
+[fn."http1::Head::target"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref Head) -> ref String"
+doc = "The whole request target as it was written, query string and all.\n\nWhat a log wants, and the one place the bytes the client chose are handed over\nuntouched."
+
+# **`String?` and not an empty string** (ADR-018 D4: *Kap 3.5's nullable*): a name
+# the client did not write and one it wrote empty are two different facts, and a
+# server that read them as one would answer a question nobody asked.
+[fn."http1::Head::query"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref Head, name: ?) -> ref String?"
+doc = "What the query string says under this name, or nothing where it says nothing.\n\n**Nothing is decoded**: a `%20` stays `%20` and a `+` stays a `+`, because which\nof the two a `+` means depends on who wrote the form. **A name with no `=` has\nan empty value**, which is not the same as being absent: `?debug` says the name\nwas written."
+
+[fn."http1::Head::header"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref Head, name: ?) -> ref String?"
+doc = "What the client sent under this name, or nothing where it sent none.\n\n**Case-insensitive, as the protocol is** (ADR-018 D4). Where a client sent the\nsame name twice this is the **first**: joining them with a comma is what the\nprotocol says a *list-valued* header means, and which headers those are is not\nsomething this module knows."
+
+[fn."http1::Head::headers"]
+pub = true
+sync = true
+touches = []
+signature = "(ref Head) -> i64"
+doc = "How many headers there are, which is what a program counts before it decides a\nclient is being unreasonable."
 
 [fn."http1::Head::length"]
 pub = true

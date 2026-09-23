@@ -25,20 +25,58 @@ use std::net
 use std::http1
 use std::io
 
-// What a handler is given (ADR-018 D1).
+// What a handler is given ([ADR-018](../../../docs/specification/adr/adr-018.md)
+// D1), with D4's surface over it.
 //
-// The strings are views into the bytes the connection read (Part I 6.6), so a
-// parameter used inside the handler's scope costs nothing and one kept past it
-// has to be owned.  Nothing here allocates.
+// **The head is `std`'s and the reading is this package's**
+// ([ADR-194](../../../docs/specification/adr/adr-194.md) D1): `http1::Head` is
+// where a request's text was parsed, and a handler asks *this* type its
+// questions. The accessors hand back **views** into the bytes the connection
+// read (Part I 6.6), so one used inside the handler's scope costs nothing and
+// one kept past it has to be owned. Nothing here allocates.
 pub struct Request {
-    pub method: String,
-    pub path: String,
+    // **D4's `query()` and `header()` are not here**, and the field is `pub` so
+    // that a handler can still ask: `request.head.query("name")`. Neither
+    // accessor can be written today — a `ref String` name is `NK2302`, because
+    // the views analysis carries no ledger and so cannot read that
+    // `http1::Head::query` **borrows its receiver** rather than its argument;
+    // and an owned `String` name refuses the literal every caller writes, which
+    // is [ADR-107](../../../docs/specification/adr/adr-107.md)'s *text is one
+    // type*, unbuilt. `open-work.md` §1.13 carries the first.
+    pub head: http1::Head,
     // What the client sent after the head, empty where it sent nothing.
     //
     // **Untrusted**, and the language knows it: it came off a socket
     // ([ADR-010](../../../docs/specification/adr/adr-010.md) D2), and
     // provenance travels with the bytes.
+    //
+    // A field and not an accessor, which is a limit rather than a design: a
+    // method may hand back a view of a field that already *is* one and not of a
+    // field it owns (`NK1131`, `open-work.md` §1.12).
     pub body: String,
+}
+
+impl Request {
+    // `GET` or `POST`, as it was written. D4 says an **enum** here and this is a
+    // `ref String`: the enum is the next step and the refusal that makes it
+    // total is already in `std` — `http1` answers nothing else.
+    pub fn method(ref self) -> ref String {
+        return self.head.method()
+    }
+
+    // The path, **without** the query string (D4, which writes `path()` and
+    // `query()` as two things) and **not decoded**: what a `%20` means is this
+    // program's question.
+    pub fn path(ref self) -> ref String {
+        return self.head.path()
+    }
+
+    // The whole request target as the client wrote it, which is what a log
+    // wants.
+    pub fn target(ref self) -> ref String {
+        return self.head.target()
+    }
+
 }
 
 // What a handler gives back (ADR-018 D3).
@@ -202,11 +240,7 @@ fn answer(
         return
     }
 
-    let answered = handler(Request {
-        method: asked.method().to_string(),
-        path: asked.path().to_string(),
-        body: body,
-    })
+    let answered = handler(Request { head: asked, body: body })
     connection.write(render(answered)) catch { return }
 }
 

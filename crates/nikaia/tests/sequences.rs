@@ -255,6 +255,12 @@ fn a_loop_over_standard_input_binds_a_string_and_still_costs_throws() {
 /// type it fits, measured: the same shape with the `struct` declared in the same
 /// file answers. What this one cannot see is `http::Request`, because the sweep
 /// reads one file at a time and that type is the package next door's.
+///
+/// **63 at 0.0.175**, and the twelfth is the eleventh again, one accessor over:
+/// `request.head.query("name")` in the same handler, reaching
+/// [ADR-018](../../../docs/specification/adr/adr-018.md) D4's query string
+/// through the head the request holds. Same lambda parameter, same package next
+/// door, same one-file sweep.
 #[test]
 fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -291,8 +297,8 @@ fn the_corpus_has_no_more_unanswered_method_calls_than_it_had() {
     }
     assert!(files >= 18, "only {files} programs were read");
     assert!(
-        unanswered <= 62,
-        "{unanswered} unanswered method calls in {files} programs, and 62 is the \
+        unanswered <= 63,
+        "{unanswered} unanswered method calls in {files} programs, and 63 is the \
          ceiling this was last measured at - a rise means a receiver stopped \
          being typed, and a fall means this number goes down with a sentence \
          saying what answered them"

@@ -24,12 +24,23 @@ fn main() throws {
     // handler per path. What a program writes instead is the decision itself,
     // which is also ADR-194 D4's rule — the program says what is exposed.
     http::listen(at) fn(request) {
-        if request.method == "POST" {
+        if request.method() == "POST" {
             let size = request.body.len()
             return http::Response::text(f"you sent {size} bytes")
         }
-        if request.path == "/" {
-            return http::Response::text("Hello from a package".to_string())
+        // **The query string is its own question**
+        // ([ADR-018](../../../docs/specification/adr/adr-018.md) D4), and
+        // **nothing** is not an empty string: `?name=` and no `name` at all are
+        // two different facts, and `??` is where a program says what it does
+        // about the second.
+        if request.path() == "/" {
+            let who = request.head.query("name") ?? "world"
+            return http::Response::text(f"Hello, {who}")
+        }
+        // And a header, case-insensitive as the protocol is.
+        if request.path() == "/who" {
+            let host = request.head.header("host") ?? "nobody"
+            return http::Response::text(f"you asked {host}")
         }
         return http::Response::not_found()
     }

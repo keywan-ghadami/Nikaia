@@ -23,9 +23,13 @@ fn a_head_says_its_method_its_path_and_its_length() {
     let end = buffer.head_end(16_384).expect("a head within the cap");
     let head = buffer.head().expect("a head");
     assert_eq!(head.method(), "POST");
-    // **Not decoded**: what a `%20` means is the program's question, and the
-    // query string is part of the path rather than something taken off it.
-    assert_eq!(head.path(), "/a/b?c=1");
+    // **Not decoded**: what a `%20` means is the program's question. The query
+    // string is its own accessor since
+    // [ADR-018](../../../docs/specification/adr/adr-018.md) D4, and `target()`
+    // is what the client wrote.
+    assert_eq!(head.path(), "/a/b");
+    assert_eq!(head.target(), "/a/b?c=1");
+    assert_eq!(head.query("c"), Some("1"));
     assert_eq!(head.length(), 4);
     assert_eq!(
         head.size(),
@@ -196,4 +200,65 @@ fn how_the_bytes_arrived_changes_nothing() {
         one_at_a_time.text_from(head.size()).expect("a body"),
         "hello"
     );
+}
+
+// --- What a handler asks a head (ADR-018 D4) ---
+
+/// **A header is found whatever case it was written in**, which is the protocol's
+/// own rule and not a convenience
+/// ([ADR-018](../../../docs/specification/adr/adr-018.md) D4).
+#[test]
+fn a_header_is_found_by_name_whatever_case_either_side_wrote() {
+    let buffer = buffer(&[b"GET / HTTP/1.1\r\nHost: example.org\r\nX-Trace: 7\r\n\r\n"]);
+    let head = buffer.head().expect("a head");
+    assert_eq!(head.header("host"), Some("example.org"));
+    assert_eq!(head.header("HOST"), Some("example.org"));
+    assert_eq!(head.header("x-trace"), Some("7"));
+    // **Nothing, and not an empty string**, for a name the client did not send.
+    assert_eq!(head.header("authorization"), None);
+    assert_eq!(head.headers(), 2);
+}
+
+/// **The first, where a client sent the same name twice.** Joining them with a
+/// comma is what the protocol says a *list-valued* header means, and which
+/// headers those are is not something this module knows.
+#[test]
+fn a_repeated_header_answers_with_the_first() {
+    let buffer = buffer(&[b"GET / HTTP/1.1\r\nAccept: a\r\nAccept: b\r\n\r\n"]);
+    assert_eq!(buffer.head().expect("a head").header("accept"), Some("a"));
+}
+
+/// **`path()` and `query()` are two things**
+/// ([ADR-018](../../../docs/specification/adr/adr-018.md) D4), and `target()` is
+/// the whole of what the client wrote, for a log.
+#[test]
+fn the_path_and_the_query_are_two_things() {
+    let buffer = buffer(&[b"GET /a/b?name=ada&debug HTTP/1.1\r\n\r\n"]);
+    let head = buffer.head().expect("a head");
+    assert_eq!(head.path(), "/a/b");
+    assert_eq!(head.target(), "/a/b?name=ada&debug");
+    assert_eq!(head.query("name"), Some("ada"));
+    // **A name with no `=` has an empty value**, which is not being absent.
+    assert_eq!(head.query("debug"), Some(""));
+    assert_eq!(head.query("missing"), None);
+}
+
+/// **Nothing is decoded**, which is `path`'s own sentence read one field over: a
+/// `%20` stays `%20` and a `+` stays a `+`, because which of the two a `+` means
+/// depends on who wrote the form.
+#[test]
+fn a_query_hands_back_what_arrived() {
+    let buffer = buffer(&[b"GET /?q=a%20b+c HTTP/1.1\r\n\r\n"]);
+    assert_eq!(buffer.head().expect("a head").query("q"), Some("a%20b+c"));
+}
+
+/// And a target with no query at all answers nothing rather than reaching past
+/// the end of it.
+#[test]
+fn a_target_with_no_query_answers_nothing() {
+    let buffer = buffer(&[b"GET /plain HTTP/1.1\r\n\r\n"]);
+    let head = buffer.head().expect("a head");
+    assert_eq!(head.path(), "/plain");
+    assert_eq!(head.target(), "/plain");
+    assert_eq!(head.query("q"), None);
 }

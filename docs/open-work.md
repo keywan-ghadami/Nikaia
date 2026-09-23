@@ -77,11 +77,11 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**One entry is open**, §1.10, which §1.9's fix **revealed** rather than made.
-§1.11 closed at 0.0.173, the package after the one that found it. §1.9 closed at
-0.0.172, the package after the one that found it — and that pair is the shape
-this section's method produces: a thing becomes writable, so the next question
-about it becomes askable. §1.7 closed at 0.0.168 — `use std::<anything>` is
+**Three entries are open** — §1.10, §1.12 and §1.13 — and every one of them was
+**revealed by a fix** rather than made by one, which is the shape this section's
+method produces: a thing becomes writable, so the next question about it becomes
+askable. §1.11 closed at 0.0.173 and §1.9 at 0.0.172, each the package after the
+one that found it. §1.7 closed at 0.0.168 — `use std::<anything>` is
 `NK1186` now, and the list it is answered from is what `std`'s ledger declares
 joined with what a page or a record names and the compiler has not built. §1.8
 closed at 0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132,
@@ -163,6 +163,84 @@ backend's words. Nothing is miscompiled.
 
 *Found by* fixing §1.9 and then handing the now-writable function a type that
 implements nothing — the same method one step further on.
+
+### 1.12. A method cannot hand back a view of a field it owns
+
+```nika
+pub struct Holder { text: String }
+
+impl Holder {
+    pub fn text(ref self) -> ref String {
+        return self.text
+    }
+}
+```
+
+is **two** refusals — `NK1131` *`self` is borrowed here, so `text` cannot be
+handed back by value*, and `NK1104` *this returns `String`, and the function
+declares `ref String`* — so the accessor a program most often writes has no
+spelling. A field that already **is** a view (`text: ref String`) hands back
+fine, which is the shape [ADR-008](specification/adr/adr-008.md) §5 built.
+
+*Its help named a way out that could not be taken*, which is [Part III
+C.2](specification/30-nikaia-tooling.md), and that half is **fixed** at 0.0.175:
+it said *declare the result `&str` and write `return &self.text`*, and `&str`
+stopped being a spelling at [ADR-184](specification/adr/adr-184.md) D4 while a
+`&` a program writes is `NK1137` since
+[ADR-094](specification/adr/adr-094.md) D1. The message names
+[ADR-083](specification/adr/adr-083.md) D2's **two** ways out now — `.clone()`
+and a `self` receiver — and says outright that a view is not a third.
+
+*What is left is the sentence the old help was reaching for.* The result is a
+view of the **subject**, which the ledger already has a column for
+(`returns = "borrows(self)"`), and what is missing is the `&` at the `return` —
+[ADR-094](specification/adr/adr-094.md) D1's *the compiler writes the reference*
+in a third position, beside the declaration and the call. `NK1104`'s fit would
+take the view of a place where the result is declared one, the way
+`the_compiler_writes_the_reference` already does for an argument.
+
+*Found by* writing [ADR-018](specification/adr/adr-018.md) D4's
+`request.body()`, which is the shape a handler reads its request with.
+
+### 1.13. A view parameter handed to a call cannot be shown not to escape through its result
+
+```nika
+use std::http1
+
+pub struct Request { head: http1::Head }
+
+impl Request {
+    pub fn query(ref self, name: ref String) -> ref String? {
+        return self.head.query(name)
+    }
+}
+```
+
+is `NK2302` — *`Request.query` keeps `name` past this call, and
+`name: ref String` does not say which buffer it views* — and the program is
+correct: `http1::Head::query` is written `returns = "borrows(self)"`, so its
+result points into the **head** and never into `name`.
+
+*What it is:* `views::analyse(parsed)` takes **no ledger**. It cannot read the
+callee's `returns` column, so a view parameter handed to a call whose result is
+returned is treated as escaping through that result. Fail-closed, which is the
+right polarity for an analysis that cannot see — and here the answer is written
+down one file away.
+
+*What it needs:* the ledger, at that call. `returns = "borrows(self)"` names the
+position the result points into, and a parameter that is not that position does
+not escape through it. The column exists and is written for every `std` entry.
+
+*And the way around it is not open either*, which is why this blocks rather than
+annoys: declaring the parameter `String` instead makes every caller's **literal**
+refused (`NK1102`), because a literal is a `ref String` and text is two types
+until [ADR-107](specification/adr/adr-107.md) is built — *text is one type*,
+which is the entry below.
+
+*Found by* writing [ADR-018](specification/adr/adr-018.md) D4's
+`request.query(name)` and `request.header(name)`. Both are reachable meanwhile
+through the head the request holds, which `examples/http` says in a comment where
+the accessors would be.
 
 **Every entry this section has ever held was found by *running* something** —
 the specification's own programs, the corpus at both settings, a two-file
@@ -387,10 +465,16 @@ form. What is left is machinery, not syntax:
 * **The `postgres` block**, a deferred-parameter DSL
   ([ADR-007](specification/adr/adr-007.md) D4): the statement has to reach a
   driver intact, which is different machinery from the template that exists.
-* **The runtime binding for a handler.** [ADR-018](specification/adr/adr-018.md)
-  decided what a handler *is* — the request as its first implicit argument, and
-  what each return type answers with — and none of it can be built before there is
-  a server to bind to.
+* **The runtime binding for a handler**, which is **no longer blocked**: there is
+  a server since 0.0.166. [ADR-018](specification/adr/adr-018.md) D1's request
+  and D3's response are `examples/http`'s two types, and **D4's surface is built
+  as far as the language reaches** (0.0.175) — `path()`, `target()`, `method()`,
+  and the query and the header on the head the request holds. What is left of
+  that record is **D2's table**: a handler that returns a bare `String` or an
+  `html::Raw` rather than a `Response`, which needs the handler's type to vary
+  and is `NK1142`'s neighbourhood; and D4's `Method` **enum**, whose refusal is
+  already in `std` — `http1` answers no method but `GET` and `POST`, so the enum
+  would be total the day it is written.
 * **A handler can be received now, through one of the two doors.**
   `.route("/fortunes") fn { fortunes(db) }` needs `route` to declare a parameter
   that is code, and **that door is open**: measured at 0.0.150,

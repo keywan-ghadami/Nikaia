@@ -162,7 +162,7 @@ and a decision is not an implementation.
 | :--- | :--- | :--- | :--- |
 | [013](adr-013.md) | What Stage 0 refuses to infer; `std` is a crate, methods resolve through the receiver | Accepted (D5 superseded by [022](adr-022.md)) | yes |
 | [014](adr-014.md) | `std` is written in Nikaia where it can be; `fs::map` maps, `par_fold` runs on rayon | Accepted (D1's *when* superseded by [002](adr-002.md) D4) | yes |
-| [018](adr-018.md) | The HTTP handler sees the request, because a lambda already could | Accepted | no |
+| [018](adr-018.md) | The HTTP handler sees the request, because a lambda already could | Accepted | **D1, D3 and most of D4** at 0.0.166 and 0.0.175 — `examples/http`'s `Request` and `Response`, and the request's surface as far as the language reaches: `path()` without the query, `target()` with it, `method()`, and the query and the header, **case-insensitive as the protocol is**, on the head the request holds. Two accessors of D4 have no spelling yet and say so where they would be (`open-work.md` §1.12, §1.13). Not built: **D2's table** — a handler returning a bare `String` or an `html::Raw` — and D4's `Method` **enum**, whose refusal is already in `std`, so it would be total the day it is written |
 | [019](adr-019.md) | Standard input is a stream, read like everything else | Accepted | yes (`std::io`) |
 | [022](adr-022.md) | One lambda form. `fn:` is removed | Accepted | yes |
 | [041](adr-041.md) | Naming a lambda's arguments is the normal form; the automatic `a`, `b`, `c` are experimental and warned about where one is actually used | Accepted (D2's experimental carry ended by [049](adr-049.md) D1) | **yes, then removed** — the warning and the mechanism it shared with the emitter are gone with the form |

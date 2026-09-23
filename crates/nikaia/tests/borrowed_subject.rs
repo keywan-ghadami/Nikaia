@@ -118,14 +118,16 @@ fn every_by_value_position_is_refused() {
             "it names the field and what was done with it: {}",
             refusal.message
         );
+        // **The two ways out this record names**
+        // ([ADR-083](../../../docs/specification/adr/adr-083.md) D2), and a
+        // third stood here that could not be taken — see
+        // `the_help_names_only_what_can_be_taken` below.
         assert!(
             refusal
                 .help
                 .as_deref()
-                .is_some_and(|h| h.contains("&self.name")
-                    && h.contains(".clone()")
-                    && h.contains("(self)")),
-            "and names all three ways out, the free one first: {:?}",
+                .is_some_and(|h| h.contains("self.name.clone()") && h.contains("(self)")),
+            "and names both ways out: {:?}",
             refusal.help
         );
     }
@@ -287,9 +289,18 @@ fn main() {
     assert_eq!(printed.trim(), "a 7");
 }
 
-/// And the help names the **field's own** view type, not always `&str`.
+/// **And the help names only what can be taken**
+/// ([ADR-083](../../../docs/specification/adr/adr-083.md) D2's two ways out,
+/// [Part III C.2](../../../docs/specification/30-nikaia-tooling.md)'s rule).
+///
+/// This test used to be *the help names the field's own view type, not always
+/// `&str`* — a claim about a third way out that reads *declare the result `…`
+/// and write `return &self.tags`*, and which no program can take: `&str` stopped
+/// being a spelling at [ADR-184](../../../docs/specification/adr/adr-184.md) D4,
+/// and a `&` a program writes is `NK1137`. A better spelling for a way out that
+/// does not exist is not better.
 #[test]
-fn the_help_names_the_view_the_field_would_have() {
+fn the_help_names_only_what_can_be_taken() {
     let found = findings(
         r#"
 struct Row {
@@ -311,12 +322,24 @@ fn main() {
         .iter()
         .find(|f| f.code == "NK1131")
         .expect("a Vec field is moved too");
+    // **The help does not depend on the field's type**, and that is the change
+    // this test was turned around by. It used to assert the view a `Vec` field
+    // would have — `&Vec[i64]` — as part of a way out that read *declare the
+    // result `…` and write `return &self.tags`*. Neither half can be taken:
+    // `&str` stopped being a spelling at
+    // [ADR-184](../../../docs/specification/adr/adr-184.md) D4, and a `&` a
+    // program writes is `NK1137` since
+    // [ADR-094](../../../docs/specification/adr/adr-094.md) D1 — so the help
+    // named a way out that does not exist, which is [Part III
+    // C.2](../../../docs/specification/30-nikaia-tooling.md).
     assert!(
         refusal
             .help
             .as_deref()
-            .is_some_and(|h| h.contains("`&Vec[i64]`")),
-        "a `Vec` field's view is not `ref String`: {:?}",
+            .is_some_and(|h| h.contains("self.tags.clone()")
+                && h.contains("(self)")
+                && !h.contains("&self.tags")),
+        "the two ways out, and no third: {:?}",
         refusal.help
     );
 }

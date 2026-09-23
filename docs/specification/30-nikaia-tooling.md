@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.174 (Draft)
+**Version:** 0.0.175 (Draft)
 **Date:** 2026-09-23
 
 ---
@@ -1244,7 +1244,8 @@ An untrusted map is seeded randomly, so **its iteration order is not stable betw
   somebody else chose those bytes.
 
 * **`std::http1`**: HTTP/1.1's **text half** — where a head ends, what its lines
-  say, and where the body starts. It reaches no socket, so everything in it is
+  say, which header the client sent, what the query string says, and where the
+  body starts. It reaches no socket, so everything in it is
   `sync`: a program reads bytes with `net` and hands them over. It is
   [ADR-194](adr/adr-194.md) D5's staging and not a `std` HTTP module — **the
   protocol is the `http` package's** (D1), and what belongs here is the framing a

@@ -1591,7 +1591,22 @@ fn the_http_package_serves_its_example() {
 
     let (status, body) = ask(&address, b"GET / HTTP/1.1\r\nhost: x\r\n\r\n");
     assert_eq!(status, "HTTP/1.1 200 OK", "the handler answered `/`");
-    assert_eq!(body, "Hello from a package");
+    assert_eq!(
+        body, "Hello, world",
+        "and `??` said what an absent query means"
+    );
+
+    // **The query string is its own question, and nothing is not an empty
+    // string** ([ADR-018](../../../docs/specification/adr/adr-018.md) D4).
+    let (status, body) = ask(&address, b"GET /?name=Ada HTTP/1.1\r\nhost: x\r\n\r\n");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert_eq!(body, "Hello, Ada", "the handler read the query string");
+
+    // **And a header, case-insensitive as the protocol is** — asked in a case
+    // neither the client nor the handler wrote.
+    let (status, body) = ask(&address, b"GET /who HTTP/1.1\r\nHOST: example.org\r\n\r\n");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert_eq!(body, "you asked example.org");
 
     let (status, body) = ask(&address, b"GET /nowhere HTTP/1.1\r\nhost: x\r\n\r\n");
     assert_eq!(

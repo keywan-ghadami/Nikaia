@@ -409,9 +409,16 @@ fn main() {
         "the note names the type the field has: {:#?}",
         refusal.notes
     );
+    // **Both ways out, and neither names a type**
+    // ([ADR-083](../../../docs/specification/adr/adr-083.md) D2). This asserted
+    // `&T` — part of a way out that could not be taken, and one whose spelling a
+    // generic field made worse: `&T` is not a type this program can write either.
     assert!(
-        refusal.help.as_deref().is_some_and(|h| h.contains("`&T`")),
-        "the way out is a type this program can write: {:?}",
+        refusal
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("self.value.clone()") && h.contains("(self)")),
+        "the ways out are what a program can write: {:?}",
         refusal.help
     );
 }

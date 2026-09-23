@@ -141,7 +141,14 @@ impl Buffer {
 }
 
 /// What the head of one request says.
-#[derive(Debug)]
+///
+/// **`Clone`, because a Nikaia `struct` that holds one derives it.** Every
+/// emitted struct does ([ADR-011](../../../docs/specification/adr/adr-011.md)
+/// D2's lowering), so a `std` type a program puts in a field has to, or `rustc`
+/// says *the trait bound `Head: Clone` is not satisfied* about a file nobody
+/// wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)). It
+/// is plain owned data, so the derive costs a copy only where one is written.
+#[derive(Clone, Debug)]
 pub struct Head {
     method: String,
     path: String,
@@ -154,6 +161,18 @@ pub struct Head {
     /// that read the header and ignored it silently would be lying to a client
     /// that asked.
     keep_alive: bool,
+    /// Every header, name lowercased, in the order they arrived.
+    ///
+    /// **Kept rather than thrown away** ([ADR-018](../../../docs/specification/adr/adr-018.md)
+    /// D4: *`request.header("host")` yields …, case-insensitive, as the protocol
+    /// is*). The parse already walked them for `content-length` and
+    /// `transfer-encoding` and dropped the rest, so a handler could not ask.
+    ///
+    /// A `Vec` and not a map: a request head has a handful of headers, and a
+    /// scan over a handful beats hashing one ([ADR-009](../../../docs/specification/adr/adr-009.md)
+    /// D4 — and there is nothing here to measure yet, which is itself the
+    /// reason to take the shape with no allocation behind it).
+    headers: Vec<(String, String)>,
 }
 
 impl Head {
@@ -162,11 +181,50 @@ impl Head {
         &self.method
     }
 
-    /// The path, with its query string if there is one. Not decoded: what a
-    /// `%20` means is the program's question, and a `std` that decided it would
-    /// be deciding a security question on the program's behalf.
+    /// The path, **without** the query string
+    /// ([ADR-018](../../../docs/specification/adr/adr-018.md) D4, which writes
+    /// `path()` and `query()` as two things).
+    ///
+    /// Not decoded: what a `%20` means is the program's question, and a `std`
+    /// that decided it would be deciding a security question on the program's
+    /// behalf.
     pub fn path(&self) -> &str {
+        match self.path.split_once('?') {
+            Some((path, _)) => path,
+            None => &self.path,
+        }
+    }
+
+    /// The whole request target as it was written, query string and all.
+    ///
+    /// What a log wants, and the one place the bytes the client chose are handed
+    /// over untouched.
+    pub fn target(&self) -> &str {
         &self.path
+    }
+
+    /// What the query string says under this name, or nothing where it says
+    /// nothing ([ADR-018](../../../docs/specification/adr/adr-018.md) D4:
+    /// *Kap 3.5's nullable, not an empty string*).
+    ///
+    /// **Nothing is decoded**, and that is the same sentence `path` carries: a
+    /// `%20` stays `%20` and a `+` stays a `+`. Which of the two a `+` means
+    /// depends on who wrote the form, and `std` guessing it would be guessing on
+    /// somebody else's bytes ([ADR-010](../../../docs/specification/adr/adr-010.md)
+    /// D2).
+    ///
+    /// **A name with no `=` has an empty value**, which is not the same as being
+    /// absent: `?debug` says the name was written.
+    pub fn query(&self, name: impl AsRef<str>) -> Option<&str> {
+        let name = name.as_ref();
+        let (_, query) = self.path.split_once('?')?;
+        query
+            .split('&')
+            .find_map(|pair| match pair.split_once('=') {
+                Some((written, value)) if written == name => Some(value),
+                Some(_) => None,
+                None => (pair == name).then_some(""),
+            })
     }
 
     /// What `Content-Length` said, or `0` where it said nothing.
@@ -182,6 +240,38 @@ impl Head {
     /// Whether the client asked for the connection to stay open.
     pub fn keep_alive(&self) -> bool {
         self.keep_alive
+    }
+
+    /// What the client sent under this name, or nothing where it sent none.
+    ///
+    /// **Case-insensitive, as the protocol is**
+    /// ([ADR-018](../../../docs/specification/adr/adr-018.md) D4). The names
+    /// were lowercased on the way in, so this lowercases what it is asked for
+    /// and nothing else happens per call.
+    ///
+    /// `impl AsRef<str>` for `net::Connection::write`'s reason, which the ledger
+    /// writes as a `?`: a **method's** argument is passed owned
+    /// ([ADR-094](../../../docs/specification/adr/adr-094.md) §5 — the compiler
+    /// cannot yet resolve which entry the call goes to), so a Nikaia method that
+    /// hands its own `String` parameter through would otherwise be `rustc`
+    /// saying *expected `&str`, found `String`* about a file nobody wrote.
+    ///
+    /// **The first, where a client sent the same name twice.** Joining them with
+    /// a comma is what the protocol says a *list-valued* header means, and which
+    /// headers those are is not something this module knows — so it hands back
+    /// what arrived first and leaves the question to whoever needs it.
+    pub fn header(&self, name: impl AsRef<str>) -> Option<&str> {
+        let name = name.as_ref().to_ascii_lowercase();
+        self.headers
+            .iter()
+            .find(|(written, _)| *written == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// How many headers there are, which is what a program counts before it
+    /// decides a client is being unreasonable.
+    pub fn headers(&self) -> usize {
+        self.headers.len()
     }
 }
 
@@ -209,6 +299,7 @@ fn parse(text: &str, size: i64) -> Result<Head, IoError> {
 
     let mut length = 0_i64;
     let mut keep_alive = false;
+    let mut headers: Vec<(String, String)> = Vec::new();
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
@@ -217,6 +308,7 @@ fn parse(text: &str, size: i64) -> Result<Head, IoError> {
         // blanks are not part of it.
         let name = name.trim().to_ascii_lowercase();
         let value = value.trim();
+        headers.push((name.clone(), value.to_string()));
         match name.as_str() {
             "content-length" => match value.parse::<i64>() {
                 Ok(n) if n >= 0 => length = n,
@@ -244,6 +336,7 @@ fn parse(text: &str, size: i64) -> Result<Head, IoError> {
         length,
         size,
         keep_alive,
+        headers,
     })
 }
 

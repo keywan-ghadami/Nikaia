@@ -4,6 +4,42 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.175] — 2026-09-23
+
+**A handler can ask its request** — [ADR-018](docs/specification/adr/adr-018.md)
+D4's surface, as far as the language reaches, which
+[`open-work.md`](docs/open-work.md) §2.5 said *none of it can be built before
+there is a server to bind to*. There has been one since 0.0.166.
+
+### `std::http1` keeps what the parse was throwing away
+
+- **The headers.** The walk already crossed them for `content-length` and `transfer-encoding` and dropped the rest, so a handler could not ask. `Head::header(name)` is **case-insensitive, as the protocol is** (D4) — the names are lowercased on the way in, so a lookup lowercases one word and nothing else happens per call. Where a client sent the same name twice it is the **first**: joining them with a comma is what the protocol says a *list-valued* header means, and which headers those are is not something this module knows.
+- **`path()` and `query()` are two things** (D4), so `path()` no longer carries the query string and `target()` is the whole of what the client wrote, for a log. `query(name)` answers **nothing** rather than an empty string for a name the client did not write — and an empty one for `?debug`, which says the name *was* written. **Nothing is decoded**: a `%20` stays `%20` and a `+` stays a `+`, because which of the two a `+` means depends on who wrote the form, and `std` guessing would be guessing on somebody else's bytes ([ADR-010](docs/specification/adr/adr-010.md) D2).
+- A `Vec` of pairs and not a map: a request head has a handful of headers, and there is nothing here to measure yet — which is itself the reason to take the shape with no allocation behind it.
+
+### Two the first Nikaia program to hold a `Head` found
+
+Both `rustc` about a generated file ([Part III C.1](docs/specification/30-nikaia-tooling.md)), both in `std`:
+
+- **`Head` was not `Clone`.** Every emitted Nikaia `struct` derives it, so a `std` type a program puts in a field has to — *the trait bound `Head: Clone` is not satisfied*.
+- **`header(&str)` could not take what a Nikaia method hands it.** A **method's** argument is passed owned ([ADR-094](docs/specification/adr/adr-094.md) §5: the compiler cannot yet resolve which entry the call goes to), so a `String` reached a `&str`. `impl AsRef<str>` now, which is `net::Connection::write`'s reason and what the ledger's `?` has always meant.
+
+### A help that could not be taken
+
+**`NK1131`** said *declare the result `&str` and write `return &self.text`*. Both halves are impossible: `&str` stopped being a spelling at [ADR-184](docs/specification/adr/adr-184.md) D4, and a `&` a program writes is `NK1137` since [ADR-094](docs/specification/adr/adr-094.md) D1 — and doing what it asked gets `NK1131` **and** `NK1104`. That is [Part III C.2](docs/specification/30-nikaia-tooling.md), *a way out that cannot be taken is not one*. The message names [ADR-083](docs/specification/adr/adr-083.md) D2's **two** ways out now — `.clone()` and a `self` receiver — and says outright that a view is not a third.
+
+### And two it could not fix, each with its reproduction
+
+- **§1.12: a method cannot hand back a view of a field it owns.** Four lines, two refusals, and the accessor a program most often writes has no spelling. A field that already *is* a view hands back fine. What is missing is the `&` at a `return`, which is D1's *the compiler writes the reference* in a third position, beside the declaration and the call — and `returns = "borrows(self)"` is the column that already records it.
+- **§1.13: a view parameter handed to a call cannot be shown not to escape through its result.** `views::analyse` takes **no ledger**, so it cannot read that `http1::Head::query` **borrows its receiver** and never its argument. Fail-closed, which is the right polarity for an analysis that cannot see — and the answer is written down one file away. The way around is not open either: an owned `String` parameter refuses every caller's **literal**, which is [ADR-107](docs/specification/adr/adr-107.md)'s *text is one type*, unbuilt.
+
+### Two numbers moved
+
+- **`the_corpus_has_no_more_unanswered_method_calls_than_it_had`: 62 → 63**, and the twelfth is the eleventh again one accessor over — `request.head.query("name")` in the same handler, on the same lambda parameter, whose type is the package next door's and which a one-file sweep cannot see.
+- **Three tests asserted the way out that could not be taken**, one of them titled *the help names the field's own view type, not always `&str`*. A better spelling for a way out that does not exist is not better, so that test is now its opposite: the help names only what a program can write, whatever the field's type is.
+
+Both block D4's `request.query(name)` and `request.header(name)`; both are reachable meanwhile through the head the request holds, which `examples/http` says in a comment where the accessors would be. `crates/nikaia/tests/project.rs` drives the query and the header over a real socket, asked in a case neither the client nor the handler wrote.
+
 ## [0.0.174] — 2026-09-23
 
 **The questions go where questions go** — a pass over

@@ -4166,12 +4166,30 @@ impl<'a> Checker<'a> {
                  (Part I, 6.5)",
                 ty.text()
             )],
+            // **The two ways out this record names, and no third**
+            // ([ADR-083](../../docs/specification/adr/adr-083.md) D2: *both ways
+            // out are in the message: `.clone()`, written where it happens, or a
+            // `self` receiver*).
+            //
+            // A third stood here and could not be taken — *declare the result
+            // `&str` and write `return &self.field`* — which is [Part III
+            // C.2](../../docs/specification/30-nikaia-tooling.md)'s *a way out
+            // that cannot be taken is not one*, twice over: `&str` stopped being
+            // a spelling at [ADR-184](../../docs/specification/adr/adr-184.md)
+            // D4, and a `&` a program writes is `NK1137` since
+            // [ADR-094](../../docs/specification/adr/adr-094.md) D1. Doing what
+            // it asked — declaring `ref String` and writing `return self.field` —
+            // gets this refusal *and* `NK1104`.
+            //
+            // **The sentence it was reaching for is real and is not built**, and
+            // the last line says so rather than offering it:
+            // [`open-work.md`](../../docs/open-work.md) §1.12 carries the work.
             help: Some(format!(
-                "hand back a view and it costs nothing: declare the result `{}` and \
-                 write `return &self.{field}` (Part I, 6.5). Or `self.{field}.clone()` \
-                 for a copy, or `fn …(self)` where the method is meant to consume its \
-                 subject",
-                a_view_of(&ty)
+                "write `self.{field}.clone()` for a copy, where it happens, or \
+                 `fn …(self)` where the method is meant to consume its subject. \
+                 Handing back a **view** of it is not a third way today: a method may \
+                 hand back a view of a field that already *is* one, and not of a field \
+                 it owns"
             )),
         });
     }
@@ -14295,21 +14313,6 @@ fn expected_arguments(contract: &FnContract) -> Vec<Ty> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// How this language spells a **view** of a value of this type.
-///
-/// `String` is the one that is not `&` plus its own name: Part I 2.2 writes a
-/// view of text as `&str`, which is the spelling
-/// [Part III 15.2](../../docs/specification/30-nikaia-tooling.md)'s mapping
-/// gives it. Everything else is `&` and the type, which `NK1131`'s help needs
-/// in order to name a way out that is right for the field it is about rather
-/// than only for text.
-fn a_view_of(ty: &Ty) -> String {
-    match ty {
-        Ty::Named { name, args, .. } if args.is_empty() && name == "String" => "&str".to_string(),
-        other => format!("&{}", other.text()),
-    }
 }
 
 /// Whether an `Array[T, N]` is anywhere inside a type.
