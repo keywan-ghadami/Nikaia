@@ -77,61 +77,26 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**One entry is open**, §1.7. §1.8 closed at 0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132, §1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay where they were, because this file is cited by number.
+**Nothing is open.** §1.7 closed at 0.0.168 — `use std::<anything>` is `NK1186`
+now, and the list it is answered from is what `std`'s ledger declares joined with
+what a page or a record names and the compiler has not built. §1.8 closed at
+0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132,
+§1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay
+where they were, because this file is cited by number.
 
-**And both were found the way the method above says**, by running something:
-§1.7 by writing `use std::rust` in a program to check a sentence this file was
-about to claim, §1.8 by building an experiment to see what a new column changed
-about it — and a **third**, which was fixed in the same package and never got a
-number, by trying the same change twice and getting two answers: a hand edit to
-a `contracts/<crate>.contracts` did not reach the build cache's key, and failed
-**open** while it did not.
+**And the last two were found the way the method above says**, by running
+something: §1.7 by writing `use std::rust` in a program to check a sentence this
+file was about to claim, §1.8 by building an experiment to see what a new column
+changed about it — and a **third**, which was fixed in the same package and never
+got a number, by trying the same change twice and getting two answers: a hand
+edit to a `contracts/<crate>.contracts` did not reach the build cache's key, and
+failed **open** while it did not.
 
-### 1.7. `use std::<anything>` is accepted, and `rustc` is the one that says otherwise
-
-[Part III C.1](specification/30-nikaia-tooling.md): `rustc` must never speak
-about the generated file. It does here.
-
-```text
-use std::nosuchthing
-
-fn main() {
-    let x = nosuchthing::go("a")
-    println(f"{x}")
-}
-```
-
-lowers without a complaint — the `use` becomes a comment in the generated Rust
-and the call is emitted verbatim — and what the programmer then sees is
-
-```text
-error[E0433]: failed to resolve: use of unresolved module or unlinked crate `nosuchthing`
-  --> src/main.rs:10:17
-```
-
-about a file they did not write, with a `help` telling them to `cargo add` a
-crate that does not exist. The same happens for a module `std` really has in
-its crate but does not offer a program: `use std::tools` names
-`crates/nikaia-std/src/tools/`, which holds
-[ADR-196](specification/adr/adr-196.md)'s parser and is deliberately **not**
-part of `std`, and the refusal a program deserves for writing it comes from the
-wrong compiler.
-
-*Why it is a defect and not a gap:* the checker already has the list it needs.
-What a program may write after `use std::` is exactly the modules
-`std.contracts` declares, which is the same file every other `std` question is
-answered from — so the answer is a lookup, and what is missing is the refusal
-and its `NK` code.
-
-*Not found before now* because every module in `nikaia-std` was in the ledger
-until this one, so the only way to reach it was to misspell a name — and
-nothing in the corpus does.
-
-*What that leaves:* every other entry this section has ever held was found by
-*running* something — the specification's own programs, the corpus at both
-settings, a two-file project — and never by reading the code. So a short §1 is
-a statement about what has been run, and the way to lengthen it is the method
-above.
+**Every entry this section has ever held was found by *running* something** —
+the specification's own programs, the corpus at both settings, a two-file
+project, a change made twice — and never by reading the code. So an **empty §1
+is a statement about what has been run**, and not about what is correct; the way
+to lengthen it is the method above.
 
 ## 2. Decided and unbuilt
 

@@ -21,11 +21,13 @@
 // [ADR-195](../../../../docs/specification/adr/adr-195.md) D2), and for no
 // other reason.
 //
-// **What it is not is *refused***: `use std::tools` lowers, and `rustc` is what
-// complains, about a file nobody wrote - which is
-// [Part III C.1](../../../../docs/specification/30-nikaia-tooling.md)'s own
-// class. `open-work.md` §1.7 carries it, and it is a defect this file found
-// rather than made: `use std::<anything>` has always been accepted.
+// **And writing it is refused, in this language's words**: `use std::tools` is
+// `NK1186`, saying that `tools` is the toolchain's own and holds the grammar
+// below, which `nikaia describe` calls and a program cannot reach. It used to
+// lower, with `rustc` complaining about a file nobody wrote - [Part III
+// C.1](../../../../docs/specification/30-nikaia-tooling.md)'s own class, and a
+// defect this file found rather than made, since `use std::<anything>` had
+// always been accepted.
 //
 // ## What it reads, and how it differs from what it replaces
 //

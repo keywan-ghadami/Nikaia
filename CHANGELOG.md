@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.168] — 2026-09-23
+
+**`use std::<anything>` is refused here and not by `rustc`** — `NK1186`, which
+closes [`open-work.md`](docs/open-work.md) §1.7 and leaves that file's **§1
+empty**.
+
+### The defect
+
+- It **lowered**: the `use` became a comment in the generated Rust, the call was emitted verbatim, and what the programmer read was *failed to resolve: use of unresolved module or unlinked crate `nosuchthing`* about a file they did not write — with a `help` telling them to `cargo add` a crate that does not exist. [Part III C.1](docs/specification/30-nikaia-tooling.md) says the backend must never speak about the generated file.
+- **And the same for a module the crate has and `std` does not offer.** `use std::tools` names `crates/nikaia-std/src/tools/`, which holds [ADR-196](docs/specification/adr/adr-196.md) D2's Rust-signature grammar and is deliberately not part of `std` — so the refusal a program deserved for writing it came from the wrong compiler.
+
+### The list it is answered from is the join of two, and neither half alone is right
+
+- **What `std`'s ledger declares**, which is what `std` has. Derived, so a module `std` gains is one a program may import the day it lands — no upkeep.
+- **What a page or a record names and this compiler has not built**: `db`, `json`, `process`, `thread`, `panic`, `build`, `task`, `backend`. Refusing those is [Part III C.4](docs/specification/30-nikaia-tooling.md)'s correct program refused — `use std::db` is how [ADR-143](docs/specification/adr/adr-143.md)'s driver is reached, and the day it exists nothing about the line changes. Written down, because there is nothing to derive it from.
+- **Minus the prefixes the ledger keys that are not modules.** A method is filed under the thing it is called on, so `str::len`, `i64::to_string` and `list::ListExt::map` sit beside `fs::read` and look the same from outside; a primitive and a trait are reached with no line at all (Part I 1.3, 2.2). **Subtracted rather than listed**, which is the direction that needs no upkeep. A derivation was tried and does not hold: a module's function has a named first parameter where a method has a receiver, except that every entry of `collections` is a method on `HashMap` and `collections` is imported by name.
+
+### What a reader gets
+
+- **`use std::collection` → *did you mean `use std::collections`?***, off the same edit-distance helper every other misremembered name in this compiler uses.
+- **`use std::nosuchthing` → the list**: *`std` offers: channel, cli, collections, foreign, fs, html, http1, io, net, text, time.*
+- **`use std::tools` → its own sentence**, and that is the case that found the defect: *`tools` is the toolchain's own, not `std`'s.* Told *nobody has written that down* a reader would go looking for a typo.
+- **Only the second segment**, so a longer path is answered by the module it starts at: `use std::db::postgres` is `db`'s question and `use std::backend::x86` is `backend`'s, which is the reading [ADR-140](docs/specification/adr/adr-140.md) already gave them.
+
+### §1 is empty, and that is a statement about what has been run
+
+Every entry that section ever held was found by **running** something — the specification's own programs, the corpus at both settings, a two-file project, a change made twice — and never by reading the code. So an empty §1 says what has been run, not what is correct, and the way to lengthen it is that method.
+
 ## [0.0.167] — 2026-09-23
 
 **`@borrowed` is removed, and the word that allows a tether is `@tethers`** —

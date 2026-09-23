@@ -2625,6 +2625,7 @@ impl<'a> Checker<'a> {
             .any(|key| crate::contracts::ty::base(key) == last)
             || self.library.functions.keys().any(on_a_value);
         if !a_type {
+            self.a_std_module_nobody_declared(segments[1], &segments, span);
             return;
         }
         self.checked.findings.push(Finding {
@@ -2658,6 +2659,66 @@ impl<'a> Checker<'a> {
                     ),
                 },
             ),
+        });
+    }
+
+    /// **`use std::<anything>` is refused here and not by `rustc`** (`NK1186`,
+    /// [Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
+    ///
+    /// It used to lower: the `use` became a comment in the generated Rust, the
+    /// call was emitted verbatim, and what the programmer read was *failed to
+    /// resolve: use of unresolved module or unlinked crate `nosuchthing`* about a
+    /// file they did not write, with a `help` telling them to `cargo add` a crate
+    /// that does not exist.
+    ///
+    /// **The list is the join of two**, and neither half alone is right.
+    /// [`Checker::std_modules`] is what `std`'s ledger declares, which is what
+    /// `std` has; [`PROMISED`] is what a page or a record names and the compiler
+    /// has not built, which is what `std` is going to have — and refusing that is
+    /// [Part III C.4](../../docs/specification/30-nikaia-tooling.md)'s correct
+    /// program refused, since the day the module lands the line is unchanged.
+    ///
+    /// **Only the second segment**, so a longer path is answered by the module it
+    /// starts at: `use std::db::postgres` is `db`'s question and
+    /// `use std::backend::x86` is `backend`'s, which is the reading
+    /// [ADR-140](../../docs/specification/adr/adr-140.md) already gave them.
+    fn a_std_module_nobody_declared(&mut self, module: &str, segments: &[&str], span: &Span) {
+        // **What `std` has, as a caller may write it**, which is both the test and
+        // the help: a name nobody declared is most often a name misremembered, and
+        // the list is short enough to print.
+        let mut offered: Vec<&str> = self
+            .std_modules
+            .iter()
+            .map(|m| m.as_str())
+            .filter(|m| !m.starts_with(|c: char| c.is_uppercase()) && !NOT_A_MODULE.contains(m))
+            .collect();
+        offered.sort_unstable();
+        if offered.contains(&module) || PROMISED.contains(&module) {
+            return;
+        }
+        let written = segments.join("::");
+        let near = nearest(module, &offered);
+        let why = NOT_STD
+            .iter()
+            .find(|(name, _)| *name == module)
+            .map(|(_, why)| (*why).to_string());
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1186",
+            message: format!("`use {written}` names a module `std` does not have"),
+            notes: vec![why.unwrap_or_else(|| {
+                format!(
+                    "what may stand after `use std::` is what `std`'s ledger declares, and \
+                 `{module}` is not one of them (Part I, 1.3 and 9.1) - a module a record \
+                 names and this compiler has not built yet is accepted, because the day it \
+                 lands the line is unchanged"
+                )
+            })],
+            help: Some(match near {
+                Some(near) => format!("did you mean `use std::{near}`?"),
+                None => format!("`std` offers: {}", offered.join(", ")),
+            }),
         });
     }
 
@@ -13966,6 +14027,67 @@ fn is_number(name: &str) -> bool {
 fn float_literal(value: f64) -> Option<String> {
     value.is_finite().then(|| format!("{value:?}"))
 }
+
+/// **`std` modules a page or a record names and this compiler does not describe
+/// yet** ([Part III C.4](../../docs/specification/30-nikaia-tooling.md)).
+///
+/// `std.contracts` is the list of what `std` *offers*, and it is the right list
+/// for every other question asked of `std`. It is the wrong one for a **refusal**:
+/// a module the specification promises and the compiler has not built is a
+/// correct program refused. `use std::db` is how
+/// [ADR-143](../../docs/specification/adr/adr-143.md)'s driver is reached, and
+/// the day it exists nothing about that line changes.
+///
+/// So the refusal stands on the join of two lists, and this half is **written
+/// down rather than derived**, because there is nothing to derive it from: each
+/// name is one a page or a record writes after `use std::`, and a name on
+/// neither list is one nobody has written down anywhere. Where each comes from,
+/// in the order they appear below: `use std::backend::x86`
+/// ([ADR-007](../../docs/specification/adr/adr-007.md), Part III 16); the build
+/// script's own API (Part III 13.4);
+/// [ADR-143](../../docs/specification/adr/adr-143.md)'s driver protocol; Part III
+/// 17.1's *other key modules*; Part I 2.6's panic hook, `panic::on_panic`
+/// ([ADR-141](../../docs/specification/adr/adr-141.md)); Part III 17.2's table,
+/// which says what a target withholds; Part II 12.7's `task::scope`; and that
+/// table again.
+///
+/// **The provenance is here and not beside each name** because `cargo fmt`
+/// reflows a trailing comment onto the line above it, and a list where every
+/// reason has slid one entry along is worse than one with no reasons in it.
+const PROMISED: &[&str] = &[
+    "backend", "build", "db", "json", "panic", "process", "task", "thread",
+];
+
+/// **Prefixes `std`'s ledger keys that are not modules a program imports.**
+///
+/// The ledger files a method under the thing it is called on, so `str::len`,
+/// `i64::to_string` and `list::ListExt::map` sit beside `fs::read` and look the
+/// same from the outside. They are not the same: a primitive and a trait are
+/// reached without a line (Part I 1.3, 2.2), and `use std::str` is as wrong as
+/// `use std::nosuchthing`.
+///
+/// **Subtracted rather than listed**, which is the direction that needs no
+/// upkeep: a module `std` gains is a module a program may import the day it
+/// lands, and what this file has to know is only which prefixes are *not* one.
+/// A derivation was tried and does not hold — a module's function has a named
+/// first parameter where a method has a receiver, except that every entry of
+/// `collections` is a method on `HashMap` and `collections` is imported by name.
+const NOT_A_MODULE: &[&str] = &["f64", "i32", "i64", "list", "str"];
+
+/// **A module of `nikaia-std`'s crate that is deliberately not part of `std`.**
+///
+/// One entry, and it earns its own list because it earns its own sentence:
+/// `crates/nikaia-std/src/tools/` holds
+/// [ADR-196](../../docs/specification/adr/adr-196.md)'s Rust-signature grammar,
+/// which the *compiler* calls and a program may not. Left to the list above it
+/// would be told *nobody has written that down*, which is false and sends the
+/// reader looking for a typo.
+const NOT_STD: &[(&str, &str)] = &[(
+    "tools",
+    "`tools` is the toolchain's own, not `std`'s: it holds the compiler's \
+     Rust-signature grammar (ADR-196 D2), which `nikaia describe` calls and a \
+     program cannot reach",
+)];
 
 /// The closest field name, when one is close enough to be worth suggesting.
 fn nearest<'n>(name: &str, among: &[&'n str]) -> Option<&'n str> {
