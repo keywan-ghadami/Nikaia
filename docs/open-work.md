@@ -152,12 +152,13 @@ first, and `NK2501` fires end to end now: a Rust crate with an `Rc` field,
 ledger the analyses read ([ADR-104](specification/adr/adr-104.md) D1), and a
 `spawn` refused in **this compiler's** words on the `.nika` line —
 `crates/nikaia/tests/describing.rs` runs that chain from a program. What is left
-is the case this compiler could not **ask** about, where `rustc`'s own `Send`
-bound refuses against the right `.nika` line through
-[ADR-005](specification/adr/adr-005.md) D7's translation: the position is kept
-and the words are `rustc`'s. That **is** work in this section since 0.0.149 —
-§2.44, [ADR-193](specification/adr/adr-193.md) — and what changed is not this
-compiler's reach but that the column it would read was decided.
+was the case this compiler could not **ask** about, where `rustc`'s own `Send`
+bound refused against the right `.nika` line through
+[ADR-005](specification/adr/adr-005.md) D7's translation: the position was kept
+and the words were `rustc`'s. **It asks now**
+([ADR-193](specification/adr/adr-193.md), built through 0.0.163): a described
+call whose `threads` says `true` is `NK2502` in this language's vocabulary, and
+both crossing experiments in the tree are refused here rather than below.
 
 **And one that is out of the sequence because three entries rest on it**: the
 **tether** ([ADR-008](specification/adr/adr-008.md)), last below and first under
@@ -721,10 +722,11 @@ defect: nothing reproduces it.
 than a hand's — which is what the entry above about the crossing refusals being
 unreachable into **our own code** was waiting for: a described foreign type is
 the first thing that can answer `MayNot` there, and `NK2501` has something to
-say the day a program `spawn`s one. `NK2502` and `NK2503` need more than that —
-the call itself has to be one nothing describes — which is
-[ADR-193](specification/adr/adr-193.md)'s `threads` column — decided at 0.0.149
-and §2.44 below.
+say the day a program `spawn`s one. `NK2502` and `NK2503` needed more than that — the call
+itself had to be one **nothing** describes — which is
+[ADR-193](specification/adr/adr-193.md)'s `threads` column, decided at 0.0.149
+and built through 0.0.163: a described call is asked now, and what is left of
+that record is the I/O half, §2.44 below.
 
 ### 2.17. `par_iter` has no entry to demand `sync` of
 
@@ -784,19 +786,30 @@ the `NK1129` that ADR-100 D2 has since removed.
 at 0.0.105 and built at 0.0.106, which is why *nothing of it is built* no
 longer stands here:
 
-1. **The path in the bound's grammar** — open, and it is the only step left.
+1. **The path in the bound's grammar, and the `trait` table in the ledger
+   file** — open, and together they are what is left.
    `fn tell[T: greet::Speaks](…)` is a parse error at the `:`,
-   `expected one of: +, ,`. It waits on a trait being reachable across a
-   **package**, which [ADR-078](specification/adr/adr-078.md) §4 calls a
-   question about modules rather than about traits — and which nobody has
-   decided. Until then a bound names a trait the unit declares, which is what
-   makes (3) below complete for every bound the language can write.
-2. **The `trait` table and its method entries** — **built**
+   `expected one of: +, ,`, and `Ledger::traits` lives in memory and is never
+   rendered, so nothing outside a unit can name one of its traits.
+
+   *And this line used to say the wrong thing about why.*
+   [ADR-078](specification/adr/adr-078.md) §4 left *a trait a package
+   publishes* as **a question about modules**, and this entry repeated that as
+   *nobody has decided* — which stopped being true when
+   [ADR-106](specification/adr/adr-106.md) was accepted. **D1 decides the
+   path** (*a bound takes a path, as every other position that names a type
+   does*) and **D3 decides the table** (`[trait."http::Handler"]`, its methods
+   ordinary `fn` entries, no `fields`). So this is work and not a ruling, which
+   is the difference this file's own head is about.
+
+   Until it lands a bound names a trait the unit declares, which is what makes
+   (3) below complete for every bound the language can write.
+2. **The `trait` table and its method entries** — **built in memory**
    ([ADR-078](specification/adr/adr-078.md)). `Ledger::traits` names every
    declared trait and its methods, the signatures live in `functions` under
    `Summarize::summary`, and the keys are module-qualified when a program of
    several files absorbs them. `traits.rs` checks an `impl` against the trait
-   it names.
+   it names. **What is not written is the file**, which is (1) above.
 3. **The `impl` table and the union in the bound check** — **built**
    ([ADR-174](specification/adr/adr-174.md)). `Ledger::implementations` is
    written where the `impl` stands and merged when a program's ledger absorbs
@@ -1027,33 +1040,6 @@ wrong about which half is blocking: the package is written, and what `route`
 waits on is [§2.14](#214-a-parameter-may-be-a-function-and-a-kept-one-has-no-lowering)'s
 kept lowering, which is the compiler.
 
-### 2.31. A described foreign call is not asked whether it threads
-
-[ADR-123](specification/adr/adr-123.md) is **built**, command and all: the
-column has three values, `nikaia describe` writes it from a foreign type's
-fields since [ADR-104](specification/adr/adr-104.md)'s step 2 landed, and
-`NK2501` refuses a `spawn` over a described `crosses = false` type from a
-program end to end. What is left of this entry is the hole that claim exposed
-rather than made.
-
-*And one hole the claim exposed rather than made, which is not this record's.*
-`NK2502` asks its question of a call **nothing** describes, which is ADR-038 D7's
-own wording, so a *described* foreign call is not asked — and no column says
-whether a described foreign function puts what it is given on a thread.
-`examples/foreign-runtime/crossing` is that shape exactly: its handle says
-`crosses = false` and it is handed to `hyper_shim::across_a_thread`, which the
-description names, so the program is still refused by `rustc`'s `Send` bound
-against the `.nika` line. `a_described_foreign_call_is_not_asked_about_crossing`
-asserts the silence so nobody rediscovers it.
-
-***The question is answered, and it is §2.44 now.***
-[ADR-193](specification/adr/adr-193.md): a description gains a `threads` column
-with three values, `NK2502` asks a described call too and fires on the
-**claim**, and `nikaia describe` **proposes** the answer rather than demanding
-it. The place was already right — C.1's rule is kept and the refusal names the
-`.nika` line — and what was open is the **words**, which
-[ADR-005](specification/adr/adr-005.md) D7 recorded as its own half.
-
 ### 2.32. A library for other languages
 
 [ADR-125](specification/adr/adr-125.md), all of it. A `pub extern "C" fn`
@@ -1152,27 +1138,19 @@ imports the binding.
 
 ### 2.38. `nikaia fmt` does not exist
 
-[ADR-132](specification/adr/adr-132.md). **Built, except the formatter's line.**
-After `else`, an `if` may stand where the block would: the `else` rule has a
-second alternative and it makes that `if` the block's one statement, so the chain
-reaches the rest of the compiler as the `if` inside an `if` it is and every rule
-of `if` holds at every link with nothing asked of any of them. The emitter writes
-Rust's own `else if` where the `else` block holds one `if` and nothing else, and
-`examples/http`'s `status_line` is one decision rather than three `if`s in a row.
+There is no formatter. Part III's tool page names `nikaia fmt` and the CLI has
+`build`, `run`, `lower-std` and `describe`; `cargo fmt` formats this compiler's
+own Rust and **no `.nika` file has ever been formatted by a tool**.
 
-*Nothing was added to the language, and that is the claim worth a test.* `elseif`
-is a **name** — the grammar is scannerless, so a word it has no rule for is read
-as one — and `NK1117` says nothing declares it. An `elseif` that quietly became
-the keyword would be a second spelling nobody decided on.
+*It is born with one rule already written down.*
+[ADR-132](specification/adr/adr-132.md) D2: `} else if cond {` on one line, and
+never unfolding a chain into nested blocks or folding nested blocks into a
+chain. That rule outlived its own record — the rest of D1 is built, `else if`
+parses and lowers, and `examples/http`'s `status_line` is one decision rather
+than seven `if`s in a row — so what is left is not a step of that record any
+more. **The formatter itself is the entry.**
 
-**What is left belongs to a tool that is not there.** D2's *`nikaia fmt` writes
-`} else if cond {` on one line, and never unfolds a chain into nested blocks or
-folds nested blocks into a chain* asks something of a formatter, and there is no
-formatter: Part III's tool page names `nikaia fmt` and the CLI has `build`, `run`
-and `lower-std`. So this is not a step of that record any more — it is a rule the
-formatter is born with, and **the formatter itself is the entry**. Nothing else in
-the tree waits on it, which is why it has sat unnamed: `cargo fmt` formats this
-compiler's own Rust and no `.nika` file has ever been formatted by a tool.
+*Why it has sat unnamed:* nothing else in the tree waits on it.
 
 ### 2.39. A field's prose and a variant's go nowhere
 
@@ -1359,144 +1337,69 @@ the refusal is the honest answer for a program that would tether, and it names
 a parser handing its rows past the buffer's scope — and no program in the tree
 writes one.
 
-### 2.44. A description says whether it threads, and the describer proposes the answer
+### 2.44. The describer's remaining half: `cargo metadata`, a directory walk and a subprocess
 
-[ADR-193](specification/adr/adr-193.md), answering the last question
-[`open-decisions.md`](open-decisions.md) held. **Nothing of it is built**: a
-description has no `threads` column, `NK2502` asks its question only of a call
-**nothing** describes ([ADR-038](specification/adr/adr-038.md) D7's own
-wording), and `nikaia describe` writes no note about what it saw.
+[ADR-195](specification/adr/adr-195.md) D4 and
+[ADR-196](specification/adr/adr-196.md) D4, and what is left of
+[ADR-193](specification/adr/adr-193.md) is none of it.
 
-*Evidence:* `examples/foreign-runtime/crossing` — a handle whose description
-says `crosses = false`, handed to `hyper_shim::across_a_thread`, which the
-description names. The build fails against the right `.nika` line, which is
-[Part III C.1](specification/30-nikaia-tooling.md)'s rule kept, in `rustc`'s
-words: `` `Rc<String>` cannot be sent between threads safely ``.
-`a_described_foreign_call_is_not_asked_about_crossing` in
-`crates/nikaia/tests/send.rs` asserts that silence, and it is the test that has
-to change first. [ADR-005](specification/adr/adr-005.md) D7 carries the **text**
-as its own open half.
+***[ADR-193](specification/adr/adr-193.md) is built.*** The `threads` column
+with its three values and a refused third spelling (0.0.160); `NK2502` asking a
+**described** call, which is the half of
+[ADR-038](specification/adr/adr-038.md) D7 that was left open — a crate that
+answered every other question honestly used to turn the check off by being
+described; the signature scan and the note it writes (0.0.162); the
+`unsafe impl Send` flag, which arrived with the grammar rather than needing work
+of its own; and the intra-crate call graph with the `use` table (0.0.163), for
+the row where an `unsafe impl Send` took the bound away. **Both crossing
+experiments under `examples/foreign-runtime/` are refused by this compiler** —
+`NK2502`, in Nikaia's vocabulary, on the author's line — including `smuggled/`,
+which [`foreign-runtime.md`](foreign-runtime.md) §3.5 did not expect.
 
-*What it needs, in the record's order (§5), and each step is usable without the
-next:*
+***And the parser is built too***
+([ADR-195](specification/adr/adr-195.md) D3, [ADR-196](specification/adr/adr-196.md)
+D1): `crates/nikaia-std/src/tools/rust.nika` is a Nikaia grammar, lowered ahead
+of time, `include!`d as an ordinary Rust module and driven from Rust. Measured
+against the scanner it replaced, on one file: the scanner reported **four
+functions that do not exist** — one inside a block comment, one on the second
+line of a string literal, two inside a private `mod` — and put a fifth at the
+crate root instead of under its module. The grammar reports none of them, and
+it refuses no re-export, which the scanner refused every one of.
 
-1. **the column** — **built** at 0.0.160. `threads` takes `true`, `false` and
-   absent; it renders and re-parses; a third spelling is refused; and `NK2502`
-   asks a **described** call where the word says `true`, which is the half of
-   [ADR-038](specification/adr/adr-038.md) D7 that was left open — a crate that
-   answered every other question honestly used to turn the check off by being
-   described. `a_described_call_that_says_it_threads_is_asked_and_a_silent_one_is_not`
-   in `crates/nikaia/tests/send.rs` holds all three values.
+*So what is left is the **I/O half**, and it is not this record's.*
+[ADR-195](specification/adr/adr-195.md) D4's order, with the first step done:
 
-   *And it is written down and measured* (0.0.161). All three ledgers under
-   `examples/foreign-runtime/` say `threads = true` where it is true, and both
-   crossing experiments are refused **by this compiler** — `NK2502`, in Nikaia's
-   vocabulary, on the author's line. `smuggled/` too, which
-   [`foreign-runtime.md`](foreign-runtime.md) §3.5 did not expect: an
-   `unsafe impl Send` defeats `rustc`'s bound and cannot touch a line a person
-   wrote in a committed description. §8 of that note is the measurement.
-2. **the signature scan and the note it writes** — **built** at 0.0.162 (D3).
-   It carries the safe half on its own, and not as a heuristic: in safe Rust
-   the `Send` bound is forced and surfaces in the signature, and Rust's own type
-   system does the propagation. A parameter the bounds send gets a comment above
-   its entry naming the evidence and asking the question; the column stays a
-   person's, because a `Send` bound says the callee **may** send it and written
-   as a claim it could refuse a correct program. `across_a_thread` gets the note
-   and `across_a_thread_unchecked` correctly does not — an `unsafe impl Send`
-   took its bound away, and that row is step 5's.
-3. **A real parser and cargo metadata under it** (D4), which is what makes step
-   2 reliable rather than lucky. **The parser is a grammar, because the command
-   is a Nikaia program** ([ADR-195](specification/adr/adr-195.md) D1, D3): a
-   separate command that nothing bootstraps through, shipped the way
-   [ADR-002](specification/adr/adr-002.md) D4 already ships `std`'s Nikaia half
-   — the `.nika` kept beside the `.rs`, pre-lowered at release. It has three
-   parts of its own, and the first two are **built** and **half built**:
+1. ~~**the grammar**~~ — **built**.
+2. **`fs` gains a directory walk, and `std` a subprocess.** Both are the kind of
+   operating-system resource [ADR-194](specification/adr/adr-194.md) D1 put the
+   socket in `std` for, and the subprocess is what `cargo metadata` is run
+   through — which is the one thing `nikaia describe` still cannot do for a
+   crate declared by **version**, whose sources are in Cargo's registry cache.
+3. **the command rewritten in `.nika`**, in the sysroot, pre-lowered at release
+   by `nikaia lower-std`'s own step — which is the route the grammar already
+   took.
 
-   1. **the grammar**, which is **built** — `crates/nikaia-std/src/tools/rust.nika`.
-      It reads
-      `pub fn`, `pub struct`, `pub enum`, `pub trait`, `pub mod`, `pub use`
-      and `impl` headers with the module path each was found under. Measured
-      against the scanner on one file: the scanner reports **four functions
-      that do not exist** — one inside a block comment, one on the second line
-      of a string literal, two inside a private `mod` — and puts a fifth at the
-      crate root instead of under its module. The grammar reports none of them.
-      It also writes `unsafe impl Send for …`, which is step 4's own flag.
-   2. **the wiring**, which is **built**. The grammar is
-      `crates/nikaia-std/src/tools/rust.nika`, lowered by `nikaia lower-std` to
-      the `rust.rs` beside it, `include!`d as `nikaia_std::tools::rust`, and driven from
-      Rust by `crates/nikaia-std/tests/rust_signatures.rs` —
-      [ADR-196](specification/adr/adr-196.md) D1's route, running. **It is not
-      part of `std`**, and the **directory** is what says so: a `.nika` beside
-      `lib.rs` is a module of `std` and `crates/nikaia/tests/contracts.rs`
-      requires `std.contracts` to carry every `pub` thing it declares, so the
-      toolchain's own live under `src/tools` and
-      `a_toolchain_module_is_not_part_of_std` holds the line. It is not
-      *refused* either, and §1.7 is that — a defect this move found rather than
-      made.
-      **The scanner is out of `describe.rs`** and `translate` stayed, because
-      the grammar hands it the same text; `nikaia-std` is a real dependency of
-      the compiler ([ADR-196](specification/adr/adr-196.md) D3), which cost
-      four packages the compiler did not already resolve. An entry is keyed by
-      the path an item is **reachable** at, so `crate::seen` is refused for a
-      function that lives at `crate::shown::seen` — which is right, it is not
-      valid Rust either — and a `pub use` is followed, so one carried out of a
-      private `mod` is answered where it is offered. That second half is
-      [Part III C.4](specification/30-nikaia-tooling.md) and the scanner
-      refused every one of them.
+*And the staging has a written end and a sign that it has stalled*
+([ADR-196](specification/adr/adr-196.md) D4, which takes steps 2 and 3 **off**
+the reading half's critical path): the Rust half keeps the I/O and hands the
+grammar the text. **The sign is concrete** — `fs` has a directory walk and the
+Rust half is still doing the walking — and it is a thing to look for rather than
+a gate, because a gate on it would be a gate on work nobody has started.
 
-      **The third limit is closed.** A module is a block or a file —
-      `src/foo/bar.rs` is `foo::bar` — and whether a caller may write a path is
-      read from the `pub mod foo;` in its parent. A module nothing declares is
-      **not** offered, which is fail-closed and
-      [ADR-010](specification/adr/adr-010.md) D1's polarity. Of the scraper's
-      three named limits only the **macro** one stands, and it is
-      [ADR-001](specification/adr/adr-001.md) D1's rather than any parser's.
-   3. **`cargo metadata`, and the rest of the command following the parser
-      across.** `fs` gains a **directory walk** and `std` a **subprocess**
-      ([ADR-195](specification/adr/adr-195.md) D4), both of which are the kind
-      of operating-system resource
-      [ADR-194](specification/adr/adr-194.md) D1 put the socket in `std` for.
-      [ADR-196](specification/adr/adr-196.md) D4 takes these **off** step 3's
-      critical path — the Rust half keeps the I/O and hands the grammar the
-      text — and names what that buys and what it risks: the split is a staging
-      with a written end, and the sign that it has stalled is `fs` having a
-      directory walk while the Rust half is still doing the walking.
-4. **`unsafe impl Send`/`Sync` flagged** — **built** at 0.0.162 (D5), and it
-   arrived with the grammar rather than needing work of its own: the word is
-   part of the item header, so reading the header reads it. One syntactic
-   pattern and sound in the only sense that matters — the item is in the text
-   or it is not — and it sees a promise made about a **private** type, which is
-   what every other step in D4 is blind to. The note says what it cannot do: a
-   tool can see that the promise was made and not whether it is true.
-5. **the intra-crate call graph and the `use` table** — **built** at 0.0.163
-   (D4), for the row where an `unsafe impl Send` took the bound away. A body's
-   calls come from the grammar; the file's `use` items put `spawn` and
-   `tokio::spawn` back together; a private `fn` is reported rather than skipped,
-   because the graph goes through it and nothing outside the crate can call it;
-   and the walk is breadth-first, so the path a note names is the shortest one a
-   reviewer has to check. `across_a_thread_unchecked` reaches `tokio::spawn`
-   through `on_one_worker`, which is exactly the row this step exists for.
-
-*So [ADR-193](specification/adr/adr-193.md) is built*, except for
-`cargo metadata` — which is [ADR-195](specification/adr/adr-195.md) D4's `std`
-subprocess and is step 3.3 above, not this record's.
-
-*One rule of the record is worth repeating here, because it is the thing a first
-implementation gets wrong:* the describer **proposes and never claims**, and it
-may propose `true` and must never propose `false`. Nothing a signature can show
-entails *does not thread* — a function may spawn something it built itself — and
+*One rule of [ADR-193](specification/adr/adr-193.md) is worth keeping here,
+because it is the thing a first implementation gets wrong:* the describer
+**proposes and never claims**, and it may propose `true` and must never propose
+`false`. Nothing a signature can show entails *does not thread* — a function may
+spawn something it built itself — and
 [ADR-123](specification/adr/adr-123.md) D2's licence to fill `crosses` is
 **soundness**, which these indicators do not have.
 
-*And step 3 did not close everything a parser looks as though it would.* Of the
-scraper's three named limits the `mod`-path one is **closed** and the
-signature-translation one narrows, but the **macro** one stays — expanding one
-needs `-Zunpretty=expanded`, which is nightly, and that is the same
-[ADR-001](specification/adr/adr-001.md) D1 wall that keeps rustdoc-JSON out.
-*And one thing a parser makes possible that nothing asks for yet:* a **method**
-is read and not written down, because what an `impl`'s `pub fn` is at a foreign
-boundary is [ADR-104](specification/adr/adr-104.md) D4's own question.
-
+*And two limits stand that a parser looked as though it would close.* The
+**macro** one does: expanding one needs `-Zunpretty=expanded`, which is nightly,
+and that is the same [ADR-001](specification/adr/adr-001.md) D1 wall that keeps
+rustdoc-JSON out. And a **method** is read and not written down, because what an
+`impl`'s `pub fn` is at a foreign boundary is
+[ADR-104](specification/adr/adr-104.md) D4's own question.
 
 ## 3. Upkeep
 

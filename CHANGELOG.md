@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.170] — 2026-09-23
+
+**A pass over [`open-work.md`](docs/open-work.md), closing what is answered and
+saying what is blocked** — no compiler change, one documentation comment, and
+four entries that were telling a reader something that had stopped being true.
+[`docs/README.md`](docs/README.md) §1 makes a stale status note a defect in its
+own right, because a reader cannot tell a plan from a promise.
+
+### Closed
+
+- **§2.31, *a described foreign call is not asked whether it threads*.** Its own body ended *the question is answered, and it is §2.44 now* — and §2.44's first step landed at 0.0.160. A described call whose `threads` says `true` is `NK2502` in this language's vocabulary, and the test that asserted the silence has not existed since. Deleted; the number stays where it was, because this file is cited by number.
+
+### Corrected
+
+- **§2.44 said *Nothing of it is built* over five steps that said **built***, which is the shape of the defect this section is meant to catch. [ADR-193](docs/specification/adr/adr-193.md) is built — the column, the described call being asked, the signature scan, the `unsafe impl Send` flag, the call graph and the `use` table — and so is the parser under it ([ADR-195](docs/specification/adr/adr-195.md) D3, [ADR-196](docs/specification/adr/adr-196.md) D1). The entry is now what is actually left, which is not that record's: `cargo metadata`, and the `fs` directory walk and `std` subprocess it runs through ([ADR-195](docs/specification/adr/adr-195.md) D4). Its number is kept because two records cite it by one.
+- **§2.18 said the path in a bound *waits on … which nobody has decided*.** [ADR-078](docs/specification/adr/adr-078.md) §4 did leave *a trait a package publishes* as a question about modules, and [ADR-106](docs/specification/adr/adr-106.md) answered it: **D1** gives a bound a path, **D3** gives the ledger a `[trait."http::Handler"]` table whose methods are ordinary `fn` entries. So it is work and not a ruling — which is the whole distinction between this file and [`open-decisions.md`](docs/open-decisions.md). The same stale reasoning sat in the doc comment on `Ledger::traits` and is corrected there too.
+- **§2.38 was most of a record that closed.** `else if` parses and lowers and the entry was still narrating it. What is left is that there is **no formatter**, with one rule already written down for the day there is; the entry says that and nothing else now.
+
+### Where this leaves the list
+
+**§1 is empty** and §2 holds 34 entries. Three closed in the last three packages — `use std::<anything>` (§1.7), the grammar action block (§2.29), and the described call's `threads` (§2.31) — and this one is the pass that makes the rest say what is true.
+
 ## [0.0.169] — 2026-09-23
 
 **A grammar's action is the block after the pattern, and two borrowed names go**

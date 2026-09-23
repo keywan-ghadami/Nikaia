@@ -868,10 +868,16 @@ pub struct Ledger {
     /// is not in here names no trait, and a bound on it is refused rather than
     /// quietly believed.
     ///
-    /// Not written to the ledger file yet, for the reason D3 gives: nothing
-    /// outside this unit can name one of these traits until a trait can be
-    /// `pub` *and* reached across a package, and that is a question about
-    /// modules rather than about traits.
+    /// **Not written to the ledger file yet**, and the reason is now a thing to
+    /// build rather than a thing to decide.
+    /// [ADR-078](../../../docs/specification/adr/adr-078.md) §4 left it as *a
+    /// question about modules*;
+    /// [ADR-106](../../../docs/specification/adr/adr-106.md) answered it — D1
+    /// gives a bound a **path**, `[H: http::Handler]`, and D3 gives the ledger a
+    /// `[trait."http::Handler"]` table whose methods are ordinary `fn` entries.
+    /// Both are unbuilt, so nothing outside this unit can name one of these
+    /// traits yet, and `open-work.md`'s entry on a bound taking a path carries
+    /// the work.
     pub traits: BTreeMap<String, BTreeSet<String>>,
     /// **Who answers for what**: a trait's name to the types that `impl` it
     /// ([ADR-174](../../../docs/specification/adr/adr-174.md) D1).
