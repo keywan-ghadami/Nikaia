@@ -14,7 +14,11 @@ question is, why it is the owner's, and what this file recommends.
 
 ## Open
 
-**One question is open**, and the page was empty until 0.0.166. Three questions
+**Three questions are open.** Two arrived at 0.0.174 by reading
+[`open-work.md`](open-work.md) against its own rule — *citing a question is not
+asking it* — which is a failure that file has now had **three** times, and the
+third is the entry that named this page while writing nothing on it. The page was
+empty until 0.0.166. Three questions
 were answered in one day and each left this file for its record, which is what
 this page says happens to an answered entry: *does a described foreign function say whether it puts its argument on a
 thread?* → [ADR-193](specification/adr/adr-193.md), and *what does a Nikaia
@@ -110,3 +114,110 @@ Every entry this page has held was put here because something was blocked by it
 and somebody noticed; an empty page means nothing is blocked that anyone has
 written down. The way to refill it is the head of this file: the moment a piece
 of work is blocked by a question, the question comes here in the shape above.
+
+### How does a bound reach a caller across a package boundary?
+
+**What is blocked.** A call into a **package's** generic function is not checked
+against that function's bound, and what a reader gets is `rustc`'s words on their
+own line ([`open-work.md`](open-work.md) §1.10):
+
+```text
+error: app/src/main.nika:6:5: the trait bound `Bare: Handler` is not satisfied
+     = the trait `Handler` is not implemented for `Bare`
+     = the trait `Handler` is implemented for `Static`
+```
+
+`Handler` is written without the path the program must write, and `Static` is a
+name the program never mentions. The position is right — that is
+[ADR-005](specification/adr/adr-005.md) D7's translation — and the words are the
+backend's, which is [Part III C.1](specification/30-nikaia-tooling.md).
+
+**Why it is the owner's and not work.** The check itself is four lines:
+`Checker::declared_bounds` already holds *which bound each parameter carries*,
+under the key a call resolves to, and the only thing missing is that key for a
+function in another package. It cannot be read from the ledger, because **the
+ledger has no column for a bound** — a signature writes `(h: $H) -> String` and
+the `: Handler` is nowhere in it. Adding one is
+[ADR-106](specification/adr/adr-106.md) D3's table of ledger entries, extended,
+and that is a format decision: every reader of a `.contracts` file parses it, and
+`--locked` compares it byte for byte.
+
+**Nothing is blocked today.** Nothing in the tree publishes a generic function
+with a bound; the shape became writable at 0.0.171 and the first package to use
+it is the one that meets this.
+
+**Three options.**
+
+1. **A key of its own.** `bounds = ["H: handler::Handler"]` beside `signature`.
+   Additive: an older reader ignores a key it does not know, which is what
+   `version` is for.
+2. **Widen the `signature` language.** `signature = "[H: handler::Handler](h: $H) -> String"`,
+   the bound where the declaration writes it. No new key, and the one string a
+   caller already parses says the whole of what the call means.
+3. **Neither.** A cross-package generic call stays the backend's to refuse, with
+   the position translated and the words Rust's.
+
+**What this page recommends: 2.**
+
+The signature **already** carries the type parameter as `$H`
+([ADR-074](specification/adr/adr-074.md) D2: *a generic parameter is recorded as
+a variable, so a caller binds it from what it passes and reads the result off the
+same signature*). A bound is the rest of that sentence, and a second key that has
+to agree with the first is a second source of truth for one fact — the argument
+[ADR-106](specification/adr/adr-106.md) D3 already makes about a trait's methods,
+which are the `fn` entries beside it rather than a list inside the `trait` table.
+
+**What either direction costs if it is wrong.** Option 2 changes a grammar every
+ledger reader parses, and every signature in every `.contracts` file is compared
+byte for byte by `--locked` — so getting the spelling wrong is a churn across the
+tree rather than a bug. Option 1 costs nothing to add and one more place for the
+two columns to disagree, forever. Option 3 costs a [Part III
+C.1](specification/30-nikaia-tooling.md) hole that stays open, and it is the only
+one of the three that cannot be undone cheaply: a package published under it
+would have callers relying on `rustc` to say what the compiler should have.
+
+### Does the language have a type for a list of errors?
+
+**What is blocked.** [ADR-115](specification/adr/adr-115.md) D4's own written
+example ([`open-work.md`](open-work.md)'s `overlap` entry):
+
+```nika
+} catch {
+    throw LoadFailed(error, error.secondary)
+}
+```
+
+The list of joined failures is what a log and an operator see today
+([ADR-170](specification/adr/adr-170.md) D1, built). Handing it to a
+**constructor** — a program reading it as a value — needs a Nikaia type for *a
+list of errors*, and there is none. In Rust it is a `Vec<Thrown<E>>`; in this
+language a trait is never the type of a value and there is no `dyn`
+([ADR-078](specification/adr/adr-078.md) §4, by decision).
+
+**Three options.**
+
+1. **An opaque `Failures` in `std`**, with what a program actually needs of it —
+   a count, a walk, a rendering — and no element type at all. The precedent is
+   [ADR-147](specification/adr/adr-147.md) D3's handle: an address the language
+   never dereferences, and `NK1160` where a program tries.
+2. **`dyn` as a type**, which would give `Vec[Error]` a meaning and is a language
+   feature of its own — the one [ADR-078](specification/adr/adr-078.md) §4
+   deliberately left out.
+3. **Neither.** `error.secondary` stays a thing a log prints and D4's example
+   stays unwritable, said out loud rather than left as an unbuilt line.
+
+**What this page recommends: 1.**
+
+It is the smallest thing that makes the record's example writable, it needs no
+language feature, and what a program does with a list of failures is count them,
+walk them and print them — none of which wants an element type. Option 2 is a
+large decision to take for one example, and taking it here would decide `dyn` by
+the back door.
+
+**What either direction costs if it is wrong.** Option 1 costs a `std` type that
+may turn out to want an element type later, which is the cheap direction: an
+opaque type can gain a way to look inside and cannot lose one. Option 2 costs
+`dyn` — the trait-as-a-type question, decided under the pressure of an example
+rather than on its own merits. Option 3 costs the record staying half-written,
+which is the thing [`docs/README.md`](README.md) §1 calls a defect: a reader
+cannot tell a plan from a promise.

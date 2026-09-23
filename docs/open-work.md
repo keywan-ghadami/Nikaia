@@ -152,6 +152,12 @@ it. Filing the bounds under the qualified key from the AST instead would work
 for a **path** dependency and for nothing else, which is the wrong shape to
 build first.
 
+***The question is asked***, which is the half this file has skipped three times:
+*how does a bound reach a caller across a package boundary?* is on
+[`open-decisions.md`](open-decisions.md) in that page's shape, with the two
+spellings and what either costs. Until it is answered the check has nowhere to
+read from.
+
 *Why it is here and not below:* the program is refused, and refused in the
 backend's words. Nothing is miscompiled.
 
@@ -392,10 +398,13 @@ form. What is left is machinery, not syntax:
   ([ADR-102](specification/adr/adr-102.md) D1, and
   [ADR-192](specification/adr/adr-192.md) D1 for the shape it takes). This entry
   said it was a parse error, which it was when the entry was written.
-  **The second door is still shut**: `fn tell[T: greet::Speaks](x: T)` is a
-  parse error at the `:`, which is the bound-takes-a-path entry below and waits
-  on a module question nobody has decided. Either door is enough, so what is
-  left here is `route` itself and not the language.
+  **And the second door opened at 0.0.171**:
+  `fn tell[T: greet::Speaks](x: T)` was a parse error at the `:` and parses now
+  ([ADR-106](specification/adr/adr-106.md) D1), with the ledger carrying a
+  package's traits and `impl`s beside it. The *module question* this bullet said
+  nobody had decided was [ADR-078](specification/adr/adr-078.md) §4's, and
+  ADR-106 had decided it. Either door is enough, so what is left here is `route`
+  itself and not the language.
 
   *And the question this bullet named was never written down.* It said *that is
   **how does a package receive a handler** on
@@ -980,7 +989,11 @@ envelope — was answered **A**: a body that joins puts one on.
   `throw LoadFailed(error, error.secondary)` is that record's own written
   example. The list is what a log and an operator see today; handing it to a
   constructor needs a Nikaia type for *a list of errors*, which nothing writes
-  down yet — so this is a question about the type language before it is work.
+  down yet — so this is a question about the type language before it is work,
+  and ***it is asked***: *does the language have a type for a list of errors?*
+  is on [`open-decisions.md`](open-decisions.md) in that page's shape. This
+  bullet named it for two versions and wrote it nowhere, which is the head of
+  this file's own rule met from the wrong side.
 * **Whether the list survives a hop to a caller with a bare channel of its
   own.** [ADR-170](specification/adr/adr-170.md) D1 covers the body the block
   is written in and says so: the block, its `catch` and the function around
@@ -1482,9 +1495,10 @@ Blocking waiting for file lock on artifact directory
 — one build's output arriving at the other test's assertion, and one that never
 finishes behind the lock. The project tests share one Cargo package cache
 (`NIKAIA_CACHE_DIR`, `shared_cache_dir()`), which is deliberate — it is what
-`a_second_project_links_the_std_the_first_one_built` is about — and what has
-not been decided is what that sharing costs when two test binaries want it at
-once.
+`a_second_project_links_the_std_the_first_one_built` is about — and what nobody
+has **measured** is what that sharing costs when two test binaries want it at
+once. A number and not a ruling ([ADR-009](specification/adr/adr-009.md) D4), so
+it stays here.
 
 *Why it stays upkeep:* nothing a user does fails. `cargo test -p nikaia --test
 project` passes on its own, repeatedly, and CI has been green on every release

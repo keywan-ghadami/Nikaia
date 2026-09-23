@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.174] — 2026-09-23
+
+**The questions go where questions go** — a pass over
+[`open-work.md`](docs/open-work.md) against its own rule, *citing a question is
+not asking it*, which is a failure that file has now had **three** times and the
+third was written two versions ago.
+
+### What was wrong
+
+[`open-work.md`](docs/open-work.md)'s head says it outright: *an entry that names
+a question elsewhere is not finished until the link resolves*, and it says the
+failure was found twice before, at 0.0.150, by following its own links. **§1.10
+made it a third time.** It said the ledger has no column for a bound and that
+*whether that is a new key or a widening of the `signature` language is ADR-106
+D3's table to extend, and no record does it* — naming a decision and writing it
+nowhere.
+
+### Two questions, now asked
+
+- **How does a bound reach a caller across a package boundary?** ([`open-work.md`](docs/open-work.md) §1.10). Three options — a `bounds` key of its own, the bound inside the `signature` string where the declaration writes it, or leaving the refusal to `rustc` — with a recommendation (**the signature**, because it already carries the type parameter as `$H` and a second key that has to agree with it is a second source of truth) and what each costs if it is wrong.
+- **Does the language have a type for a list of errors?** ([ADR-115](docs/specification/adr/adr-115.md) D4's own example, `throw LoadFailed(error, error.secondary)`). Three options — an **opaque** `Failures` in `std`, `dyn` as a type, or neither — with a recommendation (**opaque**, because what a program does with a list of failures is count, walk and print it, and none of that wants an element type; and because `dyn` is a large decision to take under the pressure of one example). That bullet named the question for two versions and wrote it nowhere.
+
+### And two sentences that had stopped being true
+
+- **§2.5** said `fn tell[T: greet::Speaks](x: T)` *waits on a module question nobody has decided*. [ADR-078](docs/specification/adr/adr-078.md) §4 did leave it open and [ADR-106](docs/specification/adr/adr-106.md) answered it; the door opened at 0.0.171.
+- **§3.1** said *what has not been decided is what that sharing costs*. A cost is **measured**, not decided ([ADR-009](docs/specification/adr/adr-009.md) D4), so it stays where work stays.
+
+Nothing in the compiler changed. [`open-decisions.md`](docs/open-decisions.md) holds three questions, and every question [`open-work.md`](docs/open-work.md) names now resolves to one of them.
+
 ## [0.0.173] — 2026-09-23
 
 **A field handed back out of a parameter keeps it** —
