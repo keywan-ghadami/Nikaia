@@ -77,10 +77,11 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Nothing is open.** §1.7 closed at 0.0.168 — `use std::<anything>` is `NK1186`
-now, and the list it is answered from is what `std`'s ledger declares joined with
-what a page or a record names and the compiler has not built. §1.8 closed at
-0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132,
+**One entry is open**, §1.9, found at 0.0.171 by building a package whose own
+generic function has a bound. §1.7 closed at 0.0.168 — `use std::<anything>` is
+`NK1186` now, and the list it is answered from is what `std`'s ledger declares
+joined with what a page or a record names and the compiler has not built. §1.8
+closed at 0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132,
 §1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay
 where they were, because this file is cited by number.
 
@@ -91,6 +92,60 @@ changed about it — and a **third**, which was fixed in the same package and ne
 got a number, by trying the same change twice and getting two answers: a hand
 edit to a `contracts/<crate>.contracts` did not reach the build cache's key, and
 failed **open** while it did not.
+
+### 1.9. A package's own bound is refused when the package is a dependency
+
+A `pub fn` of a **package** whose parameter carries a bound is refused with
+`NK1126` — *nothing says it has a method* — when the package is built **as a
+dependency**, and compiles when the same code is built on its own.
+
+```nika
+// handler/src/main.nika
+pub struct Answer { pub text: String }
+
+pub trait Handler {
+    fn handle(ref self) -> Answer
+}
+
+pub fn dispatch[H: Handler](h: H) -> String {
+    return h.handle().text
+}
+```
+
+`nikaia build` in a program that writes `use handler` refuses **the package's
+own line**:
+
+```text
+error[NK1126]: `H` stands for a type the caller picks, and nothing says it has a method `handle`
+  --> handler/src/main.nika:10:5
+```
+
+and the same source as a single program lowers. **The consumer does not have to
+call it**: a program that only names one of the package's types is enough,
+because every unit of the build is checked.
+
+*What it is:* a dependency's unit is checked against the **program's** ledger,
+whose keys were qualified while it was absorbed — `handler::Handler` — and the
+dependency's own file writes the name unqualified, as its author must. So the
+trait the bound names is not found, and `NK1126` fires on a correct program,
+which is [Part III C.4](specification/30-nikaia-tooling.md).
+
+*What it is not:* it is **not** the path in a bound, which is built
+([ADR-106](specification/adr/adr-106.md) D1) — reproduced with that change
+stashed, and the refusal is identical. `implementations` already keeps **both**
+spellings for this reason and `traits` keeps only the qualified one, which is
+where the asymmetry shows.
+
+*And the cheap fix is the wrong one.* Giving `traits` both spellings too would
+make the *program's* `[T: Handler]` resolve to a dependency's trait — a second
+spelling of a name [ADR-046](specification/adr/adr-046.md) D2 says must carry its
+path, accepted silently. What the case wants is a dependency's unit checked in
+**its own** namespace, which is a question about how `program.units` are walked
+and not about bounds.
+
+*Found by* writing the shape [ADR-106](specification/adr/adr-106.md) D1 had just
+made writable and building it from the other side, which is this section's
+method.
 
 **Every entry this section has ever held was found by *running* something** —
 the specification's own programs, the corpus at both settings, a two-file
@@ -769,57 +824,6 @@ demand it of, and nothing in `examples/`, in `tests/` or in `std` calls it —
 `par_fold` is a grammar driver and not this. D4's *it waits for a program* applies:
 the **word** is in the type language and binds, so the entry is one line the day
 something asks for it, and the demand is the line after.
-
-### 2.18. A bound takes a path, and the ledger records traits and `impl`s
-
-[ADR-106](specification/adr/adr-106.md). `[H: http::Handler]` parses; `use`
-is unchanged; the ledger gains a `trait` table whose methods are ordinary
-`fn` entries, and an `impl` table written where the `impl` stands, so that
-*does `T` implement `A`* is the union over every ledger a program reads. A
-call through a bound resolves to the implementing type's own entry.
-
-*Evidence:* the three refusals a cross-package `Handler` bound met against
-`examples/http/` — a parse error at the path, `NK1126` after `use http`, and
-the `NK1129` that ADR-100 D2 has since removed.
-
-*What it needs, in the record's order (§5), and where each stands* — measured
-at 0.0.105 and built at 0.0.106, which is why *nothing of it is built* no
-longer stands here:
-
-1. **The path in the bound's grammar, and the `trait` table in the ledger
-   file** — open, and together they are what is left.
-   `fn tell[T: greet::Speaks](…)` is a parse error at the `:`,
-   `expected one of: +, ,`, and `Ledger::traits` lives in memory and is never
-   rendered, so nothing outside a unit can name one of its traits.
-
-   *And this line used to say the wrong thing about why.*
-   [ADR-078](specification/adr/adr-078.md) §4 left *a trait a package
-   publishes* as **a question about modules**, and this entry repeated that as
-   *nobody has decided* — which stopped being true when
-   [ADR-106](specification/adr/adr-106.md) was accepted. **D1 decides the
-   path** (*a bound takes a path, as every other position that names a type
-   does*) and **D3 decides the table** (`[trait."http::Handler"]`, its methods
-   ordinary `fn` entries, no `fields`). So this is work and not a ruling, which
-   is the difference this file's own head is about.
-
-   Until it lands a bound names a trait the unit declares, which is what makes
-   (3) below complete for every bound the language can write.
-2. **The `trait` table and its method entries** — **built in memory**
-   ([ADR-078](specification/adr/adr-078.md)). `Ledger::traits` names every
-   declared trait and its methods, the signatures live in `functions` under
-   `Summarize::summary`, and the keys are module-qualified when a program of
-   several files absorbs them. `traits.rs` checks an `impl` against the trait
-   it names. **What is not written is the file**, which is (1) above.
-3. **The `impl` table and the union in the bound check** — **built**
-   ([ADR-174](specification/adr/adr-174.md)). `Ledger::implementations` is
-   written where the `impl` stands and merged when a program's ledger absorbs
-   its units', so the answer is the union over the files; `NK1164` refuses a
-   call whose type answers for nothing, with a second sentence for a parameter
-   of the caller's own, which cannot be told to write an `impl`.
-4. **The resolution at a call through a bound** — partly, and nothing needs the
-   rest. `x.say()` on a `[T: Speaks]` resolves through the **trait's** entry,
-   which is the right answer for its signature; the implementing type's own
-   entry is what (3) has now made reachable, and no program has asked for it.
 
 ### 2.19. Text is one type, and `ref String` is the assertion
 

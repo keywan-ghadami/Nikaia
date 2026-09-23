@@ -868,16 +868,13 @@ pub struct Ledger {
     /// is not in here names no trait, and a bound on it is refused rather than
     /// quietly believed.
     ///
-    /// **Not written to the ledger file yet**, and the reason is now a thing to
-    /// build rather than a thing to decide.
-    /// [ADR-078](../../../docs/specification/adr/adr-078.md) §4 left it as *a
-    /// question about modules*;
-    /// [ADR-106](../../../docs/specification/adr/adr-106.md) answered it — D1
-    /// gives a bound a **path**, `[H: http::Handler]`, and D3 gives the ledger a
-    /// `[trait."http::Handler"]` table whose methods are ordinary `fn` entries.
-    /// Both are unbuilt, so nothing outside this unit can name one of these
-    /// traits yet, and `open-work.md`'s entry on a bound taking a path carries
-    /// the work.
+    /// **Written to the ledger file** as `[trait."Handler"]`, with no methods in
+    /// it ([ADR-106](../../../docs/specification/adr/adr-106.md) D3): they are
+    /// the `fn` entries beside it, under `Handler::handle`, and the set is
+    /// filled from those once the whole file is parsed.
+    /// [ADR-078](../../../docs/specification/adr/adr-078.md) §4 left *a trait a
+    /// package publishes* as a question about modules; D1 and D3 of that later
+    /// record answered it, and a bound has taken a path since 0.0.171.
     pub traits: BTreeMap<String, BTreeSet<String>>,
     /// **Who answers for what**: a trait's name to the types that `impl` it
     /// ([ADR-174](../../../docs/specification/adr/adr-174.md) D1).
@@ -888,9 +885,12 @@ pub struct Ledger {
     /// one file. A program's ledger is absorbed from its units', so the union
     /// over the files is a thing this map already knows how to be.
     ///
-    /// Not written to the ledger file, for `traits`' reason above and in the
-    /// same breath: nothing outside the unit can name one of these traits, so
-    /// nothing outside it can ask this question either.
+    /// **Written to the ledger file** as `[impl."Handler for Static"]`
+    /// ([ADR-106](../../../docs/specification/adr/adr-106.md) D4), one line per
+    /// pair. Each ledger says only what it **wrote** — an `impl` may stand in
+    /// the trait's package, in the type's, or in a consumer for its own type —
+    /// so the answer at a call is the union over every ledger the program reads
+    /// plus its own, and no ledger claims completeness.
     pub implementations: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -1133,12 +1133,12 @@ impl Ledger {
         // twice and failed the third time, because the program's ledger is
         // absorbed from the unit's and this map was the one thing left behind.
         for (trait_name, types) in other.implementations {
-            // **Both spellings**, because the question is asked from both
-            // sides: inside the package the type is `Dog`, and to a consumer it
-            // is `pets::Dog`. A bound cannot name a path at all today
-            // ([`open-work.md`](../../../docs/open-work.md) §2.18), so the
-            // qualified half is what the next step will need rather than what
-            // this one uses — and an extra spelling can only make the check
+            // **Both spellings, on both sides**, because the question is asked
+            // from both: inside the package the `impl` is `Handler for Dog`, and
+            // to a consumer it is `pets::Handler for pets::Dog`. A bound may name
+            // a path since [ADR-106](../../../docs/specification/adr/adr-106.md)
+            // D1, so the qualified half is what a consumer's bound looks the
+            // answer up under — and an extra spelling can only make the check
             // fail *open*, which is the side [Part III
             // C.4](../../../docs/specification/30-nikaia-tooling.md) puts the
             // benefit of the doubt on.
@@ -1146,10 +1146,16 @@ impl Ledger {
             if let Some(module) = module {
                 widened.extend(types.iter().map(|ty| format!("{module}::{ty}")));
             }
-            self.implementations
-                .entry(trait_name)
-                .or_default()
-                .extend(widened);
+            let names = match module {
+                Some(module) => vec![format!("{module}::{trait_name}"), trait_name],
+                None => vec![trait_name],
+            };
+            for name in names {
+                self.implementations
+                    .entry(name)
+                    .or_default()
+                    .extend(widened.iter().cloned());
+            }
         }
         for (name, methods) in other.traits {
             let key = match module {
@@ -1917,6 +1923,36 @@ impl Ledger {
             }
         }
 
+        // **A trait a package publishes** ([ADR-106](../../../../docs/specification/adr/adr-106.md)
+        // D3). The table carries the one word a checker needs — *this name is a
+        // trait* — and no `fields`: its **methods are the `fn` entries above**,
+        // under `Handler::handle`, which is the key shape an `impl`'s get and the
+        // one `NK1130` already compares against. Writing them twice would be a
+        // second source of truth for one fact.
+        //
+        // [ADR-078](../../../../docs/specification/adr/adr-078.md) §4 left this
+        // as *a question about modules*; D1 and D3 of that later record answered
+        // it, and until they were built a bound could not name a path and nothing
+        // outside a unit could name one of these traits.
+        for name in self.traits.keys() {
+            out.push_str(&format!("\n[trait.\"{name}\"]\n"));
+        }
+
+        // **And each `impl`, in the ledger of the package that wrote it**
+        // ([ADR-106](../../../../docs/specification/adr/adr-106.md) D4). An
+        // `impl` may be written in the trait's package, in the type's, or in a
+        // consumer for its own type, so no single ledger can list a trait's
+        // implementors completely — and a list read as complete would turn
+        // absence into an answer, which
+        // [ADR-010](../../../../docs/specification/adr/adr-010.md) D1 forbids.
+        // Each ledger says only what it wrote, and the question at a call is
+        // answered over every ledger this program reads plus its own.
+        for (trait_name, types) in &self.implementations {
+            for ty in types {
+                out.push_str(&format!("\n[impl.\"{trait_name} for {ty}\"]\n"));
+            }
+        }
+
         for (name, contract) in &self.types {
             out.push_str(&format!("\n[type.\"{name}\"]\n"));
             if contract.public {
@@ -2003,6 +2039,10 @@ impl Ledger {
             Fn(String),
             Type(String),
             Sources,
+            /// A table whose whole content is its name: `[trait."X"]` and
+            /// `[impl."A for T"]`. A key inside one is a mistake and says so,
+            /// rather than being filed under whatever section came before it.
+            Nothing,
         }
 
         let mut ledger = Ledger::default();
@@ -2025,6 +2065,29 @@ impl Ledger {
                 let name = quoted(rest, "]", at())?;
                 ledger.types.entry(name.clone()).or_default();
                 section = Some(In::Type(name));
+                continue;
+            }
+            // **A trait's methods are not read here**, because they are the `fn`
+            // entries of this same file and reading them twice would let the two
+            // disagree. The set is filled from `functions` once the whole file is
+            // parsed, below.
+            if let Some(rest) = line.strip_prefix("[trait.\"") {
+                let name = quoted(rest, "]", at())?;
+                ledger.traits.entry(name).or_default();
+                section = Some(In::Nothing);
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("[impl.\"") {
+                let written = quoted(rest, "]", at())?;
+                let (trait_name, ty) = written.split_once(" for ").ok_or_else(|| {
+                    anyhow!("line {}: an `impl` entry is `A for T`: {written}", at())
+                })?;
+                ledger
+                    .implementations
+                    .entry(trait_name.trim().to_string())
+                    .or_default()
+                    .insert(ty.trim().to_string());
+                section = Some(In::Nothing);
                 continue;
             }
             if line == "[sources]" {
@@ -2194,7 +2257,42 @@ impl Ledger {
                         _ => return Err(anyhow!("line {}: unknown key `{key}` on a type", at())),
                     }
                 }
+                (Some(In::Nothing), _) => {
+                    return Err(anyhow!(
+                        "line {}: a `trait` or an `impl` table has no keys, and this has `{key}`",
+                        at()
+                    ))
+                }
             }
+        }
+
+        // **A trait's methods are the `fn` entries this file already carries**
+        // ([ADR-106](../../../../docs/specification/adr/adr-106.md) D3: *a
+        // trait's methods are ordinary `fn` entries*), filled here rather than
+        // read from a second place — the two could then disagree, and `NK1130`
+        // compares an `impl` against exactly these.
+        //
+        // After the whole file, because a `[trait.…]` table may stand before the
+        // entries it owns.
+        let methods: Vec<(String, String)> = ledger
+            .traits
+            .keys()
+            .flat_map(|name| {
+                let prefix = format!("{name}::");
+                ledger
+                    .functions
+                    .keys()
+                    .filter_map(move |key| {
+                        key.strip_prefix(&prefix)
+                            .filter(|rest| !rest.contains("::"))
+                            .map(|rest| (prefix.clone(), rest.to_string()))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for (prefix, method) in methods {
+            let name = prefix.trim_end_matches("::").to_string();
+            ledger.traits.entry(name).or_default().insert(method);
         }
 
         Ok(ledger)

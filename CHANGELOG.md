@@ -4,6 +4,35 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.171] — 2026-09-23
+
+**A bound takes a path, and the ledger records traits and `impl`s** —
+[ADR-106](docs/specification/adr/adr-106.md) D1, D3 and D4, which closes
+[`open-work.md`](docs/open-work.md) §2.18.
+
+### The path
+
+- **`fn dispatch[H: handler::Handler](h: H)`** parses, and `[T: A + handler::B]` mixes a local bound and a foreign one. `generic_bound` takes `type_name`, which is the record's own sentence — *the grammar's rule for a type name is the rule for a bound's trait name* — so the whole path is interned as one name, exactly as `impl handler::Handler for Fixed` already had it.
+- It was a parse error at the `:`, `expected one of: +, ,`.
+
+### The two tables
+
+- **`[trait."Handler"]`**, and it carries **nothing else**: a trait's methods are the `fn` entries beside it, under `Handler::handle`, which is the key shape an `impl`'s get and the one `NK1130` already compares against. Writing them twice would be a second source of truth for one fact, so the set is filled from `functions` once the whole file is parsed.
+- **`[impl."Handler for Static"]`**, one line per pair, in the ledger of the package that **wrote** it (D4). An `impl` may stand in the trait's package, in the type's, or in a consumer for its own type, so no single ledger can list a trait's implementors completely — and a list read as complete would turn absence into an answer, which [ADR-010](docs/specification/adr/adr-010.md) D1 forbids. The answer at a call is the union over every ledger the program reads plus its own.
+- **A consumer reads the `impl` under both spellings**, the package's and the qualified one. `implementations` already widened the **type** that way and keyed the **trait** unqualified, so a bound written `handler::Handler` looked the answer up where it was not. An extra spelling can only make the check fail *open*, which is [Part III C.4](docs/specification/30-nikaia-tooling.md)'s side — and the refusal it must not take away has a test of its own.
+
+### What it answers
+
+[ADR-078](docs/specification/adr/adr-078.md) §4 left *a trait a package publishes* as **a question about modules**, and that sentence outlived the record: [`open-work.md`](docs/open-work.md) §2.18 repeated it as *nobody has decided* until 0.0.170's pass, and the doc comment on `Ledger::traits` carried it too. [ADR-106](docs/specification/adr/adr-106.md) had decided it; what was missing was the build.
+
+Three tests in `crates/nikaia/tests/project.rs`, each two packages, because inside one the module's names are the package's and a bound needs no path at all: the consumer's own `impl`, the package's `impl`, and a type that implements neither.
+
+### And one defect, found by building the shape from the other side
+
+**§1.9: a package's own bound is refused when the package is a dependency.** `pub fn dispatch[H: Handler](h: H)` in a package compiles on its own and is `NK1126` — *nothing says it has a method* — when a program depends on it, **without the program calling it**. A dependency's unit is checked against the *program's* ledger, whose keys were qualified while it was absorbed, and the dependency's own file writes the name unqualified as its author must.
+
+Reproduced with this package's change **stashed**, so it is pre-existing and not the path's. The cheap fix is the wrong one: giving `traits` both spellings would make a program's own `[T: Handler]` resolve to a dependency's trait, which is a second spelling of a name [ADR-046](docs/specification/adr/adr-046.md) D2 says must carry its path. What the case wants is a dependency's unit checked in its own namespace, and that is a question about how the units are walked.
+
 ## [0.0.170] — 2026-09-23
 
 **A pass over [`open-work.md`](docs/open-work.md), closing what is answered and

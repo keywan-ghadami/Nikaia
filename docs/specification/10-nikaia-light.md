@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.170 (Draft)
+**Version:** 0.0.171 (Draft)
 **Date:** 2026-09-23
 
 ---
@@ -1404,9 +1404,11 @@ and no `fn f(x: Summarize)`.
 > `sync` is not yet lowered as one that may pause: the emitter writes a plain
 > `fn` in every trait ([ADR-109](adr/adr-109.md) §5). A differing signature is
 > not compared, so a method with the wrong arity or result is refused by the
-> backend. A bound with a path and the ledger's record of traits are not built,
-> so a trait cannot be named from another package
-> ([ADR-106](adr/adr-106.md) §5).
+> backend. **A bound takes a path since 0.0.171**
+> ([ADR-106](adr/adr-106.md) D1), and the ledger carries a `trait` table and an
+> `impl` table (D3, D4), so a trait a package publishes is one a consumer may
+> bound on — and whether a type implements it is the union over every ledger the
+> program reads plus its own.
 
 ---
 

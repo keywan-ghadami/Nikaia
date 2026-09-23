@@ -2172,3 +2172,178 @@ fn a_grammar_entry_in_tail_position_over_a_local_runs() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// **A bound takes a path, and a trait a package publishes is one a consumer may
+/// name** ([ADR-106](../../../docs/specification/adr/adr-106.md) D1 and D3).
+///
+/// `fn tell[T: greet::Speaks](…)` was a parse error at the `:`,
+/// `expected one of: +, ,`, and `Ledger::traits` lived in memory and was never
+/// written — so nothing outside a unit could name one of its traits.
+/// [ADR-078](../../../docs/specification/adr/adr-078.md) §4 left that as *a
+/// question about modules*; D1 and D3 answered it, and this is the pair built.
+///
+/// **It has to be two packages.** Inside one, a module's names are the package's
+/// (`ADR-047` D1), so a bound on a trait of another file needs no path at all
+/// and a one-unit test cannot see this.
+#[test]
+fn a_bound_takes_a_path_across_a_package() {
+    let dir = a_program_and_a_package(
+        "bound-path",
+        "handler",
+        &[
+            (
+                "handler/src/main.nika",
+                "pub struct Answer {\n\
+                 \x20   pub text: String,\n\
+                 }\n\
+                 \n\
+                 pub trait Handler {\n\
+                 \x20   fn handle(ref self) -> Answer\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use handler\n\n\
+                 struct Fixed {\n\
+                 \x20   n: i64,\n\
+                 }\n\
+                 \n\
+                 impl handler::Handler for Fixed {\n\
+                 \x20   fn handle(ref self) -> handler::Answer {\n\
+                 \x20       return handler::Answer { text: \"handled\".to_string() }\n\
+                 \x20   }\n\
+                 }\n\
+                 \n\
+                 fn dispatch[H: handler::Handler](h: H) -> String {\n\
+                 \x20   return h.handle().text\n\
+                 }\n\
+                 \n\
+                 fn main() {\n\
+                 \x20   let f = Fixed { n: 1 }\n\
+                 \x20   println(dispatch(f))\n\
+                 }\n",
+            ),
+        ],
+    );
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "handled",
+        "the call through the bound resolves to the implementing type's own entry (D5)"
+    );
+
+    // **The trait is in the package's ledger file**, which is what made the
+    // bound answerable: the table carries the one word a checker needs and no
+    // methods, because its methods are the `fn` entries beside it.
+    let ledger = std::fs::read_to_string(dir.join("handler/nikaia.contracts"))
+        .expect("the package writes its ledger");
+    assert!(ledger.contains("[trait.\"Handler\"]"), "{ledger}");
+    assert!(ledger.contains("[fn.\"Handler::handle\"]"), "{ledger}");
+}
+
+/// **And the `impl` may be the package's**
+/// ([ADR-106](../../../docs/specification/adr/adr-106.md) D4): *whether a type
+/// implements a trait is the union of what the program and its dependencies'
+/// ledgers say*, so a consumer that writes no `impl` of its own gets the answer
+/// from the file.
+///
+/// The one that was missing until the table was written: the ledger recorded
+/// `Handler for Static` under the **unqualified** trait name, and a bound asks
+/// under `handler::Handler`.
+#[test]
+fn an_impl_a_package_wrote_answers_a_consumers_bound() {
+    let dir = a_program_and_a_package(
+        "bound-impl",
+        "handler",
+        &[
+            (
+                "handler/src/main.nika",
+                "pub struct Answer {\n\
+                 \x20   pub text: String,\n\
+                 }\n\
+                 \n\
+                 pub trait Handler {\n\
+                 \x20   fn handle(ref self) -> Answer\n\
+                 }\n\
+                 \n\
+                 pub struct Static {\n\
+                 \x20   pub what: String,\n\
+                 }\n\
+                 \n\
+                 impl Handler for Static {\n\
+                 \x20   fn handle(ref self) -> Answer {\n\
+                 \x20       return Answer { text: self.what.clone() }\n\
+                 \x20   }\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use handler\n\n\
+                 fn dispatch[H: handler::Handler](h: H) -> String {\n\
+                 \x20   return h.handle().text\n\
+                 }\n\
+                 \n\
+                 fn main() {\n\
+                 \x20   let s = handler::Static { what: \"from the package\".to_string() }\n\
+                 \x20   println(dispatch(s))\n\
+                 }\n",
+            ),
+        ],
+    );
+    let ran = nikaia(&["run"], &dir.join("app"));
+    assert!(ran.status.success(), "{}", said(&ran));
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).trim(),
+        "from the package"
+    );
+    let ledger = std::fs::read_to_string(dir.join("handler/nikaia.contracts"))
+        .expect("the package writes its ledger");
+    assert!(ledger.contains("[impl.\"Handler for Static\"]"), "{ledger}");
+}
+
+/// **And a type that answers for nothing is still refused**, which is the half a
+/// wider lookup could have taken away: an extra spelling makes a check fail
+/// *open*, so the test that matters is the one where it must not.
+#[test]
+fn a_type_that_implements_nothing_is_refused_at_a_path_bound() {
+    let dir = a_program_and_a_package(
+        "bound-path-refused",
+        "handler",
+        &[
+            (
+                "handler/src/main.nika",
+                "pub struct Answer {\n\
+                 \x20   pub text: String,\n\
+                 }\n\
+                 \n\
+                 pub trait Handler {\n\
+                 \x20   fn handle(ref self) -> Answer\n\
+                 }\n",
+            ),
+            (
+                "app/src/main.nika",
+                "use handler\n\n\
+                 struct Bare {\n\
+                 \x20   n: i64,\n\
+                 }\n\
+                 \n\
+                 fn dispatch[H: handler::Handler](h: H) -> String {\n\
+                 \x20   return h.handle().text\n\
+                 }\n\
+                 \n\
+                 fn main() {\n\
+                 \x20   println(dispatch(Bare { n: 1 }))\n\
+                 }\n",
+            ),
+        ],
+    );
+    let built = nikaia(&["build"], &dir.join("app"));
+    assert!(!built.status.success(), "{}", said(&built));
+    let said = said(&built);
+    assert!(said.contains("NK1164"), "{said}");
+    assert!(
+        said.contains("`handler::Static`") || said.contains("`Bare` is not one"),
+        "the message names the type the caller picked: {said}"
+    );
+}

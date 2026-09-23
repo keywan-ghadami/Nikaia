@@ -1675,14 +1675,21 @@ grammar! {
             name:NAME bounds:generic_bound?
             -> { GenericParam { name, bounds: bounds.unwrap_or_default() } }
 
+        // **A bound takes a path, as every other position that names a type
+        // does** ([ADR-106](../../../../docs/specification/adr/adr-106.md) D1):
+        // `[H: http::Handler]`, and `[T: A + http::B]` mixes a local and a
+        // foreign one. `type_name` is that rule, and reusing it is the record's
+        // own sentence — *the grammar's rule for a type name is the rule for a
+        // bound's trait name* — so the whole path is interned as one name,
+        // exactly as `impl http::Handler for Fixed` already had it.
         rule generic_bound -> Vec<Symbol> =
-            ":" head:NAME tail:generic_bound_tail* -> {
+            ":" head:type_name tail:generic_bound_tail* -> {
                 let mut bounds = vec![head];
                 bounds.extend(tail);
                 bounds
             }
 
-        rule generic_bound_tail -> Symbol = "+" n:NAME -> { n }
+        rule generic_bound_tail -> Symbol = "+" n:type_name -> { n }
 
         // **`&[u8]` and `&mut [u8]`, what the C boundary lends**
         // ([ADR-147](../../../../docs/specification/adr/adr-147.md) D1): a run of

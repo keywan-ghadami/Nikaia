@@ -1931,11 +1931,14 @@ struct Checker<'a> {
     /// call resolves to - `tell` for a free function, `Dog::tell` for a method.
     ///
     /// Not read off the ledger, which has no column for a bound: its signature
-    /// writes `(x: $T) -> String` and the `: Speaks` is nowhere in it. That is
-    /// exactly the reach a bound has today — one cannot name a path
-    /// ([`open-work.md`](../../docs/open-work.md) §2.18), so a trait a bound
-    /// names is a trait this unit declares, and a unit that declares the trait
-    /// also has the `fn` in its own AST.
+    /// writes `(x: $T) -> String` and the `: Speaks` is nowhere in it. So what
+    /// this table reaches is a call to a function of **this build** — every unit
+    /// of it is walked, so every such `fn` is in one of these ASTs — and a call
+    /// into a package whose generic function carries a bound is not checked
+    /// against it. That is the column a ledger would need, and nothing asks for
+    /// it yet: a bound may name a path since
+    /// [ADR-106](../../docs/specification/adr/adr-106.md) D1, and what a caller
+    /// gets wrong is caught where the callee's body reads the parameter.
     declared_bounds: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     /// Whether it declared `throws` - which is what says a failure may leave
     /// it, whether the failing call was written or implicit (ADR-025 D1).
