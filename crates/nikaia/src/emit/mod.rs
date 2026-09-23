@@ -1044,6 +1044,15 @@ struct Emitter<'p> {
     /// reason: which place is a view of what is a question about types, and
     /// this file keeps none ([ADR-028](../../../docs/specification/adr/adr-028.md)).
     lent_returns: std::collections::BTreeSet<usize>,
+    /// [`crate::check::Checked::compares`] and its total half: which declared
+    /// types derive `PartialEq`, and which of those also derive `Eq`
+    /// ([ADR-204](../../../docs/specification/adr/adr-204.md) D1).
+    ///
+    /// Decided by the checker for the reason every set beside it is: whether
+    /// every part of a type compares is a question about types, and this file
+    /// keeps none ([ADR-028](../../../docs/specification/adr/adr-028.md)).
+    compares: std::collections::BTreeSet<String>,
+    compares_totally: std::collections::BTreeSet<String>,
     /// Where a number is read through a `for` binding and therefore through a
     /// **view** ([`check::Checked::viewed_numbers`]), by the statement's byte
     /// and the name. Handed over exactly as `lent_lets` is, and for the same
@@ -2080,6 +2089,8 @@ impl<'p> Emitter<'p> {
             concatenations: propagation.concatenations,
             lent_lets: propagation.lent_lets,
             lent_returns: propagation.lent_returns,
+            compares: propagation.compares,
+            compares_totally: propagation.compares_totally,
             viewed_numbers: propagation.viewed_numbers,
             array_literals: propagation.array_literals,
             comptime_values: propagation.comptime_values,
@@ -2576,6 +2587,34 @@ impl<'p> Emitter<'p> {
         found
     }
 
+    /// **What a declared type derives** ([ADR-204](../../../docs/specification/adr/adr-204.md)
+    /// D1).
+    ///
+    /// `Debug` and `Clone` always: every emitted type is printable and copyable,
+    /// which is what the rest of this file already assumes of one.
+    ///
+    /// `PartialEq` where the checker says every part of it compares, and `Eq`
+    /// beside it where no part is a float. Without them `==` had no lowering at
+    /// all: `rustc` answered *binary operation `==` cannot be applied to type
+    /// `P`* about a file nobody wrote, with *consider annotating `P` with
+    /// `#[derive(PartialEq)]`* as the help — [Part III C.1 and
+    /// C.2](../../../docs/specification/30-nikaia-tooling.md) at once.
+    ///
+    /// **Never both without the first**, which is Rust's own rule: `Eq` is an
+    /// `impl` over `PartialEq`, and `compares_totally` is a subset by
+    /// construction.
+    fn derives(&self, name: winnow_grammar::Symbol) -> String {
+        let name = self.text(name);
+        let mut parts = vec!["Debug", "Clone"];
+        if self.compares.contains(name) {
+            parts.push("PartialEq");
+            if self.compares_totally.contains(name) {
+                parts.push("Eq");
+            }
+        }
+        format!("#[derive({})]\n", parts.join(", "))
+    }
+
     fn item(&self, out: &mut Out, item: &Item, span: &Span) -> Result<()> {
         match item {
             Item::Grammar(def) => self.grammar(out, def),
@@ -2584,28 +2623,7 @@ impl<'p> Emitter<'p> {
                 variants,
                 is_public,
             } => {
-                // **`==` on an `enum` whose variants hold nothing**, which is
-                // every `enum` a program compares. Without it the comparison had
-                // no lowering and `rustc` answered about a file nobody wrote —
-                // *an implementation of `PartialEq` might be missing* — with a
-                // help the source cannot take ([Part III C.1 and
-                // C.2](../../../docs/specification/30-nikaia-tooling.md)).
-                //
-                // **Only where every variant holds nothing**, and that is a
-                // derivation rather than a caution: a variant with a payload is
-                // comparable exactly when the payload is, and what a `Locked[T]`
-                // field or a `Mapped` answers to `==` is a question nobody has
-                // asked yet. Deriving it unconditionally would refuse *the
-                // declaration* of every type holding one, which is a worse place
-                // to be wrong than the comparison. `open-work.md` §1.14 carries
-                // the rest.
-                let compares = variants
-                    .iter()
-                    .all(|variant| matches!(variant.fields, VariantFields::Unit));
-                out.push(match compares {
-                    true => "#[derive(Debug, Clone, PartialEq, Eq)]\n",
-                    false => "#[derive(Debug, Clone)]\n",
-                });
+                out.push(&self.derives(*name));
                 let vis = if *is_public { "pub " } else { "" };
                 let params = if self.borrowing.contains(name) {
                     format!("<{INPUT_LIFETIME}>")
@@ -2647,7 +2665,7 @@ impl<'p> Emitter<'p> {
                 is_public,
                 ..
             } => {
-                out.push("#[derive(Debug, Clone)]\n");
+                out.push(&self.derives(*name));
                 let vis = if *is_public { "pub " } else { "" };
                 // The input lifetime first and the type parameters after it,
                 // which is the order Rust wants them in (ADR-074 D3).

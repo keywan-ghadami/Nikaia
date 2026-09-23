@@ -34,7 +34,7 @@ grammar! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reading<'a> {
     name: &'a str,
     temp: i32,

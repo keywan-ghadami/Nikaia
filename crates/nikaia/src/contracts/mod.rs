@@ -909,6 +909,20 @@ pub struct TypeContract {
     /// here rather than inferred because the types that have it are `std`'s and
     /// their bodies are Rust - which is the whole reason this file exists.
     pub iterates_fallibly: bool,
+    /// Whether two values of this type may be compared with `==`
+    /// ([ADR-204](../../../../docs/specification/adr/adr-204.md) D2).
+    ///
+    /// **Written by hand and never inferred**, for the reason `crosses` is: it
+    /// only ever answers for a type whose parts this compiler cannot see. A
+    /// Nikaia `struct` records its `fields` and a Nikaia `enum` its `variants`,
+    /// and the walk reads those — structurally, which is what cannot be wrong.
+    ///
+    /// **Absence is not permission.** A type nobody wrote this for does not
+    /// compare, and `NK1188` says so on the author's line rather than letting
+    /// `rustc` say it about a generated file
+    /// ([ADR-010](../../../../docs/specification/adr/adr-010.md) D1's polarity,
+    /// and [Part III C.1](../../../../docs/specification/30-nikaia-tooling.md)).
+    pub compares: bool,
     /// What **reading a value of this type touches**
     /// ([ADR-169](../../../../docs/specification/adr/adr-169.md) D1), in
     /// [ADR-033](../../../../docs/specification/adr/adr-033.md)'s own
@@ -1499,6 +1513,10 @@ impl Ledger {
                                 variants: cases,
                                 crosses: Crosses::Undecided,
                                 iterates_fallibly: false,
+                                // A declared type's own parts decide whether it
+                                // compares, so nothing is written here: this
+                                // column is for a type whose parts are Rust.
+                                compares: false,
                                 touches: Vec::new(),
                                 // The tether is a field's question and a variant's
                                 // payload is not a field a program assigns to;
@@ -1547,6 +1565,10 @@ impl Ledger {
                                 // yet, let alone fallibly: the types that do are
                                 // `std`'s, and `std` writes them down (ADR-025 D6).
                                 iterates_fallibly: false,
+                                // A declared type's own parts decide whether it
+                                // compares, so nothing is written here: this
+                                // column is for a type whose parts are Rust.
+                                compares: false,
                                 // Nor does a declared `struct` read anything when
                                 // it is read: a field access is memory. The types
                                 // that are not are `std`'s, whose bodies are Rust
@@ -2200,6 +2222,9 @@ impl Ledger {
                 Crosses::MayNot => out.push_str("crosses = false\n"),
                 Crosses::Undecided => {}
             }
+            if contract.compares {
+                out.push_str("compares = true\n");
+            }
             if contract.iterates_fallibly {
                 out.push_str("iterates = \"throws\"\n");
             }
@@ -2421,6 +2446,7 @@ impl Ledger {
                                 }
                             }
                         }
+                        "compares" => entry.compares = value.trim() == "true",
                         "tethered" => entry.tethered = string_list(value, at())?,
                         "touches" => entry.touches = string_list(value, at())?,
                         "doc" => entry.doc = Some(unquote(value, at())?),

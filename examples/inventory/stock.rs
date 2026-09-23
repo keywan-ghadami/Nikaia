@@ -29,7 +29,7 @@ grammar! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry<'a> {
     pub category: &'a str,
     pub item: &'a str,

@@ -3,13 +3,13 @@
 
 use winnow_grammar::grammar;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Part<'a> {
     pub name: &'a str,
     pub ty: &'a str,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fun<'a> {
     pub name: &'a str,
     pub generics: &'a str,
@@ -20,14 +20,14 @@ pub struct Fun<'a> {
     pub result: &'a str,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rec<'a> {
     pub what: &'a str,
     pub name: &'a str,
     pub parts: Vec<Part<'a>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Group<'a> {
     pub what: &'a str,
     pub name: &'a str,
@@ -36,7 +36,7 @@ pub struct Group<'a> {
     pub items: Vec<Item<'a>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item<'a> {
     Fun(Fun<'a>),
     Rec(Rec<'a>),
@@ -46,13 +46,13 @@ pub enum Item<'a> {
     Export(&'a str),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Found<'a> {
     One(Item<'a>),
     Skip,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Called<'a> {
     One(&'a str),
     Many(Vec<&'a str>),

@@ -4,6 +4,73 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.180] — 2026-09-23
+
+**Whether a type compares is a question about its parts** —
+[ADR-204](docs/specification/adr/adr-204.md), and
+[`open-work.md`](docs/open-work.md) §1.14 closes the same day it opened. §1 holds
+one entry, and it is the one waiting on a decision.
+
+### What was wrong
+
+```text
+error: binary operation `==` cannot be applied to type `P`
+     = an implementation of `PartialEq` might be missing for `P`
+     = consider annotating `P` with `#[derive(PartialEq)]`
+```
+
+on the author's line, in the backend's words about a file nobody wrote, with a
+help the source cannot take — [Part III C.1 and
+C.2](docs/specification/30-nikaia-tooling.md) at once. Every emitted type derived
+`Debug` and `Clone` and nothing else.
+
+0.0.179 took the half that needed no decision: an `enum` whose variants hold
+**nothing** has no part that could fail to compare. This is the rest, and it
+**subsumes** that rule rather than sitting beside it — such a type has no parts,
+so the walk answers *yes* for it by the same sentence it answers for every other.
+
+### The walk
+
+The one [ADR-005](docs/specification/adr/adr-005.md) §1 Group B already asks for
+*may this cross a thread*, pointed at a different question:
+
+- the language's own types from a list — the numbers, `bool`, `char`, `String`, `Bytes` — and a **container** exactly when what it holds does;
+- a declared `struct` from its fields and a declared `enum` from its variants' payloads, recursively, with a type that holds itself answering once rather than forever;
+- a type whose parts are **Rust** from a `compares` column, and **absence is not permission** ([ADR-010](docs/specification/adr/adr-010.md) D1): a lock, a mapping, a socket, a task's handle and a channel's ends do not compare. `compares = true` is a claim reviewed like code, which is what `crosses = true` already is and for the same reason.
+- a type this compiler could not work out **compares**, which is the answer an absent claim gets everywhere ([Part III C.4](docs/specification/30-nikaia-tooling.md)).
+
+### `Eq` is the same walk with one primitive answering differently
+
+`NaN != NaN`, so a float compares and is not an equivalence — and **every type
+holding one differs with it, however far down**. `examples/json.nika` is what said
+so: `Json::Number(f64)` made `Json` `PartialEq`, and a `struct` holding a `Json`
+was derived `Eq` beside it, which `rustc` refused about the generated file. A
+look at the type's syntax would have missed that; the recursion does not.
+
+**A library type is never taken for an equivalence**, because whether one is, is a
+second claim nobody has had a use for. So a `struct` holding a `time::Duration`
+compares and is not a map key yet — the under-approximation that cannot be wrong.
+
+### And a positional payload is a part
+
+Nothing had recorded one. A `Named` variant's fields were in the checker's map
+under the qualified key; a `Tuple` variant's were in **no map at all**, so
+`Number(f64)` looked like a variant holding nothing. The map that now holds them
+is what the `Eq` question reads.
+
+### `NK1188`
+
+`==` on a type that does not compare is refused here, naming the type and what
+decides it, with a help a program can take: compare the parts that carry the
+answer, or give the type a method that says what equality means for it. There is
+no `#[derive]` to write, which is what made the old help a way out that cannot be
+taken.
+
+The `NK` table gains it — and **`NK1187` too**, which the compiler has emitted
+since 0.0.168 and the table never listed. A stale status note is a defect in its
+own right ([`README.md`](docs/README.md) §1: *a reader cannot tell a plan from a
+promise*).
+
 ## [0.0.179] — 2026-09-23
 
 **An `enum`'s cases are a column of the ledger** —

@@ -641,6 +641,22 @@ pub struct Checked {
     /// inside a borrowed subject.** Either half missing and the line is what it
     /// always was: a move out of a loan, which is `NK1131`.
     pub lent_returns: BTreeSet<usize>,
+    /// The declared types whose values may be compared, so the emitter derives
+    /// `PartialEq` for them ([ADR-204](../../docs/specification/adr/adr-204.md)
+    /// D1).
+    ///
+    /// **Decided here and written there**, which is
+    /// [ADR-028](../../docs/specification/adr/adr-028.md)'s division: whether
+    /// every part of a type compares is a question about types, and the emitter
+    /// keeps none.
+    pub compares: BTreeSet<String>,
+    /// The subset of [`Checked::compares`] that may also derive `Eq`.
+    ///
+    /// **A float is the whole of the difference.** Rust's `f64` is `PartialEq`
+    /// and not `Eq`, because `NaN != NaN`; so a type holding one compares and is
+    /// not an equivalence, and a derive that asked for both would refuse the
+    /// declaration.
+    pub compares_totally: BTreeSet<String>,
     /// **Where a number is read through a `for` binding**, by the byte the
     /// statement starts at and the name it was written under
     /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
@@ -813,6 +829,7 @@ fn walked<'a>(
         library,
         structs: BTreeMap::new(),
         enums: BTreeMap::new(),
+        enum_payloads: BTreeMap::new(),
         variant_owner: BTreeMap::new(),
         walks_fields: BTreeMap::new(),
         unrolling: None,
@@ -1249,6 +1266,10 @@ pub struct Propagation {
     pub lent_lets: BTreeSet<usize>,
     /// [`Checked::lent_returns`].
     pub lent_returns: BTreeSet<usize>,
+    /// [`Checked::compares`].
+    pub compares: BTreeSet<String>,
+    /// [`Checked::compares_totally`].
+    pub compares_totally: BTreeSet<String>,
     /// **Where a number is read through a `for` binding**, by the byte the
     /// statement starts at and the name it was written under
     /// ([ADR-182](../../docs/specification/adr/adr-182.md) D1).
@@ -1406,6 +1427,8 @@ pub fn propagation_against(
         concatenations: checked.concatenations,
         lent_lets: checked.lent_lets,
         lent_returns: checked.lent_returns,
+        compares: checked.compares,
+        compares_totally: checked.compares_totally,
         viewed_numbers: checked.viewed_numbers,
         array_literals: checked.array_literals,
         lent_args: checked.lent_args,
@@ -1856,6 +1879,15 @@ struct Checker<'a> {
     structs: BTreeMap<String, Vec<FieldContract>>,
     /// Every enum declared here, with its variant names.
     enums: BTreeMap<String, BTreeSet<String>>,
+    /// What each declared `enum`'s variants **hold**, flattened across them.
+    ///
+    /// A `Named` variant's fields are in `structs` under the qualified key,
+    /// because a struct literal wears that shape; a **positional** one's are in
+    /// no map at all, which is what made `Json::Number(f64)` look like a variant
+    /// holding nothing. This is the one question that needs all of them at once —
+    /// does every part of this type compare — so it is a map of its own rather
+    /// than a second meaning for `structs`.
+    enum_payloads: BTreeMap<String, Vec<Ty>>,
     /// **The functions whose body walks a type's fields**, and which type
     /// parameter each one walks ([ADR-181](../../docs/specification/adr/adr-181.md)
     /// D1): `describe` → `T`.
@@ -2428,6 +2460,23 @@ impl<'a> Checker<'a> {
                         self.variant_owner.insert(key.clone(), own.clone());
                         self.structs.insert(key, held);
                     }
+                    // **Every kind of payload**, positional included — see
+                    // [`Checker::enum_payloads`] for why a map of its own.
+                    let held: Vec<Ty> = variants
+                        .iter()
+                        .flat_map(|variant| match &variant.fields {
+                            ast::VariantFields::Unit => Vec::new(),
+                            ast::VariantFields::Tuple(types) => types
+                                .iter()
+                                .map(|ty| Ty::from_ast(self.parsed, ty))
+                                .collect(),
+                            ast::VariantFields::Named(fields) => fields
+                                .iter()
+                                .map(|f| Ty::from_ast(self.parsed, &f.ty))
+                                .collect(),
+                        })
+                        .collect();
+                    self.enum_payloads.insert(own.clone(), held);
                     let variants = variants
                         .iter()
                         .map(|v| self.parsed.text(v.name).to_string())
@@ -2454,6 +2503,55 @@ impl<'a> Checker<'a> {
             }
         }
         self.collect_field_walks();
+        self.collect_comparisons();
+    }
+
+    /// **Which declared types compare**
+    /// ([ADR-204](../../docs/specification/adr/adr-204.md) D1), for the derive
+    /// the emitter writes and the refusal this file raises.
+    ///
+    /// After every type is collected, because the answer is structural: a
+    /// `struct` compares when its fields do, and a field may name a type
+    /// declared further down the file.
+    fn collect_comparisons(&mut self) {
+        let asking = Comparable {
+            structs: &self.structs,
+            enums: &self.enums,
+            payloads: &self.enum_payloads,
+            own: self.own,
+            library: self.library,
+        };
+        // **Only what this unit declares.** A library's type answers from its
+        // own column, and nothing here writes a derive for it.
+        let declared: Vec<String> = self
+            .parsed
+            .program
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
+                Item::Struct { name, .. } | Item::Enum { name, .. } => {
+                    Some(self.parsed.text(*name).to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        for name in declared {
+            let parts: Vec<Ty> = match self.enum_payloads.get(&name) {
+                Some(held) => held.clone(),
+                None => self
+                    .structs
+                    .get(&name)
+                    .map(|fields| fields.iter().map(|f| f.ty.clone()).collect())
+                    .unwrap_or_default(),
+            };
+            if !parts.iter().all(|ty| asking.of(ty)) {
+                continue;
+            }
+            self.checked.compares.insert(name.clone());
+            if parts.iter().all(|ty| asking.totally(ty)) {
+                self.checked.compares_totally.insert(name);
+            }
+        }
     }
 
     /// **The `enum`s of a package and of `std`**, under the names a consumer
@@ -4251,6 +4349,52 @@ impl<'a> Checker<'a> {
                 && self.rooted_at(place).as_deref() == Some("self")
         };
         rooted_at_self(value)
+    }
+
+    /// **`NK1188`: `==` on a type that does not compare**
+    /// ([ADR-204](../../docs/specification/adr/adr-204.md) D3).
+    ///
+    /// The words were `rustc`'s about a file nobody wrote — *binary operation
+    /// `==` cannot be applied to type `P`* — with *consider annotating `P` with
+    /// `#[derive(PartialEq)]`* as the help, which is a way out the source cannot
+    /// take: [Part III C.1 and
+    /// C.2](../../docs/specification/30-nikaia-tooling.md) at once.
+    ///
+    /// **Asked of one side and only where its type is known.** A type this
+    /// compiler could not work out compares, which is the answer an absent claim
+    /// gets everywhere here ([Part III
+    /// C.4](../../docs/specification/30-nikaia-tooling.md)); and the two sides
+    /// disagreeing is `NK1102`'s business, one refusal over.
+    fn a_type_that_does_not_compare(&mut self, left: &Ty, right: &Ty, span: &Span) {
+        let asking = Comparable {
+            structs: &self.structs,
+            enums: &self.enums,
+            payloads: &self.enum_payloads,
+            own: self.own,
+            library: self.library,
+        };
+        let Some(ty) = [left, right].into_iter().find(|ty| !asking.of(ty)) else {
+            return;
+        };
+        let ty = ty.text();
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1188",
+            message: format!("`{ty}` is not a type two values of which can be compared"),
+            notes: vec![
+                "a `struct` or an `enum` compares when every part of it does, and a type \
+                 whose parts are the library's compares when the library says so - a \
+                 lock, a mapping, a socket and a task's handle are the ones that do not \
+                 (ADR-204 D1)"
+                    .to_string(),
+            ],
+            help: Some(
+                "compare the parts that carry the answer, or give the type a method that \
+                 says what equality means for it"
+                    .to_string(),
+            ),
+        });
     }
 
     fn a_field_of_a_borrowed_subject(&mut self, value: &Expr, span: &Span, what: &str) {
@@ -6515,12 +6659,11 @@ impl<'a> Checker<'a> {
                         self.expect_bool(&right, span, "`&&` and `||` join two `bool`s");
                         Ty::named("bool")
                     }
-                    BinaryOp::Eq
-                    | BinaryOp::Ne
-                    | BinaryOp::Lt
-                    | BinaryOp::Le
-                    | BinaryOp::Gt
-                    | BinaryOp::Ge => Ty::named("bool"),
+                    BinaryOp::Eq | BinaryOp::Ne => {
+                        self.a_type_that_does_not_compare(&left, &right, at);
+                        Ty::named("bool")
+                    }
+                    BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => Ty::named("bool"),
                     // **A `+` where either side is text is a concatenation**
                     // ([ADR-081](../../docs/specification/adr/adr-081.md) D2),
                     // and it comes to a `String` whichever side was owned. This
@@ -14559,6 +14702,161 @@ fn holds_an_array(ty: &Ty) -> bool {
 /// program declares - is moved, which is what `NK1131` is about.
 ///
 /// A short list on purpose, and the polarity is the usual one: a type not on it
+/// **Whether two values of this type may be compared**
+/// ([ADR-204](../../docs/specification/adr/adr-204.md) D1).
+///
+/// `==` on a declared type had no lowering at all: `rustc` answered *binary
+/// operation `==` cannot be applied to type `P`* about a file nobody wrote, with
+/// *consider annotating `P` with `#[derive(PartialEq)]`* as the help — [Part III
+/// C.1 and C.2](../../docs/specification/30-nikaia-tooling.md) at once. So the
+/// question has to be answerable here, and the answer decides both the derive
+/// the emitter writes and the refusal this file raises.
+///
+/// **Three sources and one rule.** The language's own types answer from the list
+/// below; a **declared** type answers from its parts, structurally, which is what
+/// cannot be wrong; and a type whose parts are Rust answers from the ledger's
+/// `compares` column, whose absence is *no* ([ADR-010](../../docs/specification/adr/adr-010.md)
+/// D1).
+///
+/// **`Ty::Unknown` compares.** Nothing is known, so nothing is refused — [Part
+/// III C.4](../../docs/specification/30-nikaia-tooling.md)'s direction, and the
+/// same answer every other question here gives an absent claim.
+struct Comparable<'a> {
+    structs: &'a BTreeMap<String, Vec<FieldContract>>,
+    enums: &'a BTreeMap<String, BTreeSet<String>>,
+    /// What a declared `enum`'s variants hold ([`Checker::enum_payloads`]).
+    payloads: &'a BTreeMap<String, Vec<Ty>>,
+    own: &'a Ledger,
+    library: &'a Ledger,
+}
+
+/// Which of the two questions [`Comparable`] is being asked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Strength {
+    /// `==` works: Rust's `PartialEq`.
+    Compares,
+    /// …and equality is an equivalence: Rust's `Eq`, which a float is not and
+    /// which a type holding one cannot be.
+    Totally,
+}
+
+impl Comparable<'_> {
+    /// The primitives and the containers, which are the language's rather than a
+    /// module's and so are a list here rather than a column anywhere.
+    ///
+    /// A container compares exactly when what it holds does, which is Rust's own
+    /// rule for each of them and is why they are one arm.
+    fn of(&self, ty: &Ty) -> bool {
+        self.asking(ty, Strength::Compares, &mut BTreeSet::new())
+    }
+
+    /// The same question about **`Eq`**, which is not the same walk one step
+    /// deeper: a `struct` holding a type that compares and is not an equivalence
+    /// is the same, and the float may be several declarations away.
+    fn totally(&self, ty: &Ty) -> bool {
+        self.asking(ty, Strength::Totally, &mut BTreeSet::new())
+    }
+
+    /// `seen` is the types already being asked about, so a `struct` that holds
+    /// itself through a `Vec` answers once rather than forever.
+    fn asking(&self, ty: &Ty, how: Strength, seen: &mut BTreeSet<String>) -> bool {
+        match ty {
+            // An absent claim is not a refusal (C.4). A type variable is one:
+            // a library's `$V` is substituted away at a call, and one that is
+            // not is `Unknown` by the same rule.
+            Ty::Unknown | Ty::Var { .. } | Ty::Count(_) => true,
+            Ty::Tuple(parts) => parts.iter().all(|part| self.asking(part, how, seen)),
+            Ty::Nullable(inner) => self.asking(inner, how, seen),
+            // **A produced sequence is not a value this language holds**: it is
+            // walked, and what it hands over is the item.
+            Ty::Seq { .. } => false,
+            // **What the C boundary lends is an address**, and an address is not
+            // a value this language compares
+            // ([ADR-147](../../docs/specification/adr/adr-147.md) D1).
+            Ty::Pointed { .. } => false,
+            Ty::Fn { .. } => false,
+            Ty::Named { name, args, .. } => self.named(name, args, how, seen),
+        }
+    }
+
+    fn named(&self, name: &str, args: &[Ty], how: Strength, seen: &mut BTreeSet<String>) -> bool {
+        // **A view compares as what it views does**: `&str` is `String`'s
+        // comparison and `&T` is `T`'s, which is Rust's rule too.
+        let holds =
+            |seen: &mut BTreeSet<String>| args.iter().all(|arg| self.asking(arg, how, seen));
+        match name {
+            // **A float compares and is not an equivalence**, because
+            // `NaN != NaN`. It is the one primitive the two questions differ on,
+            // and every type holding one differs with it however far down.
+            "f64" => how == Strength::Compares,
+            "i32" | "i64" | "u8" | "bool" | "char" | "String" | "str" | "Bytes" => true,
+            // A container compares when what it holds does.
+            "Vec"
+            | "List"
+            | ty::ARRAY
+            | "Option"
+            | "Set"
+            | "collections::HashMap"
+            | "collections::HashSet"
+            | "collections::BTreeMap"
+            | "collections::BTreeSet"
+            | "HashMap"
+            | "HashSet"
+            | "BTreeMap"
+            | "BTreeSet"
+            | "Shared" => holds(seen),
+            _ => {
+                if !seen.insert(name.to_string()) {
+                    // Already being asked about, one level up: a type is not
+                    // *un*comparable for holding itself.
+                    return true;
+                }
+                if let Some(fields) = self.structs.get(name) {
+                    return fields.iter().all(|f| self.asking(&f.ty, how, seen));
+                }
+                if self.enums.contains_key(name) {
+                    return self
+                        .payloads(name)
+                        .iter()
+                        .all(|ty| self.asking(ty, how, &mut seen.clone()));
+                }
+                // **A type whose parts are Rust**: the column, whose absence is
+                // no. And it answers the `==` question only — a library type is
+                // never taken for an *equivalence*, because whether it is one is
+                // a second claim nobody has had a use for. So a `struct` holding
+                // one compares and is not a map key yet, which is the
+                // under-approximation that cannot be wrong.
+                how == Strength::Compares
+                    && [self.own, self.library]
+                        .into_iter()
+                        .filter_map(|ledger| ledger.types.get(name))
+                        .any(|contract| contract.compares)
+            }
+        }
+    }
+
+    /// Every type a declared `enum`'s variants hold, **or a library one's**.
+    ///
+    /// A declared `enum` answers from [`Checker::enum_payloads`]; one that
+    /// arrived in a ledger answers from its `variants` column, which carries the
+    /// payload types for the same reason.
+    fn payloads(&self, name: &str) -> Vec<Ty> {
+        if let Some(held) = self.payloads.get(name) {
+            return held.clone();
+        }
+        [self.own, self.library]
+            .into_iter()
+            .filter_map(|ledger| ledger.types.get(name))
+            .flat_map(|contract| {
+                contract
+                    .variants
+                    .iter()
+                    .flat_map(|variant| variant.holds.iter().map(|f| f.ty.clone()))
+            })
+            .collect()
+    }
+}
+
 /// is one this says nothing about only when it is also unknown.
 fn copies(ty: &Ty) -> bool {
     match ty {

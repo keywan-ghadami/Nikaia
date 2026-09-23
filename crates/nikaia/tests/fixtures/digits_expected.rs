@@ -12,7 +12,7 @@ grammar! {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pair {
     pub left: i32,
     pub right: i32,

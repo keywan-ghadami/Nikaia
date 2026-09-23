@@ -77,11 +77,11 @@ takes every `nika` block in the three pages as far as it goes and hands the ones
 that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
 programs this compiler takes and 39 of those compile below.
 
-**Two entries are open** — §1.10 and §1.14 — and both were **revealed by a fix**
-rather than made by one, which is the shape this section's method produces: a
-thing becomes writable, so the next question about it becomes askable. §1.12
-closed at 0.0.177, §1.13 at 0.0.176, §1.11 at 0.0.173 and §1.9 at 0.0.172, each
-the package after the one that found it. §1.7 closed at 0.0.168 — `use std::<anything>` is
+**One entry is open** — §1.10 — and it was **revealed by a fix** rather than made
+by one, which is the shape this section's method produces: a thing becomes
+writable, so the next question about it becomes askable. §1.14 closed at 0.0.180,
+§1.12 at 0.0.177, §1.13 at 0.0.176, §1.11 at 0.0.173 and §1.9 at 0.0.172 — each
+the package after the one that found it, and the last of them **the same day**. §1.7 closed at 0.0.168 — `use std::<anything>` is
 `NK1186` now, and the list it is answered from is what `std`'s ledger declares
 joined with what a page or a record names and the compiler has not built. §1.8
 closed at 0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132,
@@ -163,49 +163,6 @@ backend's words. Nothing is miscompiled.
 
 *Found by* fixing §1.9 and then handing the now-writable function a type that
 implements nothing — the same method one step further on.
-
-### 1.14. `==` on a declared type has no lowering
-
-```nika
-struct P { x: i64 }
-
-enum Held { Nothing, Text(String) }
-
-fn main() {
-    let a = P { x: 1 }
-    let b = P { x: 1 }
-    if a == b { print("equal") }
-}
-```
-
-is `rustc`'s, on the author's line: *binary operation `==` cannot be applied to
-type `P`*, with *consider annotating `P` with `#[derive(PartialEq)]`* as the
-help. The position is right — [ADR-005](specification/adr/adr-005.md) D7's
-translation — and the words are the backend's about a file nobody wrote, with a
-way out the source cannot take: [Part III C.1 and
-C.2](specification/30-nikaia-tooling.md) at once.
-
-*The half that is built* is [ADR-203](specification/adr/adr-203.md) D2: an `enum`
-whose variants **hold nothing** derives `PartialEq` and `Eq`, because such a type
-has no part that could fail to compare. `Held` above and every `struct` are what
-is left.
-
-*What it needs, and it is why the other half was not taken:* whether a type
-compares is a question about **its parts**, and a blanket derive would refuse the
-*declaration* of every type holding a `Locked[T]`, a `Mapped` or a
-`net::Connection` — a worse place to be wrong than the comparison. The shape is
-the structural walk `contracts::send` already does for *may this cross a thread*
-([ADR-005](specification/adr/adr-005.md) §1 Group B): a Nikaia `struct` records
-its fields and the walk reads them; a type whose parts are Rust needs a column,
-the way `crosses` is a column. And where the answer is no, the refusal is this
-language's own sentence rather than silence.
-
-*Why it is here and not below:* the program is refused, and refused in the
-backend's words. Nothing is miscompiled.
-
-*Found by* writing [ADR-018](specification/adr/adr-018.md) D4's `Method` enum and
-asking a handler `request.method() == Method::Post` — the shape every program
-that has an enum writes.
 
 **Every entry this section has ever held was found by *running* something** —
 the specification's own programs, the corpus at both settings, a two-file
