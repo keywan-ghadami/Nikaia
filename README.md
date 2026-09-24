@@ -435,25 +435,19 @@ diagnostics change between releases with no migration; `cargo test` over the **w
 workspace** fails some project tests for reasons in Cargo's package cache —
 use `-p nikaia`.
 
-### What is risky versus what is just work
+### The areas the design stands on
 
-**Could still change the design** — these touch the central promises, so if something breaks
-it is here, and reports against them are the most valuable:
+These carry the central promises. If something is wrong with Nikaia's design, it shows up
+here — so **a bug report in any of these areas is the most valuable kind**, whether the area is
+finished or not.
 
-* **Text as one type** — literals work wherever a `String` is wanted; what is left is whether
-  a *view* kept where a `String` is declared should be a copy or a tether.
-* **Pausing lambdas and lazy pausing sequences** — this is the edge of
-  *functions have no colour*. Today it ends in a refusal and a loop.
-* **The lock rules** — the lock and `access_all` work, but the analysis that would refuse
-  misuse answers *undecided* for 24 of 59 functions in the examples; the refusals are not switched on.
-* **The build-time SQL check** — the most ambitious use of grammars plus build-time
-  evaluation, and not started.
-
-**Taken off this list:** the **tether** — views that outlive their buffer, with no
-annotations — is built ([ADR-209](docs/specification/adr/adr-209.md)): the compiler puts the
-buffer in the caller's frame where it can, in a handle where a task takes the value, or one
-handle per view where a cache drops entries; `nikaia --tethers` shows which. Eight programs,
-one per shape, run in the test suite. Reports against it are still the most valuable kind.
+| Area | Promise | Built | Open |
+| :--- | :--- | :--- | :--- |
+| **The tether** ([ADR-209](docs/specification/adr/adr-209.md)) | a view may outlive its buffer, with no annotation and no copy | ✅ all of it: the buffer lives in the caller's frame, in a handle a task carries, or one handle per view where a cache drops entries; `nikaia --tethers` shows which | a buffer handed both to a task *and* out of the function; a cache of *structs* holding views — both refused with an explanation |
+| **Text as one type** ([ADR-207](docs/specification/adr/adr-207.md), [208](docs/specification/adr/adr-208.md)) | text is `String`, and you never convert by hand | ✅ literals work wherever a `String` is wanted; a view handed to a function that only reads needs nothing | a *view* kept where a `String` is declared needs `.to_owned()` — whether it should become a tether instead is undecided |
+| **Functions have no colour** ([ADR-055](docs/specification/adr/adr-055.md)) | no `async`/`await`; any function may pause | ✅ inferred everywhere, including tasks and `overlap` | a lambda that pauses, handed to `std` (`map`, `filter`), and a lazy walk of a pausing sequence — refused, write a loop |
+| **Locks without deadlocks** ([ADR-057](docs/specification/adr/adr-057.md)) | `access_all` takes locks in one order; a lock is never held across a pause | ✅ the lock, all its doors, and `access_all` | the analysis that would refuse misuse answers *undecided* for 24 of 59 functions in the examples, so those refusals are not switched on |
+| **SQL checked at build time** ([ADR-143](docs/specification/adr/adr-143.md)) | a misspelled column is refused while the program is built | — | not started: `std::db`, the driver, and the query DSL |
 
 **Just a lot of work** — decided, well specified, low risk of surprising anyone: the package
 registry, the C library and everything built on it (wasm, Python, bare metal), HTTP/TLS/HTTP/2,
