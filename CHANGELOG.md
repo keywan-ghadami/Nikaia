@@ -4,6 +4,83 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.185] — 2026-09-24
+
+**The tether is built: a buffer lives in the keep of whatever keeps its views,
+and the compiler decides which** — [ADR-209](docs/specification/adr/adr-209.md).
+The first of the README's design risks, taken in one step as the owner asked:
+the programs that need it were invented first, the design was checked against
+them, and all of it was built.
+
+### What a program can do now
+
+```nika
+struct Setting {
+    key: ref String,
+    value: ref String,
+}
+
+fn load(path: String) -> Vec[Setting] throws {
+    let text = fs::read_to_string(path, fs::Root::Anywhere)
+    …                       // cut `text` into settings
+    return settings         // views of `text`, which this function read
+}
+```
+
+was refused (`NK2303`, or `NK2302` blaming `path`, or `rustc` about a file
+nobody wrote). It compiles and runs, and **nothing is written for it**: no
+lifetime, no annotation, no copy.
+
+### How, and why this road
+
+Eight programs, one per shape — a loader, a view handed two frames up across a
+pause, a loop over files, recursive includes into one map, a task, a cache that
+drops entries, the loader with no word above it, one line of a mapped file —
+said that [ADR-008](docs/specification/adr/adr-008.md)'s one representation
+(positions, three layouts, a buffer table) was one answer where the facts
+differ. So:
+
+* **D1** — an escaping buffer moves into a **keep**, an append-only store where
+  nothing moves; views stay plain `&str`, checked by `rustc`.
+* **D2** — the keep belongs to the **nearest frame that outlives the views**:
+  the caller, forwarded any number of frames. No count, no handle, pauses
+  allowed. The ledger records it (`views = ["<result>: tethered"]`), so it
+  crosses package boundaries.
+* **D3** — a **task** gets a handle that travels with the value: one count per
+  task, never per view; the value is read through a `get` whose shortening
+  `rustc` checks.
+* **D4** — a **container that drops entries** across a loop holds each view with
+  its own handle (`Held`, compared by content), so a buffer is freed with its
+  last view instead of living as long as the loop.
+* **D5** — **no `@tethers`.** [ADR-201](docs/specification/adr/adr-201.md) D2
+  made a tether an error without the word; built, that was a refusal that knew
+  exactly what to do — the lifetime-annotation tax under another name. The
+  decision is the compiler's, like `Rc` or `Arc`, and `nikaia --tethers` says
+  where each buffer lives and why.
+* **D6** — views are followed by **origin** through methods, fields, `for`,
+  `push`/`insert`, calls and `f"…"` holes; a buffer handed on whole is a move.
+
+### Found and fixed on the way
+
+* `NK2302` blamed a parameter for a view of text **read from** it
+  (`fs::read_to_string(path)` hands back a `String`, not a piece of `path`).
+* `m["host"] ?? "-"` over a map of views: *type annotations needed* from `rustc`.
+* The refusal tally counted `NK2303` twice, once as *a place that can fail*.
+
+### What is still refused, on purpose
+
+`NK2304`: one buffer handed both to a task and out of the function (no one
+owner), and a container of *structs* holding views that drops entries in a loop.
+
+### In the tree
+
+`nikaia_std::tether` (`Keep`, `Held`, and two `unsafe` functions with their
+contracts), `contracts::keep` (the plan and its fixpoint), the emitter's keeps,
+`tests/tether_keep.rs` (the eight programs at both settings), four `bytes.rs`
+tests and two `tethers.rs` tests moved from the refusal to the tether. Part I
+6.6, Part III, ADR-008/156/201's status, `open-work.md` (the tether's entry is
+closed) and the README follow.
+
 ## [0.0.184] — 2026-09-24
 
 **A view of text is asked for a copy only where something keeps it — and the

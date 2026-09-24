@@ -1152,8 +1152,17 @@ pub fn check(
     let tethered = count("NK2303");
     if tethered > 0 {
         refused.push(format!(
-            "{tethered} view{} of a buffer this body owns",
+            "{tethered} view{} that would keep a buffer alive without a declaration saying so",
             plural(tethered)
+        ));
+    }
+    // **What a tether cannot be lowered to** (ADR-209), a line of its own for
+    // the same reason: the way out is a shape to change, not a word to add.
+    let untethered = count("NK2304");
+    if untethered > 0 {
+        refused.push(format!(
+            "{untethered} buffer{} whose views have no one place to live",
+            plural(untethered)
         ));
     }
     // `NK21xx` is running things at once, and its two rules want two lines: what
@@ -1213,6 +1222,8 @@ pub fn check(
         - undescribed
         - stale
         - aliases
+        - tethered
+        - untethered
         - tasks
         - walked
         - pausing

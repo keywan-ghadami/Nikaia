@@ -31,6 +31,18 @@ fn refusals(source: &str) -> Vec<Finding> {
         .collect()
 }
 
+/// Whether a function's result takes a keep from its caller: its views
+/// outlive the buffer the body read, so the buffer lives in the caller's keep
+/// ([ADR-209](../../../docs/specification/adr/adr-209.md) D2).
+fn tethers_its_result(source: &str, key: &str) -> bool {
+    let parsed = parse_to_ast(source).expect("the source parses");
+    let own = Ledger::infer(&parsed);
+    own.functions[key].views.iter().any(|h| {
+        h.position == nikaia::contracts::tether::RESULT
+            && h.state == nikaia::contracts::tether::State::Tethered
+    })
+}
+
 fn lowered(source: &str) -> String {
     let parsed = parse_to_ast(source).expect("the source parses");
     emit_program(&parsed, Build::default())
@@ -104,44 +116,39 @@ fn a_program_may_declare_what_fs_read_hands_back() {
 }
 
 // ---------------------------------------------------------------------------
-// D4: the refusal
+// D4: what used to be a refusal is a tether
 // ---------------------------------------------------------------------------
 
-/// **A view of a buffer the body made is refused** (D4). This is the whole of
-/// what the tether is for: `data` dies with the call and the result does not.
+/// **A view of a buffer the body made is tethered** — it was refused while the
+/// state did not exist ([ADR-156](../../../docs/specification/adr/adr-156.md)
+/// D4), and it is what [ADR-209](../../../docs/specification/adr/adr-209.md)
+/// builds: `data` goes into the caller's keep, and the result points into it.
 #[test]
-fn a_view_of_a_local_buffer_is_refused() {
+fn a_view_of_a_local_buffer_is_tethered() {
     let source = "use std::fs\n\
                   fn header(path: ref String) -> ref String throws {\n\
                   \x20   let data = fs::read_to_string(ref path, fs::Root::Anywhere)\n\
                   \x20   return data.trim()\n\
                   }\n\
                   fn main() { }\n";
-    let found = refusals(source);
-    assert_eq!(found.len(), 1, "{found:#?}");
-    assert!(found[0].message.contains("`data`"), "{}", found[0].message);
-    assert!(
-        found[0].message.contains("`String`"),
-        "{}",
-        found[0].message
-    );
-    let notes = found[0].notes.join("\n");
-    assert!(notes.contains("tethered"), "{notes}");
+    assert!(refusals(source).is_empty(), "{:#?}", refusals(source));
+    assert!(tethers_its_result(source, "header"));
+    let rust = lowered(source);
+    assert!(rust.contains("__keep.put("), "{rust}");
 }
 
 /// **A `Bytes` is the same answer**, and it is the buffer the mechanism is
 /// named after.
 #[test]
-fn a_view_of_a_local_bytes_is_refused() {
+fn a_view_of_a_local_bytes_is_tethered() {
     let source = "use std::fs\n\
                   fn first(path: ref String) -> ref String throws {\n\
                   \x20   let data = fs::read(ref path, fs::Root::Anywhere)\n\
                   \x20   return data.text()\n\
                   }\n\
                   fn main() { }\n";
-    let found = refusals(source);
-    assert_eq!(found.len(), 1, "{found:#?}");
-    assert!(found[0].message.contains("`Bytes`"), "{}", found[0].message);
+    assert!(refusals(source).is_empty(), "{:#?}", refusals(source));
+    assert!(tethers_its_result(source, "first"));
 }
 
 /// **The tail expression counts too** — a body need not write `return` for the
@@ -154,13 +161,14 @@ fn a_tail_expression_is_handed_back_too() {
                   \x20   data.trim()\n\
                   }\n\
                   fn main() { }\n";
-    assert_eq!(refusals(source).len(), 1);
+    assert!(refusals(source).is_empty());
+    assert!(tethers_its_result(source, "header"));
 }
 
 /// **A method's result is no different from a function's**, so an `impl` is
 /// walked the same way.
 #[test]
-fn a_method_is_refused_the_same_way() {
+fn a_method_is_tethered_the_same_way() {
     let source = "use std::fs\n\
                   struct Loader { }\n\
                   impl Loader {\n\
@@ -170,13 +178,8 @@ fn a_method_is_refused_the_same_way() {
                   \x20   }\n\
                   }\n\
                   fn main() { }\n";
-    let found = refusals(source);
-    assert_eq!(found.len(), 1, "{found:#?}");
-    assert!(
-        found[0].message.contains("`Loader::header`"),
-        "{}",
-        found[0].message
-    );
+    assert!(refusals(source).is_empty(), "{:#?}", refusals(source));
+    assert!(tethers_its_result(source, "Loader::header"));
 }
 
 // ---------------------------------------------------------------------------

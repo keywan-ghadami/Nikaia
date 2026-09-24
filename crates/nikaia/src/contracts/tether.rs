@@ -230,6 +230,9 @@ pub fn infer(ledger: &mut Ledger, units: &[&Parsed], library: &Ledger) {
     // same breath. A type already records which of its fields hold a view
     // (`tethered`); what state its instances take belongs with the layouts.
     let _ = tethering;
+    // **Which positions really leave, and so take a keep from the caller**
+    // (ADR-209 D6), over the whole package, to a fixpoint.
+    super::keep::infer(ledger, units, library);
 }
 
 /// One function's positions, and the type names its result tethers.
@@ -296,10 +299,13 @@ fn of(
             true => Buffer::None,
             false => owns_a_buffer(parsed, body, here, library),
         };
-        let state = match buffer.is_some() {
-            true => State::Tethered,
-            false => State::Borrowed,
-        };
+        // **Borrowed here, and `keep::infer` says otherwise where a view
+        // really leaves** ([ADR-209](../../../../docs/specification/adr/adr-209.md)
+        // D6). Owning a buffer is not escaping it: a body may read a file and
+        // hand back a view of something else. The column is one fact with one
+        // author, and the author is the walk that follows views.
+        let state = State::Borrowed;
+        let _ = buffer;
         if state == State::Tethered {
             tethers.extend(names_in(parsed, ret));
         }
@@ -375,10 +381,6 @@ impl Buffer {
             _ => Buffer::None,
         }
     }
-
-    fn is_some(&self) -> bool {
-        !matches!(self, Buffer::None)
-    }
 }
 
 /// Every `let`'s initialiser in a body, the blocks inside it included.
@@ -393,7 +395,7 @@ fn bindings(block: &crate::ast::Block, f: &mut impl FnMut(&crate::ast::Expr)) {
 }
 
 /// Whether this expression hands back a buffer of its own.
-fn makes_a_buffer(
+pub(crate) fn makes_a_buffer(
     parsed: &Parsed,
     expr: &crate::ast::Expr,
     own: &Ledger,
@@ -636,6 +638,46 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
             ));
         }
     }
+    // **And where each buffer lives** (ADR-209 D6): the keep plan, per
+    // function, in the words a reader asks the question in.
+    let library = crate::contracts::Ledger::parse(crate::contracts::STD).unwrap_or_default();
+    for plan in super::keep::plans(parsed, ledger, &library) {
+        let mut said = Vec::new();
+        for (at, keep) in &plan.puts {
+            // By the name the buffer is bound to, which is what a reader looks
+            // for in the source.
+            let name = plan
+                .escapes
+                .iter()
+                .find_map(|(source, _)| match source {
+                    super::keep::Source::Buffer { at: a, name, .. } if a == at => {
+                        Some(format!("`{name}`"))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| "a buffer".to_string());
+            said.push(format!(
+                "    {name} lives {}\n",
+                super::keep::describe(*keep)
+            ));
+        }
+        for ((_, callee), keep) in &plan.calls {
+            said.push(format!(
+                "    what `{callee}` reads lives {}\n",
+                super::keep::describe(*keep)
+            ));
+        }
+        for keeper in &plan.element_keepers {
+            said.push(format!(
+                "    `{keeper}` holds each view with its own handle\n"
+            ));
+        }
+        if said.is_empty() {
+            continue;
+        }
+        lines.push(format!("{} (keeps):\n", plan.key));
+        lines.extend(said);
+    }
     match lines.is_empty() {
         // "here" and not "in this program", for the reason `sharing`'s report
         // gives: a report is about one file.
@@ -666,244 +708,13 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
 /// derived from it. Where either is missing the program is lowered exactly as
 /// it was before this check existed.
 pub fn check(parsed: &Parsed, own: &Ledger, library: &Ledger) -> Vec<crate::check::Finding> {
-    let borrowing: BTreeSet<String> = borrowing_structs(parsed)
+    // **Where a view outlives its buffer is the keep plan's answer**
+    // ([ADR-209](../../../../docs/specification/adr/adr-209.md)): it follows
+    // views through `push`, `for`, fields and calls, which the walk that stood
+    // here did not, and it refuses only what it cannot lower or what no
+    // declaration permits.
+    super::keep::plans(parsed, own, library)
         .into_iter()
-        .map(|s| parsed.text(s).to_string())
-        .collect();
-    let carries = |ty: &Type| carries_a_view(parsed, ty, &borrowing);
-
-    let mut out = Vec::new();
-    for item in &parsed.program.items {
-        match &item.node {
-            Item::Fn { .. } => escaping(parsed, &item.node, None, &carries, own, library, &mut out),
-            Item::Impl {
-                target, methods, ..
-            } => {
-                let target = parsed.text(target.name).to_string();
-                for method in methods {
-                    escaping(
-                        parsed,
-                        &method.node,
-                        Some(&target),
-                        &carries,
-                        own,
-                        library,
-                        &mut out,
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
-/// One function's refusal, where it has one.
-fn escaping(
-    parsed: &Parsed,
-    item: &Item,
-    target: Option<&str>,
-    carries: &impl Fn(&Type) -> bool,
-    own: &Ledger,
-    library: &Ledger,
-    out: &mut Vec<crate::check::Finding>,
-) {
-    let Item::Fn {
-        name,
-        receiver,
-        args,
-        ret_type,
-        body,
-        ..
-    } = item
-    else {
-        return;
-    };
-    // Only a result that carries a view can tether at all.
-    let Some(ret) = ret_type.as_ref().filter(|t| carries(t)) else {
-        return;
-    };
-    // **A caller's buffer does not excuse this one**, and that is where this
-    // walk parts company with `of` above. The column asks *which* buffer a
-    // result could point into and answers Borrowed the moment the caller has
-    // one, because a signature is what it reads. A refusal reads the body: a
-    // function that takes a `&str` and hands back a view of a `String` it made
-    // tethers all the same, and it is the case the column's polarity would
-    // miss — the one where the lowering ties the result to the parameter's
-    // lifetime and `rustc` is left to explain the generated file.
-    let _ = (receiver, args);
-
-    let owned = named_buffers(parsed, body, own, library);
-    if owned.is_empty() {
-        return;
-    }
-
-    for (span, expr) in handed_back(body) {
-        let Some(root) = root_of(parsed, expr) else {
-            continue;
-        };
-        let Some(buffer) = owned.get(&root) else {
-            continue;
-        };
-        let own_name = match name {
-            Some(name) => parsed.text(*name).to_string(),
-            None => "new".to_string(),
-        };
-        let of = match target {
-            Some(target) => format!("`{target}::{own_name}`"),
-            None => format!("`{own_name}`"),
-        };
-        let result = crate::views::write_type(parsed, ret);
-        out.push(crate::check::Finding {
-            severity: crate::check::Severity::Error,
-            span,
-            code: "NK2303",
-            message: format!(
-                "{of} hands back a view of `{root}`, and `{root}` is a `{buffer}` this body owns"
-            ),
-            notes: vec![
-                format!(
-                    "the result is `{result}`, which is a view, and `{root}`'s buffer is dropped \
-                     when the call returns - so the view would outlive what it points into"
-                ),
-                "a view that outlives its buffer is **tethered** to it (Part I, 6.6), and the \
-                 tether is not built yet: `Bytes` is the buffer it needs and the reference count \
-                 that keeps one alive past its scope does not exist \
-                 ([ADR-156](docs/specification/adr/adr-156.md) D4)"
-                    .to_string(),
-            ],
-            help: Some(format!(
-                "take the buffer as a parameter, so the view points into the caller's and the \
-                 result borrows it:\n\
-                 \x20          fn …(input: &str) -> {result} {{ … }}\n\
-                 \x20      or hand back a copy with `.to_owned()`, which costs one allocation and \
-                 says so (Part I, 6.6)"
-            )),
-        });
-        return;
-    }
-}
-
-/// Every local that **makes a buffer this walk can name**, by the name it is
-/// bound to.
-///
-/// One name per `let`: a `let (a, b) = …` binds two names to the halves of a
-/// pair and which half the buffer is is a question this walk cannot answer, so
-/// it answers neither — the safe direction for a refusal.
-fn named_buffers(
-    parsed: &Parsed,
-    body: &crate::ast::Block,
-    own: &Ledger,
-    library: &Ledger,
-) -> BTreeMap<String, String> {
-    use crate::ast::Stmt;
-    let mut out = BTreeMap::new();
-    fn walk(
-        parsed: &Parsed,
-        block: &crate::ast::Block,
-        own: &Ledger,
-        library: &Ledger,
-        out: &mut BTreeMap<String, String>,
-    ) {
-        for stmt in &block.stmts {
-            if let Stmt::Let { names, value, .. } = &stmt.node {
-                if let [name] = names.as_slice() {
-                    if let Buffer::Named(ty) = makes_a_buffer(parsed, value, own, library) {
-                        out.insert(parsed.text(*name).to_string(), ty);
-                    }
-                }
-            }
-            super::sync::visit_stmt_blocks(&stmt.node, &mut |inner| {
-                walk(parsed, inner, own, library, out)
-            });
-        }
-    }
-    walk(parsed, body, own, library, &mut out);
-    out
-}
-
-/// Every expression a body **hands back**, with the statement it stands in.
-///
-/// A `return` anywhere, and the block's own last expression — reached through
-/// the tails a value can come out of, so `if … { data.text() } else { "" }` is
-/// two answers and not one statement nobody looked into.
-fn handed_back(body: &crate::ast::Block) -> Vec<(crate::ast::Span, &crate::ast::Expr)> {
-    use crate::ast::Stmt;
-    let mut out = Vec::new();
-    fn returns<'a>(
-        block: &'a crate::ast::Block,
-        out: &mut Vec<(crate::ast::Span, &'a crate::ast::Expr)>,
-    ) {
-        for stmt in &block.stmts {
-            if let Stmt::Return(Some(value)) = &stmt.node {
-                out.push((stmt.span.clone(), value));
-            }
-            super::sync::visit_stmt_blocks(&stmt.node, &mut |inner| returns(inner, out));
-        }
-    }
-    returns(body, &mut out);
-    if let Some(last) = body.stmts.last() {
-        if let Stmt::Expr(value) = &last.node {
-            tails(value, &last.span, &mut out);
-        }
-    }
-    out
-}
-
-/// The expressions one tail position can turn out to be.
-fn tails<'a>(
-    expr: &'a crate::ast::Expr,
-    span: &crate::ast::Span,
-    out: &mut Vec<(crate::ast::Span, &'a crate::ast::Expr)>,
-) {
-    use crate::ast::{Expr, Stmt};
-    match expr {
-        Expr::Block(block) | Expr::Unsafe(block) => {
-            if let Some(Stmt::Expr(value)) = block.stmts.last().map(|s| &s.node) {
-                tails(value, span, out);
-            }
-        }
-        Expr::If {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            if let Some(Stmt::Expr(value)) = then_branch.stmts.last().map(|s| &s.node) {
-                tails(value, span, out);
-            }
-            if let Some(block) = else_branch {
-                if let Some(Stmt::Expr(value)) = block.stmts.last().map(|s| &s.node) {
-                    tails(value, span, out);
-                }
-            }
-        }
-        other => out.push((span.clone(), other)),
-    }
-}
-
-/// The local a view came out of, where one expression names it.
-///
-/// `data`, `&data`, `data.text()`, `data[..]`, `held.name` and a struct literal
-/// built out of any of them all point into whatever `data` is. Anything else —
-/// a literal, a call, an expression this walk does not recognise — names no
-/// local, and a refusal that cannot name one does not fire.
-fn root_of(parsed: &Parsed, expr: &crate::ast::Expr) -> Option<String> {
-    use crate::ast::Expr;
-    match expr {
-        Expr::Variable(name) => Some(parsed.text(*name).to_string()),
-        Expr::MethodCall { receiver, .. } | Expr::SafeMethod { receiver, .. } => {
-            root_of(parsed, receiver)
-        }
-        Expr::Field { base, .. } | Expr::SafeField { base, .. } | Expr::Index { base, .. } => {
-            root_of(parsed, base)
-        }
-        Expr::Unary { expr, .. } | Expr::Try(expr) | Expr::Cast { expr, .. } => {
-            root_of(parsed, expr)
-        }
-        Expr::StructLit { fields, .. } => fields
-            .iter()
-            .filter_map(|f| f.value.as_ref())
-            .find_map(|value| root_of(parsed, value)),
-        _ => None,
-    }
+        .flat_map(|plan| plan.refusals)
+        .collect()
 }

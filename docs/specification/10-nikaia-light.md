@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.184 (Draft)
+**Version:** 0.0.185 (Draft)
 **Date:** 2026-09-24
 
 ---
@@ -2108,39 +2108,41 @@ Two rules keep this cheap on large data:
   slices outlives its buffer, the *map* holds one handle, and its keys stay
   positions. Filling it costs no handle traffic.
 
-**A struct tethers only where it says so** ([ADR-201](adr/adr-201.md) D2). The
-word is `@tethers`, it stands above the declaration, and it reads as what it is:
-*this struct may keep its buffer alive.*
+**Nothing is written for a tether** ([ADR-209](adr/adr-209.md) D5). Where the
+buffer lives is the compiler's decision, like which count a `Shared` gets:
 
 ```nika
-@tethers
 struct Token {
     text: ref String,   // a view into someone else's buffer
 }
 
-fn tokenize(source: String) -> Vec[Token] {
-    // The returned tokens outlive `source`'s scope, so the list is tethered:
-    // it keeps `source` alive. No lifetimes, no copies of the text, no dangling
-    // references — and one handle for the whole list.
+fn tokenize(path: String) -> Vec[Token] throws {
+    let source = fs::read_to_string(path, fs::Root::Anywhere)
+    // The returned tokens outlive this function, so `source` lives on in the
+    // caller: no lifetimes, no copies of the text, no dangling references.
     ...
 }
 ```
 
-**Without the word, an escape is a compile error** that names the buffer, the
-escape and the ways out. That is the polarity the rest of this language has: a
-tether keeps the *whole* buffer alive — see the last paragraph of this section —
-so it is the reading that is written down, and the cheap one is what silence
-means.
+**A buffer lives in the keep of whatever keeps its views** (ADR-209 D1), and
+who owns that keep is read off the program:
 
-A struct built and consumed inside the scope that owns its buffer therefore says
-nothing at all:
+* **the caller's frame**, wherever a frame outlives the views — handed back,
+  kept in a `mut` parameter, or kept by a list outside a loop. This costs
+  nothing at all, works across any number of calls, and the body may pause;
+* **a handle that travels with the value**, where no frame outlives it — a task;
+* **a handle per view**, where a container keeps views across a loop and drops
+  entries as it goes, so that a buffer is freed when its last view leaves.
+
+A struct built and consumed inside the scope that owns its buffer is simply
+borrowed, and costs nothing:
 
 ```nika
 struct Reading { name: ref String, temp: i32 }
 ```
 
-`nikaia explain --tethers` prints the solved state of every view and changes
-nothing; a change of state is a ledger diff in review.
+`nikaia --tethers` prints where each buffer lives and why, and changes nothing;
+a change is a ledger diff in review.
 
 There is no struct with lifetime parameters in Nikaia; the concept does not
 exist in the language.
@@ -2185,26 +2187,13 @@ holding `label: ref String` compiles, and `name` is a view of the buffer `label`
 points into. That narrows what a caller may pass, which is why the signature
 changes rather than the body.
 
-> **Implementation status:** Partially implemented, and the table above is the
-> shape of it: **Borrowed** and **Owned** are built — the first is the language
-> below's own lifetime and costs nothing, the second is `.to_owned()` and is
-> never inserted — and **Tethered is not**. The **analysis** is: every view in a
-> signature carries its solved state in the ledger and `nikaia --tethers` prints
-> it, and nothing reads it yet, because a state is a representation and only one
-> of the three is emitted. Every view in `examples/` and `benches/` solves to
-> **Borrowed** ([ADR-008](adr/adr-008.md) §3's worked check, measured). Where a value would tether, the
-> program is **refused** instead, which is the residual hard error
-> [ADR-008](adr/adr-008.md) D5 names rather than the state beside it — on the
-> Nikaia line since [ADR-156](adr/adr-156.md) D4, where a function hands back a
-> view of a buffer its own body made (`NK2303`, Part III C.3);
-> `@tethers` is **not built**, which follows: the state it permits does not
-> exist, so a program that would tether is refused whether or not a word allows
-> it, and the grammar takes no attribute above a `struct`
-> ([ADR-201](adr/adr-201.md) D3). What it replaced — `@borrowed`, the opposite
-> word, asserting that a struct never tethers — was parsed and forbade nothing,
-> and was removed rather than kept parsing: a word whose presence and absence
-> look identical on the page is one a reader cannot check.
-> `docs/open-work.md` carries what the missing state would take.
+> **Implementation status:** Implemented ([ADR-209](adr/adr-209.md)). All three
+> states are built: **Borrowed** is the language below's own lifetime,
+> **Tethered** is a keep owned by the caller's frame, by a task's handle, or by
+> each view of a container that drops entries, and **Owned** is `.to_owned()`,
+> never inserted. What is still refused, and why each is a real boundary, is
+> ADR-209 §4: one buffer handed both to a task and out of the function, and a
+> container of *structs* holding views that drops entries inside a loop.
 >
 > The rule below is built for a
 > method of a struct that holds a view. Three cases are refused with `NK2302`:
@@ -2216,8 +2205,9 @@ changes rather than the body.
 > subject's buffer ([ADR-008](adr/adr-008.md) §5).
 
 **A tether keeps the whole buffer alive**, not just the part pointed at.
-Keeping one short name out of a 13 GB memory-mapped file pins all 13 GB. Where
-that looks like a mistake, the compiler warns and suggests `.to_owned()`.
+Keeping one short name out of a 13 GB memory-mapped file pins all 13 GB.
+`nikaia --tethers` names every buffer kept this way and what keeps it; where
+that is not what was meant, `.to_owned()` keeps the name and lets the buffer go.
 
 ### 6.7. The Borrow Contract Ledger
 

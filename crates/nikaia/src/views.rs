@@ -596,7 +596,23 @@ impl Scanner<'_> {
                 // each part of it and this walk may not under-approximate
                 // ([ADR-098](../../../docs/specification/adr/adr-098.md)).
                 Stmt::Let { names, value, .. } => {
-                    if self.mentions(value) {
+                    // **A buffer of its own carries no view of the parameter**
+                    // ([ADR-209](../../docs/specification/adr/adr-209.md) §6):
+                    // `fs::read_to_string(path, …)` mentions `path` and hands
+                    // back a `String` it read, so a view cut from that text is
+                    // a view of the text. Reading it as `path`'s blamed the
+                    // parameter for a view of a file - the refusal named the
+                    // wrong buffer and the way out it gave could not work.
+                    let own_buffer = matches!(
+                        crate::contracts::tether::makes_a_buffer(
+                            self.parsed,
+                            value,
+                            self.borrows.own,
+                            self.borrows.library
+                        ),
+                        crate::contracts::tether::Buffer::Named(_)
+                    );
+                    if self.mentions(value) && !own_buffer {
                         for name in names {
                             self.carriers.insert(self.parsed.text(*name).to_string());
                         }
