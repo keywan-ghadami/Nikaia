@@ -10,14 +10,14 @@
     <a href="#-what-its-good-at--and-what-it-isnt">Good for</a> •
     <a href="#-how-it-compares">Comparison</a> •
     <a href="#-two-switches-one-language">Switches</a> •
-    <a href="#-code-example">Example</a> •
+    <a href="#-getting-started">Getting started</a> •
     <a href="#-where-the-project-actually-stands">Status</a> •
     <a href="docs/specification">Specification</a> •
     <a href="https://keywan-ghadami.github.io/Nikaia/">Documentation site</a> •
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
-  <img src="https://img.shields.io/badge/version-0.0.8-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.0.182-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/status-specification_+_bootstrap-orange.svg" alt="Status" />
   <img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License" />
   <a href="https://keywan-ghadami.github.io/Nikaia/"><img src="https://img.shields.io/badge/docs-github.io-blue.svg" alt="Documentation site" /></a>
@@ -302,16 +302,86 @@ that only works single-threaded.
 
 ---
 
+## 🚀 Getting started
+
+Linux on x86_64 is the one machine this works on today. macOS and Windows are untested.
+
+**1. A Rust toolchain.** Stable, nothing else — `rustup` reads the channel from
+`rust-toolchain.toml` and installs it on first use. The emitted code needs Rust 1.75 or newer.
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+**2. Check out and build the compiler.**
+
+```sh
+git clone https://github.com/keywan-ghadami/Nikaia.git
+cd Nikaia
+cargo build --release -p nikaia        # about a minute; the binary is target/release/nikaia
+export PATH="$PWD/target/release:$PATH"
+```
+
+The compiler finds its `std` in the checkout it was built from, so **leave the checkout where
+it is**. If you move it, point `NIKAIA_SYSROOT` at its `crates/` directory.
+
+**3. A project folder.** A project is a `nikaia.toml` and a `src/main.nika`:
+
+```text
+hello/
+├── nikaia.toml
+└── src/
+    └── main.nika
+```
+
+```toml
+# nikaia.toml
+[package]
+name = "hello"
+version = "0.1.0"
+
+[build]
+user-parallelism = "no"    # the default; "yes" for the multi-threaded runtime
+```
+
+```nika
+// src/main.nika
+fn main() {
+    println("Hello, Nikaia!")
+}
+```
+
+**4. Run it.**
+
+```sh
+cd hello
+nikaia run              # or: nikaia build
+```
+
+The first build compiles `std` and its dependencies (≈15 s) and caches them in
+`~/.cache/nikaia`; later builds reuse that. Arguments go after `--`: `nikaia run -- a b c`.
+The build writes `nikaia.contracts` (the inferred borrow ledger — commit it) and `nikaia.lock`
+beside the manifest. There is no `nikaia new` yet; create the two files by hand.
+
+**Where to go next:** copy any file from [`examples/`](examples/) into `src/main.nika` and
+run it — [`calc.nika`](examples/calc.nika) (`nikaia run -- "2 + 3 * 4"`) and
+[`tally.nika`](examples/tally.nika) are small; [`hello-http/`](examples/hello-http/) is a
+project with a dependency. The language itself is [Spec Part I](docs/specification/10-nikaia-light.md).
+Working on the compiler: `cargo test -p nikaia` (see [the status](#-where-the-project-actually-stands)
+for why not the whole workspace).
+
+---
+
 ## 💻 Programs that run
 
 Real programs live in [`examples/`](examples/): the One Billion Row Challenge, a four-function
 calculator, a web access log summarised, an INI file with comments, a JSON document, two
 Computer Language Benchmarks Game programs, an HTML table that cannot be made to leak markup, a
 stock list rendered to a page **on disk**, a pipe tallied in constant memory, the same program
-split across three files, and the TechEmpower `fortunes` benchmark. **Eleven of the twelve
-compile, run, and are checked by `cargo test` at either setting**, with their output — and,
-where one is written, the file they produce — required to be identical; `fortunes` is still
-written at specification level.
+split across three files, an HTTP server, a real C library called through `extern "C"`, and
+the TechEmpower `fortunes` benchmark. **All but `fortunes` compile, run, and are checked by
+`cargo test`** — the single-file ones at either setting, with their output required to be
+identical; `fortunes` is still written at specification level.
 
 They are there because writing a real program against a spec is the cheapest way to find out
 what the spec forgot, and [`examples/README.md`](examples/README.md) lists exactly which gaps
@@ -322,14 +392,80 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-Nikaia is an experiment conducted in the open, and the specification is far ahead of the
-compiler. **How far, in numbers and by area:**
+**Pre-alpha, as of 0.0.182.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
+that counts *areas of scope* built, and the language area alone reads 98 %. Neither number says
+how close you are to writing the program you have in mind. This section does, in plain words.
+Every wall and risk below has an entry of the same subject in
+[`open-work.md`](docs/open-work.md), with the evidence and the record behind it.
 
-→ [project status & roadmap](docs/project_status_and_roadmap.md)
+### What you can do today
 
-That page is the one place it is written down. It used to be written twice — here and there —
-and the copy that went stale was this one, which is why there is now a link where a list used
-to be.
+Single programs and small multi-file projects on Linux: structs, enums, `impl`, `match`,
+generics with trait bounds, modules beside the entry file, `f"…"` strings, `throws`/`catch`
+with typed errors, maps and vectors, reading files and standard input, writing files, `spawn`
+and `overlap`, `Shared`/`Locked` with `access_all`, grammars and `dsl` blocks, a minimal
+HTTP/1.1 server, calling C through `extern "C"`, and calling a Rust crate once it is described
+(`nikaia describe`). Both `user-parallelism` settings. Most mistakes are refused **in Nikaia's
+own words** with an `NK`-code and a help line, and the ones that are not still point at your
+`.nika` line.
+
+### The walls you will hit
+
+| You try to… | What happens | Because |
+| :--- | :--- | :--- |
+| depend on a Nikaia package by version | refused | there is no registry yet; `path = "…"` dependencies only |
+| use a crate from crates.io | refused until you run `nikaia describe <crate>` and commit what it writes | foreign code is described before it is called; works, but it is a step |
+| write tests | nothing to run them with | no `nikaia test` and no `assert` — Part III 14 is not built. Compare output instead |
+| format, get completion, generate docs | nothing | no `nikaia fmt`, no LSP, no `nikaia doc`. [`editors/vscode`](editors/) has syntax highlighting only |
+| keep a slice of a buffer after the buffer's scope ends | refused (`NK2302`/`NK2303`) — write `.to_owned()` | the *tethered* state of a view is not built |
+| put a string literal where a `String` is declared | refused (`NK1106`) — write `.to_string()` | "text is one type" is decided, not built |
+| do I/O inside a lambda handed to `std` (`map`, `filter`, …) | refused — write a `for` loop | `std`'s entries take synchronous Rust closures; a lazy walk of a pausing sequence has no shape yet |
+| put your own modules in subdirectories (`src/a/b.nika`) | not found | modules are one level: a `.nika` file beside `main.nika` |
+| talk to a database | not possible | `std::db` and the SQL DSL are specified, not built — which is why `fortunes` doesn't run |
+| serve HTTPS or HTTP/2, or many connections at once | not possible | the server handles one connection at a time, HTTP/1.1, no TLS |
+| build for anything but `x86_64-linux` | refused | wasm, C library, Python binding and bare metal are all specified and unbuilt |
+| supervise tasks | not possible | no supervisor |
+| find a function you'd expect in `std` | often missing | `std` holds what the examples needed; the *surface* is the open part |
+
+Also expect: every file access names where it may reach (`fs::read(path, fs::Root::Anywhere)`)
+— that is by design, not a gap; some errors and warnings still come from `rustc` in Rust's words (mapped to your
+line, but in Rust's vocabulary — e.g. a spurious "unnecessary parentheses"); syntax and
+diagnostics change between releases with no migration; `cargo test` over the **whole
+workspace** fails some project tests for reasons in Cargo's package cache —
+use `-p nikaia`.
+
+### What is risky versus what is just work
+
+**Could still change the design** — these touch the central promises, so if something breaks
+it is here, and reports against them are the most valuable:
+
+* **The tether** — zero-copy views that outlive their scope without annotations. It is
+  the load-bearing half of *ownership without lifetimes*; the analysis is built, the
+  representation is not, and nothing in the corpus has needed it yet — which is also why it is
+  untested against real programs.
+* **Text as one type** — nothing built, and it touches every program that handles a string.
+* **Pausing lambdas and lazy pausing sequences** — this is the edge of
+  *functions have no colour*. Today it ends in a refusal and a loop.
+* **The lock rules** — the lock and `access_all` work, but the analysis that would refuse
+  misuse answers *undecided* for 24 of 59 functions in the examples; the refusals are not switched on.
+* **The build-time SQL check** — the most ambitious use of grammars plus build-time
+  evaluation, and not started.
+
+**Just a lot of work** — decided, well specified, low risk of surprising anyone: the package
+registry, the C library and everything built on it (wasm, Python, bare metal), HTTP/TLS/HTTP/2,
+`fmt`/`doc`/LSP, `nikaia test`, supervision, and filling out `std`.
+
+**One question is waiting on a decision** rather than on work: whether the language has a type
+for a list of errors ([`open-decisions.md`](docs/open-decisions.md)).
+
+### So, as a tester
+
+Expect to write small, self-contained CLI programs — parsers, log crunchers, number crunching,
+a toy server — and to hit a refusal every few dozen lines. That is the useful part: a refusal
+that is **wrong**, a message that doesn't tell you what to write instead, a `rustc` error that
+leaks through, or a program the spec says should work and doesn't — those are exactly the
+reports this stage needs. Don't bring a production service, a database-backed app, or anything
+that needs a library ecosystem.
 
 ---
 
