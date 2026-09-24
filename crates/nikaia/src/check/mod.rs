@@ -687,6 +687,20 @@ pub struct Checked {
     /// differently. `Expr::ListLit` is the one expression that carries a
     /// position, and it carries it for this.
     pub array_literals: BTreeSet<usize>,
+    /// The text literals that stand where **text of its own** is wanted
+    /// ([ADR-207](../../docs/specification/adr/adr-207.md) D2), by the byte
+    /// the opening quote stands at.
+    ///
+    /// `"x"` is a view of static text on its own and a `String` where the use
+    /// asks for one - a field, an annotated `let`, a `return`, an argument the
+    /// callee keeps. The emitter writes `"x"` for one that is not in here and
+    /// `String::from("x")` for one that is, and the question is a type's, so
+    /// it is answered here and handed over, as `array_literals` is.
+    ///
+    /// **An argument the callee only reads is not in here**: the parameter is
+    /// a `&str` below (D3), so the literal is lent as it is and allocates
+    /// nothing.
+    pub owned_texts: BTreeSet<usize>,
     /// Per function - by the name the ledger records it under - where its
     /// method calls went (ADR-028).
     ///
@@ -1139,7 +1153,7 @@ fn catches_everything(pattern: &MatchPattern) -> bool {
 fn element_kind(expr: &Expr, ty: &Ty) -> Option<&'static str> {
     match expr {
         Expr::LitInt(_) | Expr::LitFloat(_) => return Some("a number"),
-        Expr::LitStr(_) | Expr::LitInterpolated(_) => return Some("text"),
+        Expr::LitStr { .. } | Expr::LitInterpolated(_) => return Some("text"),
         Expr::LitChar(_) => return Some("a character"),
         Expr::LitBool(_) => return Some("a `bool`"),
         _ => {}
@@ -1168,7 +1182,7 @@ fn plainly_a_value(expr: &Expr) -> bool {
         Expr::Variable(_)
             | Expr::LitInt(_)
             | Expr::LitFloat(_)
-            | Expr::LitStr(_)
+            | Expr::LitStr { .. }
             | Expr::LitBool(_)
             | Expr::Binary { .. }
             | Expr::Field { .. }
@@ -1286,6 +1300,8 @@ pub struct Propagation {
     pub viewed_numbers: BTreeSet<(usize, String)>,
     /// [`Checked::array_literals`].
     pub array_literals: BTreeSet<usize>,
+    /// [`Checked::owned_texts`].
+    pub owned_texts: BTreeSet<usize>,
     /// [`Checked::lent_args`].
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::mut_args`].
@@ -1431,6 +1447,7 @@ pub fn propagation_against(
         compares_totally: checked.compares_totally,
         viewed_numbers: checked.viewed_numbers,
         array_literals: checked.array_literals,
+        owned_texts: checked.owned_texts,
         lent_args: checked.lent_args,
         mut_args: checked.mut_args,
         method_options: checked.method_options,
@@ -3336,6 +3353,13 @@ impl<'a> Checker<'a> {
             let tail = match lending {
                 true => view_of(&tail),
                 false => tail,
+            };
+            // **And the tail is a use**, as `return` is (ADR-207 D2).
+            let tail = match body.stmts.last().map(|s| &s.node) {
+                Some(Stmt::Expr(value)) if !lending => {
+                    self.text_literal(expected, value, true).unwrap_or(tail)
+                }
+                _ => tail,
             };
             self.expect(&tail, expected, span, "returns", |found, want| {
                 format!("this function hands back `{found}`, and it declares `{want}`")
@@ -5393,7 +5417,7 @@ impl<'a> Checker<'a> {
                         // **The annotation is a use, and a use answers the
                         // literal** (ADR-152 D4).
                         let found = self
-                            .array_literal(&found, &want, value, span)
+                            .literal_by_use(&found, &want, value, span)
                             .unwrap_or(found);
                         self.expect(&found, &want, span.clone(), "let", |found, want| {
                             format!("this is `{found}`, and the `let` says `{want}`")
@@ -5637,7 +5661,7 @@ impl<'a> Checker<'a> {
             // and which one a literal is can be read off its first character
             // rather than worked out from whether somebody happened to type a
             // brace somewhere in it.
-            Expr::LitStr(text) => {
+            Expr::LitStr { text, .. } => {
                 self.an_escape_nothing_names(text, span);
                 self.unmarked_hole(text, span);
                 Ty::view("str")
@@ -5856,11 +5880,13 @@ impl<'a> Checker<'a> {
                 let branches = match else_branch {
                     Some(otherwise) => {
                         let other = self.block(otherwise);
-                        // Only when both arms agree is there something to say.
+                        // Only when both arms agree is there something to say
+                        // - or when they meet at text (ADR-207 D2).
                         if then == other {
                             then
                         } else {
-                            Ty::Unknown
+                            let arms = [(tail_of(then_branch), then), (tail_of(otherwise), other)];
+                            self.arms_meet_at_text(&arms).unwrap_or(Ty::Unknown)
                         }
                     }
                     // An `if` with no `else` is a statement's worth of value.
@@ -5879,6 +5905,7 @@ impl<'a> Checker<'a> {
                 }
                 let mut result: Option<Ty> = None;
                 let mut agree = true;
+                let mut answered: Vec<(Option<&Expr>, Ty)> = Vec::new();
                 for arm in arms {
                     // **Every alternative of an or-pattern binds the same
                     // names** ([ADR-137](../../docs/specification/adr/adr-137.md)
@@ -5913,6 +5940,7 @@ impl<'a> Checker<'a> {
                     if leaves(&arm.body) {
                         continue;
                     }
+                    answered.push((Some(&arm.body), ty.clone()));
                     match &result {
                         None => result = Some(ty),
                         Some(seen) if *seen == ty => {}
@@ -5935,10 +5963,11 @@ impl<'a> Checker<'a> {
                 };
                 self.a_match_that_misses_a_case(&on, arms, span);
                 // Every arm of a `match` is a value of the same type, but what
-                // that type is, is only known when every arm says the same.
+                // that type is, is only known when every arm says the same -
+                // or when the arms meet at text (ADR-207 D2).
                 match result {
                     Some(ty) if agree => ty,
-                    _ => Ty::Unknown,
+                    _ => self.arms_meet_at_text(&answered).unwrap_or(Ty::Unknown),
                 }
             }
 
@@ -6491,7 +6520,7 @@ impl<'a> Checker<'a> {
                             // §4's C value field will be written through.
                             let found = match init.value.as_ref() {
                                 Some(value) => self
-                                    .array_literal(&found, &want, value, span)
+                                    .literal_by_use(&found, &want, value, span)
                                     .unwrap_or(found),
                                 None => found,
                             };
@@ -8123,9 +8152,19 @@ impl<'a> Checker<'a> {
             // `&` the compiler writes (ADR-094 D1) and the ordinary fit are
             // still this argument's questions, and they have to be asked of what
             // the literal turned out to be.
-            let array = given
-                .get(at)
-                .and_then(|given| self.array_literal(found, want, given, span));
+            //
+            // **And one handed to a `String` is one** (ADR-207 D2) — text of its
+            // own where the callee keeps it, and the literal as it is where the
+            // callee only reads it, because that parameter is a `&str` below
+            // (D3) and a constant needs no copy to be read.
+            let kept = !crate::contracts::keeps::lends(
+                contract,
+                at + usize::from(signature.takes_a_receiver()),
+            );
+            let array = given.get(at).and_then(|given| {
+                self.array_literal(found, want, given, span)
+                    .or_else(|| self.text_literal(want, given, kept))
+            });
             let found = array.as_ref().unwrap_or(found);
             // **A `usize` at the C boundary takes this language's own integer**
             // ([ADR-147](../../docs/specification/adr/adr-147.md) D2,
@@ -10449,8 +10488,25 @@ impl<'a> Checker<'a> {
         let mut agreed = Ty::Unknown;
         let mut kind: Option<(&'static str, String)> = None;
         let mut said = false;
-        for item in items {
-            let found = self.expr(item, span);
+        let founds: Vec<Ty> = items.iter().map(|item| self.expr(item, span)).collect();
+        // **A text literal takes its neighbours' text** (ADR-207 D2): where
+        // the list already holds text of its own, `["a", f"c"]` is a list of
+        // `String` and the literal is constructed as one. A list holds one
+        // type, so the literal has no other answer - and a **view** among the
+        // elements is not a literal, so it still disagrees below.
+        let holds_text = founds.iter().any(|found| *found == Ty::named("String"));
+        let founds: Vec<Ty> = items
+            .iter()
+            .zip(founds)
+            .map(|(item, found)| match (item, holds_text) {
+                (Expr::LitStr { at, .. }, true) => {
+                    self.checked.owned_texts.insert(*at);
+                    Ty::named("String")
+                }
+                _ => found,
+            })
+            .collect();
+        for (item, found) in items.iter().zip(founds) {
             // **A number beside text, where neither has a type yet.** A bare
             // `1` fits every numeric type and so it arrives here as `?` - which
             // is right, and which would let `[1, "two"]` past to be answered by
@@ -10760,6 +10816,131 @@ impl<'a> Checker<'a> {
                  `Array[T, N]` carries its length and a `Vec[T]` does not"
             )),
         });
+    }
+
+    /// **A literal takes the use's type, whichever literal it is**: an array
+    /// where an `Array[T, N]` is wanted (ADR-152 D4), and text of its own where
+    /// a `String` is ([ADR-207](../../docs/specification/adr/adr-207.md) D2).
+    /// One entry for every position that is a use, so a position cannot ask
+    /// one of the two questions and forget the other.
+    fn literal_by_use(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) -> Option<Ty> {
+        self.array_literal(found, want, value, span)
+            .or_else(|| self.text_literal(want, value, true))
+    }
+
+    /// **A text literal where a `String` is wanted is a `String`**
+    /// ([ADR-207](../../docs/specification/adr/adr-207.md) D2), and hands back
+    /// the type it became.
+    ///
+    /// `"x"` is a view of static text, and a view put where text of its own
+    /// is declared was refused until the program wrote `.to_string()` - the
+    /// most common refusal a newcomer met, and one that protected nothing: the
+    /// text is a constant in the program, so making a `String` of it is
+    /// *constructing* a value, as `[1, 2]` constructs the `Vec` it stands in,
+    /// and not copying text the program had. ADR-005 §3's rule is about the
+    /// second, and it stands: a **view** of text the program has still needs
+    /// its `.to_owned()`.
+    ///
+    /// `owned` says whether the position keeps what it is given. It is `false`
+    /// for an argument the callee only reads, whose parameter is a `&str` below
+    /// (D3): the literal fits it as it is, the answer is still *a `String`*
+    /// for the fit, and nothing is recorded, so nothing is allocated.
+    ///
+    /// Also through `T?`, whose wrap is the caller's (`wraps_into_nullable`),
+    /// and through a list literal where a `Vec[String]` is wanted, element by
+    /// element - but only where **every** element is a text literal, so a list
+    /// that mixes in a view keeps the refusal it had.
+    fn text_literal(&mut self, want: &Ty, value: &Expr, owned: bool) -> Option<Ty> {
+        let text = Ty::named("String");
+        match (want, value) {
+            (Ty::Nullable(inner), _) => self.text_literal(inner, value, owned),
+            (_, Expr::LitStr { at, .. }) if *want == text => {
+                if owned {
+                    self.checked.owned_texts.insert(*at);
+                }
+                Some(text)
+            }
+            // **A choice between literals is a literal in each arm**: the use
+            // reaches through `if`, `match` and a block to the value each one
+            // ends in, so `-> String { match r { A => "a" B => "b" } }` is the
+            // program it reads as. Only where **every** arm ends in text this
+            // answers, for the list's reason below.
+            (
+                _,
+                Expr::If {
+                    then_branch,
+                    else_branch: Some(else_branch),
+                    ..
+                },
+            ) => {
+                let arms = [tail_of(then_branch), tail_of(else_branch)];
+                self.every_arm(want, &arms, owned)
+            }
+            (_, Expr::Match { arms, .. }) => {
+                let arms: Vec<Option<&Expr>> = arms.iter().map(|arm| Some(&arm.body)).collect();
+                self.every_arm(want, &arms, owned)
+            }
+            (_, Expr::Block(block)) => self.every_arm(want, &[tail_of(block)], owned),
+            (
+                Ty::Named {
+                    name,
+                    args,
+                    view: false,
+                },
+                Expr::ListLit { items, .. },
+            ) if name == "Vec" && args.as_slice() == [text.clone()] && !items.is_empty() => {
+                let all_text = items.iter().all(|item| matches!(item, Expr::LitStr { .. }));
+                if !all_text {
+                    return None;
+                }
+                for item in items {
+                    self.text_literal(&text, item, true);
+                }
+                Some(want.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// **Arms that disagree only because some are text literals and some are
+    /// text of their own agree on `String`** (ADR-207 D2): the literals take
+    /// their neighbours' type, as they do in a list. `if c { name } else
+    /// { "anonymous" }` over a `name: String` is a `String`, and the literal
+    /// arm is constructed as one. A **view** arm is not a literal, so an arm
+    /// holding one keeps the disagreement.
+    fn arms_meet_at_text(&mut self, arms: &[(Option<&Expr>, Ty)]) -> Option<Ty> {
+        let text = Ty::named("String");
+        if !arms.iter().any(|(_, ty)| *ty == text) {
+            return None;
+        }
+        let meets = arms
+            .iter()
+            .all(|(arm, ty)| *ty == text || arm.is_some_and(ends_in_text));
+        if !meets {
+            return None;
+        }
+        for (arm, ty) in arms {
+            if let (Some(arm), false) = (arm, *ty == text) {
+                self.text_literal(&text, arm, true);
+            }
+        }
+        Some(text)
+    }
+
+    /// [`Checker::text_literal`] for each arm of a choice, and an answer only
+    /// where every arm gave one. Asked of all of them first and recorded after,
+    /// so an `if` with one literal arm and one view records nothing: half a
+    /// construction would be a `String` beside a `&str` below.
+    fn every_arm(&mut self, want: &Ty, arms: &[Option<&Expr>], owned: bool) -> Option<Ty> {
+        let texts = |arm: &Option<&Expr>| arm.is_some_and(ends_in_text);
+        if arms.is_empty() || !arms.iter().all(texts) {
+            return None;
+        }
+        let mut answered = None;
+        for arm in arms.iter().flatten() {
+            answered = self.text_literal(want, arm, owned);
+        }
+        answered
     }
 
     /// **A literal takes the array type where the use asks for one**
@@ -13299,7 +13480,7 @@ impl<'a> Checker<'a> {
         match value {
             Expr::LitInt(n) => n.to_string(),
             Expr::LitBool(yes) => yes.to_string(),
-            Expr::LitStr(text) => format!("{text:?}"),
+            Expr::LitStr { text, .. } => format!("{text:?}"),
             Expr::Variable(name) => self.parsed.text(*name).to_string(),
             Expr::Unary {
                 op: UnaryOp::Neg,
@@ -13792,7 +13973,7 @@ impl<'a> Checker<'a> {
             self.wraps_into_nullable(&found, &expected, value, span);
             // **The declared result is a use** (ADR-152 D4).
             found = self
-                .array_literal(&found, &expected, value, span)
+                .literal_by_use(&found, &expected, value, span)
                 .unwrap_or(found);
         }
         self.expect(&found, &expected, span.clone(), "returns", |found, want| {
@@ -14397,8 +14578,19 @@ fn convert(found: &Ty, want: &Ty) -> String {
     }
     let (found, want) = (found.text(), want.text());
     match (found.as_str(), want.as_str()) {
-        ("&str", "String") => "write `.to_string()` to make a `String` of it".to_string(),
-        ("String", "&str") => "write `&` to take a view of it".to_string(),
+        // **The spelling this checker prints is `ref String`**, and these arms
+        // used to match `&str` - which nothing prints any more, so the one
+        // mismatch every newcomer meets fell through to *make it a `String`*
+        // and never said how. A literal no longer reaches here in a position
+        // that wants text of its own (ADR-207 D2); what does is a view of text
+        // the program **has**, and a copy of that is written, never inserted
+        // (ADR-107 D3).
+        ("ref String", "String") => {
+            "write `.to_owned()` to make text of its own from this view - a copy is \
+             written where it happens, never inserted (ADR-107 D3)"
+                .to_string()
+        }
+        ("String", "ref String") => "write `ref` in front of it to take a view of it".to_string(),
         _ if is_number(&found) && is_number(&want) => {
             format!("write `as {want}` - Nikaia converts where you say so, never quietly")
         }
@@ -14420,6 +14612,35 @@ fn integer_named(ty: &Ty) -> Option<String> {
     matches!(name.as_str(), "i32" | "i64" | "u8").then(|| name.clone())
 }
 
+/// The value a block ends in: its last statement, where that is an expression.
+fn tail_of(block: &Block) -> Option<&Expr> {
+    match block.stmts.last().map(|s| &s.node) {
+        Some(Stmt::Expr(value)) => Some(value),
+        _ => None,
+    }
+}
+
+/// Whether every way out of an expression is a text literal
+/// ([ADR-207](../../docs/specification/adr/adr-207.md) D2): the literal itself,
+/// or an `if`, a `match` or a block whose every arm ends in one.
+fn ends_in_text(expr: &Expr) -> bool {
+    match expr {
+        Expr::LitStr { .. } => true,
+        Expr::If {
+            then_branch,
+            else_branch: Some(else_branch),
+            ..
+        } => [tail_of(then_branch), tail_of(else_branch)]
+            .iter()
+            .all(|arm| arm.is_some_and(ends_in_text)),
+        Expr::Match { arms, .. } => {
+            !arms.is_empty() && arms.iter().all(|arm| ends_in_text(&arm.body))
+        }
+        Expr::Block(block) => tail_of(block).is_some_and(ends_in_text),
+        _ => false,
+    }
+}
+
 /// Whether an expression is a literal — a value written in the source rather
 /// than computed.
 ///
@@ -14431,7 +14652,7 @@ fn is_literal(expr: &Expr) -> bool {
         expr,
         Expr::LitInt(_)
             | Expr::LitFloat(_)
-            | Expr::LitStr(_)
+            | Expr::LitStr { .. }
             | Expr::LitInterpolated(_)
             | Expr::LitChar(_)
             | Expr::LitBool(_)

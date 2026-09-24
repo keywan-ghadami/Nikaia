@@ -1103,7 +1103,7 @@ impl<'a> Analysis<'a> {
         match value {
             Expr::LitInt(_)
             | Expr::LitFloat(_)
-            | Expr::LitStr(_)
+            | Expr::LitStr { .. }
             | Expr::LitInterpolated(_)
             | Expr::LitChar(_)
             | Expr::LitBool(_)

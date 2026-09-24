@@ -520,7 +520,7 @@ fn walk<'a>(parsed: &Parsed, expr: &'a Expr, out: &mut Walked<'a>) {
         | Expr::LitBool(_)
         | Expr::LitNull
         | Expr::LitChar(_)
-        | Expr::LitStr(_) => {}
+        | Expr::LitStr { .. } => {}
 
         Expr::Call { args, config, .. } => {
             // Kap 5.1's options are values like any other and would have to be
@@ -978,7 +978,7 @@ fn holds_throw(expr: &Expr, bound: bool) -> bool {
 /// and ADR-033 D4 says what happens then - it is not that the compiler guesses.
 fn literal_text(expr: &Expr) -> Option<String> {
     match expr {
-        Expr::LitStr(text) => Some(text.clone()),
+        Expr::LitStr { text, .. } => Some(text.clone()),
         // An `f"…"` is not a constant: what it says depends on what its holes
         // hold, and this wants the text of a file name written down.
         _ => None,
@@ -1180,7 +1180,7 @@ pub(super) fn names_in(parsed: &Parsed, expr: &Expr, out: &mut BTreeSet<String>)
         | Expr::LitBool(_)
         | Expr::LitNull
         | Expr::LitChar(_)
-        | Expr::LitStr(_) => {}
+        | Expr::LitStr { .. } => {}
     }
 }
 

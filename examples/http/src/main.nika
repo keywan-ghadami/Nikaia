@@ -135,12 +135,12 @@ impl Response {
     // 200, text, the body given.  The shape every other constructor is a
     // variation of.
     pub fn text(body: String) -> Response {
-        return Response { status: 200, content_type: "text/plain".to_string(), body: body }
+        return Response { status: 200, content_type: "text/plain", body: body }
     }
 
     // The one a router writes when nothing matched.
     pub fn not_found() -> Response {
-        return Response { status: 404, content_type: "text/plain".to_string(), body: "not found".to_string() }
+        return Response { status: 404, content_type: "text/plain", body: "not found" }
     }
 }
 
@@ -161,19 +161,19 @@ pub fn render(response: ref Response) -> String {
 // about: `else if` did not parse.
 pub fn status_line(status: i32) -> String {
     if status == 200 {
-        return "200 OK".to_string()
+        return "200 OK"
     } else if status == 404 {
-        return "404 Not Found".to_string()
+        return "404 Not Found"
     } else if status == 400 {
-        return "400 Bad Request".to_string()
+        return "400 Bad Request"
     } else if status == 408 {
-        return "408 Request Timeout".to_string()
+        return "408 Request Timeout"
     } else if status == 413 {
-        return "413 Content Too Large".to_string()
+        return "413 Content Too Large"
     } else if status == 431 {
-        return "431 Request Header Fields Too Large".to_string()
+        return "431 Request Header Fields Too Large"
     } else {
-        return "500 Internal Server Error".to_string()
+        return "500 Internal Server Error"
     }
 }
 
@@ -290,6 +290,6 @@ fn answer(
 // The sentence is the one `http1` threw, which already begins with its status:
 // the parser knows what it refused and this only has to pass it on.
 fn refuse(mut connection: net::Connection, status: i32, why: ref String) {
-    let answered = Response { status: status, content_type: "text/plain".to_string(), body: why.to_string() }
+    let answered = Response { status: status, content_type: "text/plain", body: why.to_string() }
     connection.write(render(answered)) catch { return }
 }

@@ -33,7 +33,7 @@ fn test_advanced_hello_world_compilation() {
                 }
 
                 assert_eq!(args.len(), 1);
-                if let Expr::LitStr(s) = &args[0] {
+                if let Expr::LitStr { text: s, .. } = &args[0] {
                     assert_eq!(s, "Hello Nikaia");
                 } else {
                     panic!("Expected string literal");

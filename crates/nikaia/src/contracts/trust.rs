@@ -209,7 +209,9 @@ fn written_root(parsed: &Parsed, arg: &Expr) -> Option<Wrote> {
             match tail(segments).as_slice() {
                 [.., ty, variant] if ty == "Root" && variant == "Dir" => match args.first() {
                     // **The one literal that is `Anywhere` in another spelling.**
-                    Some(Expr::LitStr(text)) if text == "/" => Some(Wrote::TheFilesystemRoot),
+                    Some(Expr::LitStr { text, .. }) if text == "/" => {
+                        Some(Wrote::TheFilesystemRoot)
+                    }
                     _ => None,
                 },
                 _ => None,

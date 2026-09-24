@@ -797,18 +797,19 @@ something asks for it, and the demand is the line after.
 [ADR-107](specification/adr/adr-107.md). `String` is the one text type and
 its state — borrowed, tethered, owned — is the compiler's per use; `ref String` is
 the promise that a value is a borrowed view, held to at the line that would
-break it; a copy is `.to_owned()` or a refusal, never inserted. **Nothing of
-it is built**: two types in the checker, a literal in a `String` slot is
-`NK1106`, and no text carries a handle.
+break it; a copy is `.to_owned()` or a refusal, never inserted. **The literal
+half is built** by [ADR-207](specification/adr/adr-207.md) at 0.0.183 — a literal
+is a `String` wherever one is wanted, constructed where it is kept and lent as
+it is where it is read — and with it `NK1106`'s help and the literal sites in
+`examples/`. **What is not**: two types in the checker, so a *view* in a
+`String` slot (and a name bound to a literal) is refused with the `.to_owned()`
+help, and no text carries a handle.
 
-*Evidence:* 13 `.to_string()` in `examples/`, each a literal or a view put
-where a `String` was declared; `Response(content_type:
-"text/plain".to_string(), …)` in `examples/http/`.
-
-*What it needs, in the record's order (§5):* the checker's acceptance in both
-directions with D2's refusal; text represented as `Bytes` is, with the state
-from the tether analysis; `NK1106`'s help and the thirteen sites; the
-foreign-boundary copy once crates are described; `--tethers` over text.
+*What it needs, in the record's order (§5):* the checker's acceptance of a view
+with D2's refusal; text represented as `Bytes` is, with the state from the
+tether analysis — which is why this now waits on the tether rather than on
+anything of its own; the foreign-boundary copy once crates are described;
+`--tethers` over text.
 
 ### 2.21. An `update` block says `mut`, may run more than once, and the compiler picks the lock
 

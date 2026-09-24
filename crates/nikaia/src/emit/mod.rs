@@ -1065,6 +1065,12 @@ struct Emitter<'p> {
     /// that is; the checker decides, because the decision is a type's
     /// (ADR-028).
     array_literals: std::collections::BTreeSet<usize>,
+    /// The text literals that lower to a `String` of their own
+    /// ([ADR-207](../../docs/specification/adr/adr-207.md) D2), by the byte
+    /// the opening quote stands at. `"x"` for one that is not in here and
+    /// `String::from("x")` for one that is; the checker decides, for
+    /// `array_literals`' reason.
+    owned_texts: std::collections::BTreeSet<usize>,
     /// The method calls that can fail, by the byte their statement starts at
     /// and the method's name (ADR-023 D8).
     ///
@@ -2093,6 +2099,7 @@ impl<'p> Emitter<'p> {
             compares_totally: propagation.compares_totally,
             viewed_numbers: propagation.viewed_numbers,
             array_literals: propagation.array_literals,
+            owned_texts: propagation.owned_texts,
             comptime_values: propagation.comptime_values,
             with_types: propagation.with_types,
             unrolled: propagation.unrolled,
@@ -3508,6 +3515,21 @@ impl<'p> Emitter<'p> {
                     *self.code_parameter_runs.borrow_mut() = held;
                     written
                 }
+            };
+            // **A `String` the body only reads is a `&str`**
+            // ([ADR-207](../../docs/specification/adr/adr-207.md) D3), not a
+            // `&String`. Every caller's `String` reaches it through the `&` the
+            // call already writes, and a literal reaches it as it is - which is
+            // what makes `greet("Ada")` cost nothing, where a `&String` would
+            // have needed a `String` built to be pointed at.
+            let plain_text = self.text(a.ty.name) == "String"
+                && a.ty.generics.is_empty()
+                && !a.ty.is_view
+                && !a.ty.is_nullable
+                && !a.ty.is_slice;
+            let written = match (reference, plain_text) {
+                ("&", true) => "str".to_string(),
+                _ => written,
             };
             format!("{}: {reference}{written}", escaped(name))
         }));
@@ -5511,7 +5533,9 @@ impl<'p> Emitter<'p> {
         match expr {
             Expr::LitInt(v) => out.push(&integer_literal(*v, flow.widen)),
             Expr::LitFloat(v) => out.push(v),
-            Expr::LitStr(_) | Expr::LitInterpolated(_) => self.string(out, expr, depth, flow)?,
+            Expr::LitStr { .. } | Expr::LitInterpolated(_) => {
+                self.string(out, expr, depth, flow)?
+            }
             Expr::LitChar(c) => out.push(&format!("'{c}'")),
             Expr::Range {
                 start,
@@ -6773,7 +6797,7 @@ impl<'p> Emitter<'p> {
                 // in it as a hole of its own - so the braces are escaped on the
                 // way down rather than the argument being passed separately
                 // (ADR-035 D2). `print("{")` prints a brace.
-                if let [Expr::LitStr(literal)] = args {
+                if let [Expr::LitStr { text: literal, .. }] = args {
                     out.push(&format!("{text}!(\"{}\")", rust_format_escape(literal)));
                     return Ok(());
                 }
@@ -8325,8 +8349,16 @@ impl<'p> Emitter<'p> {
             // Inert text, transcribed. A brace is a brace, so nothing has to be
             // escaped on the way into a Rust string literal - only a *format*
             // string treats one specially, and this is not one.
-            Expr::LitStr(literal) => {
-                out.push(&format!("\"{literal}\""));
+            //
+            // **Unless its use wants text of its own** (ADR-207 D2), and then
+            // it is constructed there, as `[1, 2]` is `vec![1, 2]` where a
+            // `Vec` is wanted: a literal is a constant being built, not text
+            // the program had being copied.
+            Expr::LitStr { text: literal, at } => {
+                match self.owned_texts.contains(at) {
+                    true => out.push(&format!("String::from(\"{literal}\")")),
+                    false => out.push(&format!("\"{literal}\"")),
+                }
                 Ok(())
             }
             // `f"…"` is a `String` whether or not anyone put a hole in it,
@@ -8882,7 +8914,11 @@ impl<'p> Emitter<'p> {
             let lend = self
                 .lent_args
                 .get(&key)
-                .is_some_and(|shapes| shapes.contains(&shape));
+                .is_some_and(|shapes| shapes.contains(&shape))
+                // **A literal is a view already** (ADR-207 D3): lent to a
+                // `&str` it is written as it is, and a `&` in front of it would
+                // be a `&&str` the language below has to see through.
+                && !matches!(arg, Expr::LitStr { at, .. } if !self.owned_texts.contains(at));
             // **And `&mut` for a parameter the callee declared `mut`** (D3),
             // which is the one of the three states the *author* wrote rather
             // than the inference. The two maps are disjoint by construction:

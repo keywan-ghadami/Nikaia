@@ -113,8 +113,11 @@ fn a_call_into_std_is_checked_against_the_shipped_ledger() {
 /// An argument of the wrong type, with the name the callee gave it.
 #[test]
 fn an_argument_of_the_wrong_type_is_reported() {
-    let (code, message) = one("fn greet(who: String) { }\n\
-         fn main() { greet(\"world\") }");
+    // A **view** and not a literal: a literal handed to a `String` is one
+    // (ADR-207 D2), and a view of text the program has still needs its copy
+    // written.
+    let (code, message) = one("fn greet(who: String) -> String { return who }\n\
+         fn hello(w: ref String) -> String { return greet(w) }");
     assert_eq!(code, "NK1102");
     assert_eq!(
         message,
@@ -169,7 +172,7 @@ fn an_assignment_of_the_wrong_type_is_reported() {
 #[test]
 fn a_struct_field_of_the_wrong_type_is_reported() {
     let (code, message) = one("struct Reading { name: String, temp: i32 }\n\
-         fn main() { let r = Reading { name: \"Hamburg\", temp: 12 } }");
+         fn read(city: ref String) -> Reading { return Reading { name: city, temp: 12 } }");
     assert_eq!(code, "NK1106");
     assert_eq!(
         message,

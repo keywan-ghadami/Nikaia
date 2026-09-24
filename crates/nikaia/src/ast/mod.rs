@@ -357,7 +357,16 @@ pub enum Expr {
     /// a program that writes JSON, CSS or a regular expression says what it
     /// means. The body is kept as written, escapes and all, for the same
     /// reason `LitChar` is.
-    LitStr(String),
+    ///
+    /// **`at` is the byte the opening quote stands at**, for `ListLit`'s
+    /// reason ([ADR-207](../../../docs/specification/adr/adr-207.md) D2):
+    /// whether the literal stays a view of static text or becomes text of its
+    /// own is decided by its *use*, the use is the checker's and the lowering
+    /// is the emitter's, and one statement may hold both kinds.
+    LitStr {
+        text: String,
+        at: usize,
+    },
     /// `f"… {expr} …"` - Kap 2.5. **Text with code in it**, and the `f` is what
     /// says so ([ADR-035](../../../docs/specification/adr/adr-035.md)).
     ///

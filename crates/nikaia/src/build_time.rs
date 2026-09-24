@@ -312,7 +312,7 @@ impl<'a> BuildTime<'a> {
                 .map(Value::Float)
                 .map_err(|_| Refusal::Unevaluable),
             Expr::LitBool(value) => Ok(Value::Bool(*value)),
-            Expr::LitStr(text) => decoded(text).map(Value::Text).ok_or(Refusal::Unevaluable),
+            Expr::LitStr { text, .. } => decoded(text).map(Value::Text).ok_or(Refusal::Unevaluable),
             Expr::Tuple(parts) => {
                 let mut held = Vec::with_capacity(parts.len());
                 for part in parts {
@@ -914,7 +914,7 @@ impl<'a> BuildTime<'a> {
         // **A string literal and nothing else** (D4). Not "an expression that
         // evaluates to text": a name that folds to one is exactly what this
         // refuses, and the refusal has to happen before the fold.
-        let [Expr::LitStr(written)] = args else {
+        let [Expr::LitStr { text: written, .. }] = args else {
             return Err(Refusal::PathIsComputed);
         };
         let Some(path) = decoded(written) else {

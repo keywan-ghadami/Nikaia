@@ -110,7 +110,9 @@ fn the_declaration_and_the_call_gain_the_reference_together() {
         "fn width(text: String) -> i64 { return text.len() as i64 }\n\
          fn main() { let t = \"hi\".to_string() println(f\"{width(t)}\") }\n",
     );
-    assert!(rust.contains("fn width(text: &String)"), "{rust}");
+    // A `String` the body only reads is a `&str` below (ADR-207 D3), and
+    // the caller's `&t` reaches it the way it reached a `&String`.
+    assert!(rust.contains("fn width(text: &str)"), "{rust}");
     assert!(rust.contains("width(&t)"), "{rust}");
 }
 

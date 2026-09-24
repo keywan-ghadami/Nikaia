@@ -3721,8 +3721,10 @@ grammar! {
         rule FSTRING -> String =
             "f\"" parts:STR_CHAR* "\"" -> { parts.concat() }
 
-        rule str_lit -> Expr =
-            s:STRING -> { Expr::LitStr(s) }
+        // `@=` for the position, as `list_lit` has it and for its reason: what
+        // the literal lowers to is its use's answer (ADR-207 D2).
+        rule str_lit -> Expr @=
+            s:STRING -> { Expr::LitStr { text: s, at: _span.start } }
 
         // Its own rule rather than an alternative inside `str_lit`, and the
         // reason is the error message: a rule whose body is one sequence

@@ -57,7 +57,7 @@ fn the_ignore_pattern_stands_where_a_name_would_be_bound() {
 
     assert!(rust.contains("let (first, _) = pair()"), "{rust}");
     assert!(
-        rust.contains("_: &String"),
+        rust.contains("_: &str"),
         "a parameter keeps its type: {rust}"
     );
     assert!(rust.contains("|_|"), "a lambda's argument: {rust}");
