@@ -8,47 +8,10 @@ recommendation, and what either direction costs if it is wrong.
 An answer is an [ADR](specification/adr/), and
 the moment a question is answered its entry leaves this file rather than
 staying with a note on it. What is merely **unbuilt** is in
-[`open-work.md`](open-work.md) — an ADR said what happens and the compiler does
-not do it yet, which needs work and not a ruling. Each entry says what the
+[`open-work.md`](open-work.md). Each entry says what the
 question is, why it is the owner's, and what this file recommends.
 
 ## Open
-
-**Two questions are open.** They arrived at 0.0.174 by reading
-[`open-work.md`](open-work.md) against its own rule — *citing a question is not
-asking it* — which is a failure that file has now had **three** times, and the
-third is the entry that named this page while writing nothing on it. The page was
-empty until 0.0.166. Four questions
-were answered and each left this file for its record, which is what
-this page says happens to an answered entry: *does a described foreign function say whether it puts its argument on a
-thread?* → [ADR-193](specification/adr/adr-193.md), *what does a Nikaia
-program have to write to be a microservice?* →
-[ADR-194](specification/adr/adr-194.md), *is `nikaia describe` written in
-Nikaia?* → [ADR-195](specification/adr/adr-195.md), and *how does a bound reach a
-caller across a package boundary?* →
-[ADR-205](specification/adr/adr-205.md). The work they created is
-[`open-work.md`](open-work.md)'s — and the last of them **emptied** that file's
-§1, because the bound was the one defect left in it.
-
-**And the last of them corrected how this page had framed it.** The entry
-recommended writing the grammar *first, as a measurement that would settle the
-question* — and [ADR-009](specification/adr/adr-009.md) D4's *measure before
-choosing a shape* does not reach a choice that rests on a project principle.
-[ADR-195](specification/adr/adr-195.md) D5 is the rule that came out of it:
-**a measurement decides between options, and where the choice is already made a
-number is a diagnosis.** A page whose whole job is to be answerable can make
-that mistake, and this is the shape of it.
-
-**The bound's answer is the recommendation taken**, which is worth recording
-because it is what this page is for: the entry named three options, said which one
-it would take and why, and said what either direction costs if it is wrong. The
-owner took **2** — the `signature` language widened — and
-[ADR-205](specification/adr/adr-205.md) is the record.
-
-**One of the two below is the one this page held back on purpose.** It was
-deferred with a note — *the owner has asked to be asked again, with a fuller
-write-up, when the work reaches it* — and the work has reached it: the server is
-built at 0.0.166, so there is something for a refusal to be about.
 
 ### May a route be refused by what its handler `touches`?
 
@@ -61,8 +24,7 @@ thing built on top of the server is a *check* or another feature.
 that only computes, `["file(path) read"]`, `["socket write"]`, `["lock write"]`,
 `["stdout write"]` and so on. So at the moment a program writes a handler, the
 compiler already knows whether that handler reaches the filesystem, and it knows
-it **transitively** — the column is the closure over what the body calls. No
-other language's `http.server` has that, because no other one has the column.
+it **transitively** — the column is the closure over what the body calls.
 
 **The shape a refusal would take.** Some annotation at the route saying what the
 handler may reach, and `NK`-something where the ledger says it reaches more:
