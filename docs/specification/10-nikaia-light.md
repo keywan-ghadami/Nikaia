@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.182 (Draft)
+**Version:** 0.0.184 (Draft)
 **Date:** 2026-09-24
 
 ---
@@ -322,7 +322,9 @@ Nikaia provides basic types to represent simple values.
     * `String`: text. Whether a value of it is a view into text that is
       already there, or text of its own, is the compiler's decision per use
       (6.6, [ADR-107](adr/adr-107.md)). A literal is a view of the program's
-      own text and allocates nothing.
+      own text; where the use keeps it as a `String` it is constructed there,
+      and where the use only reads it nothing is allocated
+      ([ADR-207](adr/adr-207.md)).
     * `ref String`: the same text with a promise attached: *this is a borrowed
       view, no copy and no handle*. The compiler holds the program to the
       promise. It is written where allocating would be a mistake.
@@ -525,13 +527,18 @@ maybe_string = "World"             // Valid (`mut`, as in 2.1)
 ```
 
 A literal is a **view** of text the program was compiled with (6.6,
-[ADR-024](adr/adr-024.md) D5). An allocation happens only where the program
-writes one. A literal stands wherever a `String` is wanted, because a `String`
-may be a view ([ADR-107](adr/adr-107.md)); `.to_owned()` makes a copy.
+[ADR-024](adr/adr-024.md) D5). A literal stands wherever a `String` is wanted
+([ADR-207](adr/adr-207.md) D1): where the use **keeps** it — a field, an
+annotated `let`, a `return`, an argument the callee keeps — it is constructed
+there, as `[1, 2]` is a `Vec` where one is wanted; where the use only **reads**
+it, nothing is allocated. A **view** of text the program *has* is not a literal,
+and where it is kept `.to_owned()` makes the copy, written where it happens
+([ADR-107](adr/adr-107.md) D3).
 
-> **Implementation status:** Not implemented. `String` and `ref String` are two types
-> in the checker today, and a literal in a `String` slot is refused with
-> `NK1106` ([ADR-107](adr/adr-107.md) §5).
+> **Implementation status:** Implemented for literals ([ADR-207](adr/adr-207.md)).
+> `String` and `ref String` are still two types in the checker: a *name* bound to a
+> literal is a `ref String`, and a view in a `String` slot is refused with
+> `NK1106`'s `.to_owned()` help ([ADR-107](adr/adr-107.md) §5).
 
 **`T?` lowers to the backend's `Option<T>`**, the mapping Part III 15.2 writes
 the other way round, and `null` is a reserved word (2.1) that lowers to `None`

@@ -1128,7 +1128,7 @@ fn parts<'e>(expr: &'e Expr, children: &mut Vec<&'e Expr>, blocks: &mut Vec<&'e 
         | Expr::Variable(_)
         | Expr::LitInt(_)
         | Expr::LitFloat(_)
-        | Expr::LitStr(_)
+        | Expr::LitStr { .. }
         | Expr::LitInterpolated(_)
         | Expr::LitChar(_)
         | Expr::LitBool(_)

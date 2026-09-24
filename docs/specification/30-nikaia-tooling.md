@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.182 (Draft)
+**Version:** 0.0.184 (Draft)
 **Date:** 2026-09-24
 
 ---
@@ -1432,7 +1432,7 @@ A code specified ahead of its check has no reproduction test. The obligation abo
 
 ### C.4. What a Type Error Looks Like
 
-Two of the `NK1xxx` family, on a file that says `io::read_to_string("input.txt")` and puts a literal in a `String` field:
+Two of the `NK1xxx` family, on a file that says `io::read_to_string("input.txt")` and puts a view of text it was handed in a `String` field:
 
 ```text
 error[NK1101]: `io::read_to_string` takes 0 arguments, and this call passes 1
@@ -1443,12 +1443,15 @@ error[NK1101]: `io::read_to_string` takes 0 arguments, and this call passes 1
      help: call it as `io::read_to_string()`
 error[NK1106]: `Reading.name` is `String`, and this is `ref String`
   --> app.nika:12:5
-  12 |     let r = Reading { name: "Hamburg", temp: 12 }
+  12 |     let r = Reading { name: city, temp: 12 }
            ^
-     help: write `.to_string()` to make a `String` of it
+     = `city` is declared `ref String`: the text belongs to the caller, who still has it
+     = `Reading` keeps its `name` after this line, so it needs text of its own
+     = Nikaia copies text only where the program says so: a copy costs as much as the text is long, and one made on its own would run every time this line does, with nothing in the source to show it (ADR-005 §3)
+     help: declare `city: String`, and the caller hands its text over instead of lending it - or write `city.to_owned()` to copy it here
 ```
 
-Three things about that shape are deliberate. **The note is the contract**, quoted from the ledger: the compiler shows the caller what the callee promised, because that is the fact the caller was working from. **The caret is on the statement**, not the expression: expression-level spans are open work, and both this checker and `NK2202` report at statement granularity until they exist ([ADR-024](adr/adr-024.md) D7). **The help is paste-ready**, as C.2 requires: `.to_string()` for text, `as i64` between numbers, and the nearest existing field when a name is close to one that exists.
+Three things about that shape are deliberate. **The note is the contract**, quoted from the ledger: the compiler shows the caller what the callee promised, because that is the fact the caller was working from. **The caret is on the statement**, not the expression: expression-level spans are open work, and both this checker and `NK2202` report at statement granularity until they exist ([ADR-024](adr/adr-024.md) D7). **Where the compiler could have written the fix and did not, it says why** ([ADR-208](adr/adr-208.md)): a language that hides ownership owes the reason at the one place it does not, so the text refusal names whose text it is, what keeps it, and what a copy made on its own would cost — and leads with the answer that copies nothing. **The help is paste-ready**, as C.2 requires: `.to_owned()` for text, `as i64` between numbers, and the nearest existing field when a name is close to one that exists.
 
 A message appears only where **both** sides are written down. Where a type is not known, such as a method on a receiver `std` has no signature for, or what a `?` unwraps, the compiler says nothing, which is not the same as approving. The checker never rejects a program that is correct, which is what lets it run on every build.
 

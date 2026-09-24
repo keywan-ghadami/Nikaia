@@ -432,8 +432,19 @@ fn uses_of(
         ledger,
         library,
         uses: &mut uses,
+        aliases: BTreeMap::new(),
     };
     walk.block(body);
+    // **The value a body ends in leaves the call**, as a `return` does: `fn
+    // f(name: String) -> String { name }` keeps `name`. It used to be read as
+    // lent, and the declaration came out `&String` with the body handing the
+    // loan back as a `String` - `rustc`'s *mismatched types* about a file
+    // nobody wrote (Part III C.1), for the shortest program that keeps.
+    if ret_type.is_some() && !returns_a_view {
+        if let Some(Stmt::Expr(value)) = body.stmts.last().map(|s| &s.node) {
+            walk.hand_over(value);
+        }
+    }
     Some((key, uses))
 }
 
@@ -452,6 +463,14 @@ struct Walk<'a> {
     ledger: &'a Ledger,
     library: &'a Ledger,
     uses: &'a mut Uses,
+    /// **The names a `let` bound to what may be a parameter**, and which ones:
+    /// `let s = name` and then `return s` hands `name` out of the call. A
+    /// `let` still keeps nothing by itself; it is the second name leaving that
+    /// does, and this is how the walk knows the second name is the first.
+    ///
+    /// Per body and not per scope, so a shadowing `let` counts both: that can
+    /// only keep more, which is this column's safe direction.
+    aliases: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Walk<'_> {
@@ -468,6 +487,18 @@ impl Walk<'_> {
             // call does not end.
             Stmt::Assign { value, .. } => self.hand_over(value),
             Stmt::Return(Some(value)) if !self.returns_a_view => self.hand_over(value),
+            Stmt::Let { names, value, .. } => {
+                let reached = self.reached(value);
+                if !reached.is_empty() {
+                    for name in names {
+                        let name = self.parsed.text(*name).to_string();
+                        self.aliases
+                            .entry(name)
+                            .or_default()
+                            .extend(reached.iter().cloned());
+                    }
+                }
+            }
             // **A `let` does not keep.** It binds a second name to the same
             // value *inside* this body, and what happens to that name is what
             // decides — which the statements below say. What a `let` cannot do
@@ -523,28 +554,71 @@ impl Walk<'_> {
     /// turn it into `fn(self)`. That shape is `NK1131`, which names `.clone()`
     /// and `fn …(self)` as the two ways out.
     fn hand_over(&mut self, expr: &Expr) {
-        if let Some(name) = parameter_named(self.parsed, self.parameters, expr) {
-            self.uses.kept.insert(name);
-            return;
+        let reached = self.reached(expr);
+        self.uses.kept.extend(reached);
+    }
+
+    /// The parameters an expression's value may **be** — what leaves with it
+    /// when it leaves.
+    ///
+    /// **Through every way the value can come out**: an `if`'s two arms, each
+    /// arm of a `match`, a block's last expression, and a name a `let` bound to
+    /// one of them. `if c { name } else { "anonymous" }` hands `name` out of the
+    /// call as surely as `return name` does, and reading only the top of the
+    /// expression called it lent.
+    fn reached(&self, expr: &Expr) -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        match expr {
+            Expr::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                for block in std::iter::once(then_branch).chain(else_branch.as_ref()) {
+                    if let Some(Stmt::Expr(value)) = block.stmts.last().map(|s| &s.node) {
+                        found.extend(self.reached(value));
+                    }
+                }
+            }
+            Expr::Match { arms, .. } => {
+                for arm in arms {
+                    found.extend(self.reached(&arm.body));
+                }
+            }
+            Expr::Block(block) => {
+                if let Some(Stmt::Expr(value)) = block.stmts.last().map(|s| &s.node) {
+                    found.extend(self.reached(value));
+                }
+            }
+            Expr::Variable(ident) => {
+                let name = self.parsed.text(*ident);
+                if self.parameters.contains(name) {
+                    found.insert(name.to_string());
+                }
+                if let Some(aliased) = self.aliases.get(name) {
+                    found.extend(aliased.iter().cloned());
+                }
+            }
+            Expr::Field { base, name } => {
+                let Some(parameter) = parameter_named(self.parsed, self.parameters, base) else {
+                    return found;
+                };
+                if parameter == "self" {
+                    return found;
+                }
+                let field = self.parsed.text(*name);
+                let copies = self
+                    .fields
+                    .get(&parameter)
+                    .and_then(|fields| fields.get(field))
+                    .is_some_and(|ty| !moves(ty));
+                if !copies {
+                    found.insert(parameter);
+                }
+            }
+            _ => {}
         }
-        let Expr::Field { base, name } = expr else {
-            return;
-        };
-        let Some(parameter) = parameter_named(self.parsed, self.parameters, base) else {
-            return;
-        };
-        if parameter == "self" {
-            return;
-        }
-        let field = self.parsed.text(*name);
-        let copies = self
-            .fields
-            .get(&parameter)
-            .and_then(|fields| fields.get(field))
-            .is_some_and(|ty| !moves(ty));
-        if !copies {
-            self.uses.kept.insert(parameter);
-        }
+        found
     }
 }
 

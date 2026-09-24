@@ -17,7 +17,7 @@ use std::cli
 fn main() throws {
     // Port `0` is *any free one*, which is what a test wants; `listen` prints
     // the address it got, which is how the test finds out which.
-    let at = cli::args().nth(1) ?? "127.0.0.1:8080".to_string()
+    let at = cli::args().nth(1) ?? "127.0.0.1:8080"
 
     // **One function and not a route table**, which is the package's own note:
     // `NK1142` refuses a function type in a field, so nothing can keep a

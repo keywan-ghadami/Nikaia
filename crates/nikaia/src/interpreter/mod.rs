@@ -116,7 +116,7 @@ impl Interpreter {
                     self.eval_expr(body);
                 }
             }
-            Expr::LitStr(_) | Expr::LitInterpolated(_) => {
+            Expr::LitStr { .. } | Expr::LitInterpolated(_) => {
                 // Literals evaluate to themselves.
             }
             // A `seq` block runs its statements in the order they were written,
@@ -136,7 +136,7 @@ impl Interpreter {
 
     fn builtin_println(&self, args: &[Expr]) {
         for arg in args {
-            if let Expr::LitStr(s) | Expr::LitInterpolated(s) = arg {
+            if let Expr::LitStr { text: s, .. } | Expr::LitInterpolated(s) = arg {
                 println!("{}", s);
             } else {
                 println!("<expression>");
@@ -146,7 +146,7 @@ impl Interpreter {
 
     fn builtin_log(&self, args: &[Expr]) {
         for arg in args {
-            if let Expr::LitStr(s) | Expr::LitInterpolated(s) = arg {
+            if let Expr::LitStr { text: s, .. } | Expr::LitInterpolated(s) = arg {
                 println!("[LOG] {}", s);
             }
         }

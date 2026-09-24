@@ -184,7 +184,7 @@ fn a_space_after_the_f_is_not_an_interpolation() {
         panic!("expected a `let`");
     };
     assert!(
-        matches!(value, Expr::LitStr(_)),
+        matches!(value, Expr::LitStr { .. }),
         "a plain string became an interpolation: {value:?}"
     );
 }

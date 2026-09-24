@@ -4,6 +4,123 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.184] — 2026-09-24
+
+**A view of text is asked for a copy only where something keeps it — and the
+refusal says why** — [ADR-208](docs/specification/adr/adr-208.md). The owner's
+point after 0.0.183: a language that hides ownership this thoroughly owes the
+reason at the one place it does not, or the reader asks why a compiler that knows
+exactly what to write does not write it.
+
+### A correct program that was refused
+
+`fn relay(city: ref String) { show(city) }` for a `show(s: String)` that only
+reads asked for `city.to_owned()` — a copy nothing would keep, since the parameter
+is a `&str` below (ADR-207 D3). **D1:** a view handed to a `String` the callee
+only reads is lent as it is, for a function this compiler declares; a `ref` the
+source writes there is still `NK1137`.
+
+### The refusal that stays, explained
+
+Where something keeps the text — a field, an annotated `let`, a `return` or a
+body's last value, an argument the callee keeps — `NK1102`/`NK1103`/`NK1104`/
+`NK1106` now say whose text it is, what keeps it, and what a copy made on its own
+would cost (ADR-005 §3), in three cases:
+
+```text
+error[NK1106]: `Reading.name` is `String`, and this is `ref String`
+     = `city` is declared `ref String`: the text belongs to the caller, who still has it
+     = `Reading` keeps its `name` after this line, so it needs text of its own
+     = Nikaia copies text only where the program says so: a copy costs as much as the
+       text is long, and one made on its own would run every time this line does, with
+       nothing in the source to show it (ADR-005 §3)
+     help: declare `city: String`, and the caller hands its text over instead of
+       lending it - or write `city.to_owned()` to copy it here
+```
+
+A **name bound to a literal** gets the honest *not yet*: written in place the
+literal would be built on that line (ADR-207); through a name it is not, because
+that would change the type the name was declared with — and the help names the
+two spellings that work. **Any other view** says it points into text something
+else owns.
+
+### In the tree
+
+`a_view_kept` in the checker, read by every keeping position; a binding remembers
+the literal it was bound to. Two new tests in `tests/text_literals.rs` — D1 run
+end to end, each explanation checked. Part III C.4's example is the new message.
+
+## [0.0.183] — 2026-09-24
+
+**A text literal is a `String` where one is wanted** —
+[ADR-207](docs/specification/adr/adr-207.md). The first refusal a pre-alpha tester
+met, and the owner asked for it gone with the complexity in the compiler: clever
+rather than complicated, and not more expensive than it has to be.
+
+### What changed for a program
+
+`Person { name: "Ada" }`, `let s: String = "x"`, `return "x"` out of a
+`-> String`, `greet("x")`, a `T?` field given a literal, `let xs: Vec[String] =
+["a", "b"]`, and a `match` whose arms are literals where a `String` is handed
+back — all compile now. So do the mixed forms, because a literal takes its
+neighbours' type: `["a", f"c{n}"]` is a `Vec[String]`, and
+`if c { name } else { "anonymous" }` over a `name: String` is a `String`.
+
+### Why this road and not ADR-107's
+
+[ADR-107](docs/specification/adr/adr-107.md) D1 decided this and routed it
+through a new representation of text — a handle of three states on every text
+value. That costs every value a wider shape and a branch, to save an allocation
+in one position, and the state it adds is the one the tether analysis found
+nothing in the corpus needs. Inserting `.to_string()` everywhere is the other
+cheap answer and is wrong where the callee only reads. So the answer is per
+**position**, off two things the compiler already knows — what type the
+position wants, and whether the callee keeps the parameter (ADR-094):
+
+* **kept** — the literal is constructed where it stands, `String::from("…")`,
+  as `[1, 2]` is `vec![1, 2]` where a `Vec` is wanted (D2). The cost is exactly
+  what the program paid when it wrote `.to_string()`.
+* **read** — a `String` parameter the body only reads is a `&str` below now,
+  not a `&String` (D3), and the literal goes in as it is: nothing is allocated.
+
+ADR-005 §3 stands. A **view** of text the program has is still refused where it
+is kept, and `NK1106`/`NK1102`/`NK1103`/`NK1104` now say how out of it —
+*write `.to_owned()`*. They used to say *make it a `String`*: the arm with the
+right sentence matched `&str`, which the checker stopped printing when the
+spelling became `ref String`.
+
+### A defect found on the way, and closed with it
+
+`keeps` (ADR-094) counted a parameter as kept only behind a written `return` or
+an assignment. So `fn same(name: String) -> String { name }` — the shortest
+program that keeps anything — lowered to `&String` and failed in `rustc` with
+*mismatched types* about a file nobody wrote, and so did a parameter handed out
+through an `if` or `match` arm or through `let s = name; return s`. D4: the walk
+reads a body's last expression as a `return`, descends through `if`, `match`
+and blocks, and follows a `let`'s second name. A `let` that is only read still
+keeps nothing. No committed ledger changed.
+
+### In the tree
+
+* `Expr::LitStr` carries its position, for `ListLit`'s reason; `owned_texts`
+  goes from the checker to the emitter.
+* Fourteen literal `.to_string()`s gone from `examples/` (`http`, `hello-http`,
+  `sqlite`, `fortunes`); the eight left copy a view, convert a foreign pointer,
+  or are `foreign-runtime` fixtures that measure something else.
+* `tests/text_literals.rs` (every position, compiled and run, and the refusals
+  that stay) and two new tests in `tests/keeps.rs`; four existing tests moved
+  from asserting the old wall to asserting the new shape.
+* Part I 2.1 and 2.3, Part III C.4, ADR-107's status and §5, and
+  `open-work.md`'s *text is one type*: the literal half is built, and the rest
+  now waits on the tether.
+
+### What is still open
+
+A **name** bound to a literal is a view — `let s = "x"` then `Person { name: s }`
+is refused with the `.to_owned()` help; making a binding follow a later use is
+inference across statements, and a larger question. A method's arguments are
+not lent yet, so a literal there is constructed even where the method only reads.
+
 ## [0.0.182] — 2026-09-24
 
 **A route is not refused by what its handler touches, and no report lists it

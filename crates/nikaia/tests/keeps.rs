@@ -400,3 +400,43 @@ fn a_field_of_a_type_this_file_does_not_declare_keeps() {
     let source = "fn first(m: Mapped) -> String { return m.text }";
     assert_eq!(keeps(source, "first"), ["m"]);
 }
+
+/// **Every way a value leaves is a return** ([ADR-207](../../../docs/specification/adr/adr-207.md)
+/// D4): the body's last expression, an `if`'s or a `match`'s arm, and a name
+/// a `let` bound to the parameter. Each of these was read as lent, and each
+/// came out as `rustc`'s *mismatched types* about a file nobody wrote.
+#[test]
+fn a_parameter_that_leaves_by_any_way_out_is_kept() {
+    assert_eq!(
+        keeps("fn same(name: String) -> String { name }", "same"),
+        ["name"]
+    );
+    assert_eq!(
+        keeps(
+            "fn or(c: bool, name: String) -> String { if c { name } else { f\"x\" } }",
+            "or"
+        ),
+        ["name"]
+    );
+    // `n` is the scrutinee, and what the column says of a number does not
+    // matter: a copy is never lent (`keeps::lends` asks `moves` first).
+    assert!(keeps(
+        "fn pick(n: i64, name: String) -> String {\n\
+             let s = match n { 0 => f\"zero\" else => name }\n\
+             return s\n\
+         }",
+        "pick"
+    )
+    .contains(&"name".to_string()));
+}
+
+/// **And a `let` that only reads still keeps nothing**: the second name has to
+/// leave for the first to be kept.
+#[test]
+fn a_parameter_bound_again_and_only_read_is_not_kept() {
+    assert!(keeps(
+        "fn width(name: String) -> i64 { let s = name\n return s.len() as i64 }",
+        "width"
+    )
+    .is_empty());
+}
