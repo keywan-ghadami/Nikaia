@@ -4,6 +4,69 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.182] — 2026-09-24
+
+**A route is not refused by what its handler touches, and no report lists it
+either** — [ADR-206](docs/specification/adr/adr-206.md), the owner's answer to
+[`open-decisions.md`](docs/open-decisions.md)'s last remaining 0.0.174 question.
+**Nothing is built, which is the decision**, and no
+[`open-work.md`](docs/open-work.md) entry is created either: option 1 is the
+answer and not an unbuilt feature.
+
+### The question
+
+Every function carries a `touches` column, closed over what its body calls. So
+the compiler already knows whether a handler reaches the filesystem, transitively
+— which no other language's `http.server` knows, because no other one has the
+column. What to do with that was the question, and it named three options: refuse
+nothing, let a route **declare** what it may reach, or **list** it in
+`nikaia --trust`.
+
+### The answer, and where this page was wrong
+
+**D1 — no refusal.** No `reaching:` at a route, no word for it, no code. A refusal
+on today's granularity would mostly refuse programs that are right, and `touches`
+says `file(path) read` where the path is a parameter's name and not a value.
+
+**D2 — and no listing either**, which is the half the page recommended and got
+wrong. The owner's reason decides it: **in a real application almost every route
+reaches something**, so a report whose rows are nearly all non-empty tells a
+reviewer nothing they can act on. It is the argument this project already makes
+about a gate — *a gate that is a fifth false alarm teaches people to ignore it* —
+in the other tool.
+
+**A listing is not free.** The page called 3 the cheap direction because the data
+a later refusal would read has to be gathered anyway. What it did not count is the
+**design**: which touches are ordinary for a handler and therefore filtered, and
+which a person asks for on purpose — `--extended`, `--including http`, a name
+nobody has picked. That is a question with its own answer and not a 0.1.0 target.
+Option 1 costs nothing and stays extendable.
+
+**D3 names the distinction the page missed.**
+[ADR-108](docs/specification/adr/adr-108.md) D4's listing works because it lists a
+**way around a check**: such a list is short by construction and prints *none* for
+a program with no exceptions. A list of what every handler touches is long by
+construction, and a report that is long by construction is read once. **So a
+report earns its keep the way a refusal does — by what it leaves out.**
+
+### And a sentence this project wrote at 0.0.178 is corrected
+
+The question's entry gained a paragraph claiming `fs::Root`'s arrival was *option 3
+arriving for the filesystem*. It was not: one report lists exceptions and the other
+would list the ordinary case, which is the difference between them rather than a
+step from one to the other. This is the second time an answer has corrected how
+that page framed its own question
+([ADR-195](docs/specification/adr/adr-195.md) D5 was the first), and both are the
+page working: an entry written to be answerable is one whose framing can be argued
+with.
+
+### What a later record would need
+
+ADR-206 §4 writes it down so it is not found again: the filter, the switch, the
+better granularity `fs::Root` already gives for one resource — and that a refusal
+stays available, because D1 says no to it on *today's* granularity and nothing
+closes the door the root opened one resource at a time.
+
 ## [0.0.181] — 2026-09-23
 
 **A bound reaches a caller inside the `signature`** —
