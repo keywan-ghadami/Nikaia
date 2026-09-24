@@ -173,17 +173,11 @@ and the words were `rustc`'s. **It asks now**
 call whose `threads` says `true` is `NK2502` in this language's vocabulary, and
 both crossing experiments in the tree are refused here rather than below.
 
-**And one that is out of the sequence because three entries rest on it**: the
-**tether** ([ADR-008](specification/adr/adr-008.md)), last below and first under
-*text is one type* and under `Bytes`. It is not one change package, and the
-entry says what each of its four parts is.
-
-*That sentence used to name two more things and neither rested on it*, which the
-entry itself now records: §1's `keeps` column for a grammar entry closed at
-0.0.137 without the tether, and
-[`open-decisions.md`](open-decisions.md)'s `Bytes` question was answered by
-[ADR-179](specification/adr/adr-179.md) at 0.0.127 and has not been in that file
-since.
+**The tether that stood out of this sequence is built**
+([ADR-209](specification/adr/adr-209.md), 0.0.185): a buffer whose views outlive
+its scope lives in the keep of whatever keeps them — a frame, a task's handle,
+or each view of a container that drops entries — and nothing is written for it.
+Its entry is gone; what *text is one type* waited on it for is said there.
 
 ### 2.1. A lambda that pauses is refused where `std` takes it
 
@@ -808,10 +802,12 @@ no text carries a handle. A view handed to a `String` the callee only reads is
 lent as it is (D1).
 
 *What it needs, in the record's order (§5):* the checker's acceptance of a view
-with D2's refusal; text represented as `Bytes` is, with the state from the
-tether analysis — which is why this now waits on the tether rather than on
-anything of its own; the foreign-boundary copy once crates are described;
-`--tethers` over text.
+with D2's refusal. **The representation it waited for is not needed any more**:
+a view that outlives its buffer is tethered by
+[ADR-209](specification/adr/adr-209.md) without a text type of its own, so what
+is left is the checker accepting a *view* where a `String` is kept — which is a
+copy or a tether, and deciding which is this entry's question; and the
+foreign-boundary copy once crates are described.
 
 ### 2.21. An `update` block says `mut`, may run more than once, and the compiler picks the lock
 
@@ -1197,103 +1193,6 @@ and holds it against what `std` keys bare, which is what found `access_all` and
 language's ([ADR-064](specification/adr/adr-064.md)) rather than a module's, and
 a `TaskHandle` is what a `spawn` hands back — a program has no reason to write
 the name, so moving it would cost a migration and buy nothing.
-
-### 2.42. The tether: a view that outlives its buffer is refused, not tethered
-
-[ADR-008](specification/adr/adr-008.md), and it is **last in this list and first
-under three of its entries** — which is why it is written down rather than left
-as a phrase three other places lean on. Part I 6.6's three states are Borrowed,
-Tethered and Owned; **two of them are built and the middle one is not.**
-
-*What is built.* **Borrowed** is Rust's own lifetime and costs nothing:
-`examples/1brc.nika` and `examples/inventory` are the shape D2 calls free, and
-they run. **Owned** is `.to_owned()`, written by the program and never by the
-compiler (D5). **D9** is built, and now for a result that *carries* a view as
-well as one that *is* one. What stands where Tethered would is a **refusal**:
-`NK2302` for a naked view parameter that is stored, and `NK2303` for a view of
-a buffer the body owns handed back through the result
-([ADR-156](specification/adr/adr-156.md) D4) — which is D5's residual hard error
-doing the job of the state that is missing. The second used to be `rustc` on the
-Nikaia line, which is the one thing Part III C.1 says may not happen.
-
-*What Tethered needs, measured rather than estimated.*
-
-1. ~~**A buffer to tether to.**~~ **Built.** `Bytes` is the language's
-   ([ADR-156](specification/adr/adr-156.md) D1, D2): a reference-counted,
-   immutable run of bytes, and `fs::read` hands one back. What it does **not**
-   carry yet is the offset and length a tethered *slice* is — a `Bytes` is the
-   buffer, and the position beside it is item 3's layout. `Mapped` does not
-   deref to it either (D6), which Part III 17.2 promises and the tether is what
-   makes true.
-2. ~~**The escape analysis** (D2).~~ **Built**, and built *alone*: every view in
-   a signature carries its state in the ledger under `views`, `--tethers` prints
-   it, and **nothing reads it**. What it found is that the whole corpus is the
-   free case — every view in `examples/` and `benches/` solves to Borrowed,
-   which is §3's worked check read off the analysis rather than asserted, and a
-   test holds it as a ceiling. So the piece that was going to decide whether the
-   rest is worth starting has answered: **nothing in the tree needs Tethered**,
-   and what would reach it is a parser handing its rows past the buffer's scope.
-3. **Three layouts per struct** (D3, D5), chosen per construction site. A
-   tethered `Entry` is not a `ref String`: the **container** holds the handle (D4) and
-   the element holds `(offset, len)`, so every read of `entry.name` becomes a
-   slice of the container's buffer. That is a whole representation, emitted
-   three ways and picked by the analysis's answer — handed over the way
-   [ADR-028](specification/adr/adr-028.md) hands every other answer the emitter
-   has no types for.
-4. **The buffer table** (D4): one handle per distinct source buffer on the
-   container, keys as `(index, offset, len)` with the index elided where the
-   compiler proves one buffer. `Eq`/`Hash` content-based and never identity, or
-   a parallel run splits `Hamburg` across workers.
-5. **The ledger** (D7): the state per view in a signature and the buffer-table
-   shape per struct, so the answer crosses a package boundary — plus the barrier
-   rule, where a `dyn` or a published non-generic API widens to Tethered.
-6. **The lint and the cleanup** (D8): a small extract pinning a large buffer,
-   and a `Cleanup` that runs at the last tether rather than at the end of the
-   mapping's scope.
-7. **`@tethers`** ([ADR-201](specification/adr/adr-201.md) D2), the word a
-   struct writes to **allow** a tether — and it is not vacuous, it is what the
-   six items above are for: without it a value that would outlive its buffer is
-   an error, which is what `NK2302` and `NK2303` already say. It is **not in the
-   grammar** (D3), because a construct that permits a state nothing can reach is
-   the mistake this replaced. `@borrowed` stood here and was the opposite word —
-   *this never tethers* — asserting something the compiler could not check and
-   forbidding a transition that does not exist; it is removed at 0.0.167, and
-   what a reader met on each of the eight structs carrying it was three
-   questions the source answered none of.
-
-*So it is not one change package.* It was at least four — the type, the
-analysis, the representation, the ledger — and **the analysis is done**. What is
-left is the representation and the type, and the representation is the expensive
-half: three layouts per struct, chosen per site, with the container holding the
-handle. **What rests on it:** *text is one type*, above, whose `String` state
-comes from this analysis, and `Bytes` itself, which is the same question read
-from the other end.
-
-*Two things this list named do not rest on it*, and both were found by reading
-it against the code rather than following it — which is the rule this file's own
-head states. **The `keeps` column of a grammar's entry** closed at 0.0.137
-([ADR-186](specification/adr/adr-186.md)): a parse keeps its `input` exactly
-when its declared **result type** may hold a view into it, which is not a state.
-**The third of `?.`** closed out of this list at 0.0.141
-([ADR-190](specification/adr/adr-190.md)): three of its four shapes are
-Borrowed and the fourth is `NK2303`'s, so none of it is an escape.
-
-*Which is worth saying twice, because it is how this entry grows wrong:* a value
-that is a **view** is not a value that is **Tethered**. The lattice has three
-states and the cheap one is the default, so *a view of X* says nothing about
-which — only **escaping the buffer's owning scope** does
-([ADR-008](specification/adr/adr-008.md) D2).
-
-*And the analysis has a limit worth knowing before it is trusted further.* It
-errs **towards Tethered**, which is D7's own polarity, and the one shape it does
-not decide is a buffer built element by element into a list whose element type
-the ledger does not name. No program in the tree writes one.
-
-*And a cheaper thing is true meanwhile*, which is why nothing is broken today:
-the refusal is the honest answer for a program that would tether, and it names
-`.to_owned()`. What it costs is the programs D2 describes as free-and-escaping —
-a parser handing its rows past the buffer's scope — and no program in the tree
-writes one.
 
 ### 2.44. The describer's remaining half: `cargo metadata`, a directory walk and a subprocess
 

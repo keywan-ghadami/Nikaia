@@ -17,7 +17,7 @@
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
-  <img src="https://img.shields.io/badge/version-0.0.184-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.0.185-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/status-specification_+_bootstrap-orange.svg" alt="Status" />
   <img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License" />
   <a href="https://keywan-ghadami.github.io/Nikaia/"><img src="https://img.shields.io/badge/docs-github.io-blue.svg" alt="Documentation site" /></a>
@@ -392,7 +392,7 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-**Pre-alpha, as of 0.0.184.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
+**Pre-alpha, as of 0.0.185.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
 that counts *areas of scope* built, and the language area alone reads 98 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in
@@ -403,7 +403,9 @@ Every wall and risk below has an entry of the same subject in
 Single programs and small multi-file projects on Linux: structs, enums, `impl`, `match`,
 generics with trait bounds, modules beside the entry file, `f"…"` strings, `throws`/`catch`
 with typed errors, maps and vectors, reading files and standard input, writing files, `spawn`
-and `overlap`, `Shared`/`Locked` with `access_all`, grammars and `dsl` blocks, a minimal
+and `overlap`, `Shared`/`Locked` with `access_all`, views that outlive the buffer they point into — a
+function that reads a file and hands back slices of it, with nothing written for it —
+grammars and `dsl` blocks, a minimal
 HTTP/1.1 server, calling C through `extern "C"`, and calling a Rust crate once it is described
 (`nikaia describe`). Both `user-parallelism` settings. Most mistakes are refused **in Nikaia's
 own words** with an `NK`-code and a help line, and the ones that are not still point at your
@@ -417,7 +419,6 @@ own words** with an `NK`-code and a help line, and the ones that are not still p
 | use a crate from crates.io | refused until you run `nikaia describe <crate>` and commit what it writes | foreign code is described before it is called; works, but it is a step |
 | write tests | nothing to run them with | no `nikaia test` and no `assert` — Part III 14 is not built. Compare output instead |
 | format, get completion, generate docs | nothing | no `nikaia fmt`, no LSP, no `nikaia doc`. [`editors/vscode`](editors/) has syntax highlighting only |
-| keep a slice of a buffer after the buffer's scope ends | refused (`NK2302`/`NK2303`) — write `.to_owned()` | the *tethered* state of a view is not built |
 | put a **view** of text (a `ref String` parameter, a slice, a name bound to a literal) where a `String` is **kept** — a field, a `return` | refused, and the message says why and what copies nothing | a copy of text you already have is written, never inserted; a literal itself is fine anywhere, and a view handed to a function that only reads needs nothing |
 | do I/O inside a lambda handed to `std` (`map`, `filter`, …) | refused — write a `for` loop | `std`'s entries take synchronous Rust closures; a lazy walk of a pausing sequence has no shape yet |
 | put your own modules in subdirectories (`src/a/b.nika`) | not found | modules are one level: a `.nika` file beside `main.nika` |
@@ -439,18 +440,20 @@ use `-p nikaia`.
 **Could still change the design** — these touch the central promises, so if something breaks
 it is here, and reports against them are the most valuable:
 
-* **The tether** — zero-copy views that outlive their scope without annotations. It is
-  the load-bearing half of *ownership without lifetimes*; the analysis is built, the
-  representation is not, and nothing in the corpus has needed it yet — which is also why it is
-  untested against real programs.
-* **Text as one type** — literals work wherever a `String` is wanted; what is left (a view kept
-  without `.to_owned()`) now rides on the tether above.
+* **Text as one type** — literals work wherever a `String` is wanted; what is left is whether
+  a *view* kept where a `String` is declared should be a copy or a tether.
 * **Pausing lambdas and lazy pausing sequences** — this is the edge of
   *functions have no colour*. Today it ends in a refusal and a loop.
 * **The lock rules** — the lock and `access_all` work, but the analysis that would refuse
   misuse answers *undecided* for 24 of 59 functions in the examples; the refusals are not switched on.
 * **The build-time SQL check** — the most ambitious use of grammars plus build-time
   evaluation, and not started.
+
+**Taken off this list:** the **tether** — views that outlive their buffer, with no
+annotations — is built ([ADR-209](docs/specification/adr/adr-209.md)): the compiler puts the
+buffer in the caller's frame where it can, in a handle where a task takes the value, or one
+handle per view where a cache drops entries; `nikaia --tethers` shows which. Eight programs,
+one per shape, run in the test suite. Reports against it are still the most valuable kind.
 
 **Just a lot of work** — decided, well specified, low risk of surprising anyone: the package
 registry, the C library and everything built on it (wasm, Python, bare metal), HTTP/TLS/HTTP/2,

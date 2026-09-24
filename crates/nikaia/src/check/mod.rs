@@ -701,6 +701,14 @@ pub struct Checked {
     /// a `&str` below (D3), so the literal is lent as it is and allocates
     /// nothing.
     pub owned_texts: BTreeSet<usize>,
+    /// The text literals that are the fallback of a `??` whose left side is a
+    /// **view** of text, by the literal's byte
+    /// ([ADR-209](../../docs/specification/adr/adr-209.md) §6). The emitter
+    /// writes every other fallback as `"…".into()`, so that `?? "none"` on a
+    /// `String?` is a `String` - and on a `ref String?` that conversion is the
+    /// one thing the language below cannot resolve: *type annotations needed*
+    /// about `m["host"] ?? "-"` over a map of views.
+    pub view_fallbacks: BTreeSet<usize>,
     /// Per function - by the name the ledger records it under - where its
     /// method calls went (ADR-028).
     ///
@@ -1302,6 +1310,8 @@ pub struct Propagation {
     pub array_literals: BTreeSet<usize>,
     /// [`Checked::owned_texts`].
     pub owned_texts: BTreeSet<usize>,
+    /// [`Checked::view_fallbacks`].
+    pub view_fallbacks: BTreeSet<usize>,
     /// [`Checked::lent_args`].
     pub lent_args: BTreeMap<(usize, String, usize), BTreeSet<String>>,
     /// [`Checked::mut_args`].
@@ -1448,6 +1458,7 @@ pub fn propagation_against(
         viewed_numbers: checked.viewed_numbers,
         array_literals: checked.array_literals,
         owned_texts: checked.owned_texts,
+        view_fallbacks: checked.view_fallbacks,
         lent_args: checked.lent_args,
         mut_args: checked.mut_args,
         method_options: checked.method_options,
@@ -6899,6 +6910,11 @@ impl<'a> Checker<'a> {
             Expr::Coalesce { value, fallback } => {
                 let left = self.expr(value, span);
                 let other = self.expr(fallback, span);
+                if let (Ty::Nullable(inner), Expr::LitStr { at, .. }) = (&left, &**fallback) {
+                    if **inner == Ty::view("str") {
+                        self.checked.view_fallbacks.insert(*at);
+                    }
+                }
                 if let Ty::Nullable(inner) = &left {
                     self.a_fallback_that_owns_what_the_left_side_views(
                         inner, &other, fallback, span,

@@ -40,6 +40,7 @@ pub mod net;
 pub mod num;
 pub mod rt;
 pub mod task;
+pub mod tether;
 pub mod time;
 
 /// The parser backend a generated program's grammars run on.

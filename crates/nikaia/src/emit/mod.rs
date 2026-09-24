@@ -356,6 +356,25 @@ impl Lifetimes {
         reference: "&'static ",
         params: "'static",
     };
+    /// **The keep a tethered function is given**
+    /// ([ADR-209](../../../docs/specification/adr/adr-209.md) D2): its views
+    /// point into the caller's keep, and live as long as it.
+    const KEPT: Lifetimes = Lifetimes {
+        reference: "&'k ",
+        params: "'k",
+    };
+    /// The same inside an `impl` that already names `'a`: the subject's buffer
+    /// and the keep are one lifetime, because the subject is what keeps.
+    const KEPT_BY_THE_SUBJECT: Lifetimes = Lifetimes {
+        reference: "&'a ",
+        params: "'a",
+    };
+    /// A tethered value read through its handle, for as long as it is borrowed
+    /// (ADR-209 D3).
+    const SHORTENED: Lifetimes = Lifetimes {
+        reference: "&'s ",
+        params: "'s",
+    };
 
     /// The same, with the reference named: a view **of the input buffer** and
     /// not of whatever the caller lends for the call.
@@ -1071,6 +1090,28 @@ struct Emitter<'p> {
     /// `String::from("x")` for one that is; the checker decides, for
     /// `array_literals`' reason.
     owned_texts: std::collections::BTreeSet<usize>,
+    /// **Where each buffer lives**, per function
+    /// ([ADR-209](../../docs/specification/adr/adr-209.md)): the keep plan,
+    /// computed once over the unit against the package's ledger.
+    keep_plans: HashMap<String, crate::contracts::keep::Plan>,
+    /// `check::Checked::view_fallbacks`.
+    view_fallbacks: std::collections::BTreeSet<usize>,
+    /// The statements whose keeps are already declared, because a `throws`
+    /// body declares them before its `Ok(` rather than inside it.
+    preluded: std::cell::RefCell<HashSet<usize>>,
+    /// The handle types a task's tethered values are packed in (D3), written
+    /// once at the end of the unit.
+    wrappers: std::cell::RefCell<Vec<String>>,
+    /// Writing a keeper whose text views are held one by one (D4): `ref
+    /// String` is `Held` while this is set.
+    holding: std::cell::RefCell<bool>,
+    /// The arguments of the call being written that are held (D4): argument
+    /// position and the buffer statement whose keep holds it.
+    hold_args: std::cell::RefCell<Option<std::collections::BTreeMap<usize, usize>>>,
+    /// The function being written, for the keep plan: a lambda's body is
+    /// written with a flow of its own (`Flow::PLAIN`), and its statements are
+    /// still the function's to the plan that walked them.
+    keep_function: std::cell::RefCell<String>,
     /// The method calls that can fail, by the byte their statement starts at
     /// and the method's name (ADR-023 D8).
     ///
@@ -2100,6 +2141,16 @@ impl<'p> Emitter<'p> {
             viewed_numbers: propagation.viewed_numbers,
             array_literals: propagation.array_literals,
             owned_texts: propagation.owned_texts,
+            keep_plans: crate::contracts::keep::plans(parsed, &own_contracts, &library)
+                .into_iter()
+                .map(|plan| (plan.key.clone(), plan))
+                .collect(),
+            preluded: std::cell::RefCell::new(HashSet::new()),
+            view_fallbacks: propagation.view_fallbacks,
+            wrappers: std::cell::RefCell::new(Vec::new()),
+            holding: std::cell::RefCell::new(false),
+            hold_args: std::cell::RefCell::new(None),
+            keep_function: std::cell::RefCell::new(String::new()),
             comptime_values: propagation.comptime_values,
             with_types: propagation.with_types,
             unrolled: propagation.unrolled,
@@ -2319,6 +2370,7 @@ impl<'p> Emitter<'p> {
             out.from(&item.span, |out| self.item(out, &item.node, &item.span))?;
             out.push("\n");
         }
+        self.tether_wrappers(&mut out);
         self.entry_point(&mut out);
         Ok(Lowered {
             rust: out.buf,
@@ -2415,6 +2467,7 @@ impl<'p> Emitter<'p> {
             out.from(&item.span, |out| self.item(out, &item.node, &item.span))?;
             out.push("\n");
         }
+        self.tether_wrappers(&mut out);
         self.entry_point(&mut out);
         if self.user_main().is_some() {
             // **An empty table, and the reason it is empty.** `fn main` installs
@@ -3416,9 +3469,18 @@ impl<'p> Emitter<'p> {
         // A parameter the subject's buffer covers is written as a view of that
         // buffer, so the signature says what the body does with it; everything
         // else keeps the position's own spelling.
-        let how = |name: Symbol| match carries_input.is_some_and(|set| set.contains(&name)) {
-            true => lifetimes.of_the_input(),
-            false => lifetimes,
+        // **A function that takes a keep** (ADR-209 D2) writes the positions
+        // its views leave through with the keep's lifetime, so `rustc` holds
+        // the body to exactly what the plan says.
+        let kept = self.kept_lifetimes(&key, lifetimes);
+        let how = |name: Symbol| {
+            if let Some(kept) = kept.filter(|_| self.tethered_position(&key, self.text(name))) {
+                return kept;
+            }
+            match carries_input.is_some_and(|set| set.contains(&name)) {
+                true => lifetimes.of_the_input(),
+                false => lifetimes,
+            }
         };
         // **A parameter the body does not keep is a view**
         // ([ADR-094](../../docs/specification/adr/adr-094.md) D2). The `&` is
@@ -3556,6 +3618,14 @@ impl<'p> Emitter<'p> {
             params.push(format!("{}: {DSL_PARAMETER}", self.text(*name)));
             DSL_PARAMETER.to_string()
         });
+        // **The keep, last**, because every call writes it last - after the
+        // options and the spread, which is the only order there is.
+        if let Some(kept) = kept {
+            params.push(format!(
+                "{KEEP_PARAM}: {}nikaia_std::tether::Keep",
+                kept.reference
+            ));
+        }
 
         // **`fn hand[T](x: T)` is `fn hand<T>(x: T)`**
         // ([ADR-074](../../docs/specification/adr/adr-074.md) D3). The `[T]` was
@@ -3584,6 +3654,10 @@ impl<'p> Emitter<'p> {
                 .chain(dsl.clone())
                 .chain(open)
                 .collect(),
+        };
+        let declared: Vec<String> = match kept {
+            Some(Lifetimes::KEPT) => std::iter::once("'k".to_string()).chain(declared).collect(),
+            _ => declared,
         };
 
         // Kap 7.1: `throws` becomes a `Result` in the emitted Rust, over
@@ -3650,9 +3724,14 @@ impl<'p> Emitter<'p> {
                 let widens = lifetimes == Lifetimes::ELIDED
                     && self.carries_a_view(ty)
                     && !borrows_from_something;
-                let result = match widens {
-                    true => Lifetimes::STATIC,
-                    false => lifetimes,
+                let result = match (widens, kept) {
+                    (_, Some(kept))
+                        if self.tethered_position(&key, crate::contracts::tether::RESULT) =>
+                    {
+                        kept
+                    }
+                    (true, _) => Lifetimes::STATIC,
+                    (false, _) => lifetimes,
                 };
                 self.ty_counted(ty, result, self.count_at(&key, SHARED_RESULT))
             }
@@ -3783,6 +3862,7 @@ impl<'p> Emitter<'p> {
             key,
             channel,
         } = declared;
+        *self.keep_function.borrow_mut() = key.to_string();
         let flow = Flow {
             changed: &[],
             awaited,
@@ -3872,6 +3952,10 @@ impl<'p> Emitter<'p> {
             // other tail keeps `Ok(x)`, because a line the generated file does
             // not need is a line a reader has to skip (ADR-011 D2).
             let binds = wrap && self.a_tail_that_enters_a_grammar(&stmt.node);
+            // **The keeps a statement needs are declared before it**
+            // (ADR-209), and before the `Ok(` a tail is wrapped in: a `let`
+            // inside it would not be Rust.
+            self.write_keep_prelude(out, key, stmt.span.start, depth + 1);
             out.from(&stmt.span, |out| {
                 match (wrap, binds) {
                     (true, true) => out.push(&format!("let {ARM_VALUE} = ")),
@@ -4726,6 +4810,11 @@ impl<'p> Emitter<'p> {
         // and a `&String` at a call is a borrow of a borrow at the first one
         // that does not coerce.
         if ty.is_view && self.text(ty.name) == "String" && ty.generics.is_empty() {
+            // **Held, where the keeper drops entries** (ADR-209 D4): a view
+            // that carries its own handle on the buffer it points into.
+            if *self.holding.borrow() {
+                return "nikaia_std::tether::Held".to_string();
+            }
             out.push_str("str");
             return out;
         }
@@ -5018,6 +5107,7 @@ impl<'p> Emitter<'p> {
         // expression, a nested block, a `catch` handler - sees the statement it
         // is actually in.
         let flow = flow.at(span.start);
+        self.write_keep_prelude(out, flow.function, span.start, depth);
         match stmt {
             Stmt::Let {
                 names,
@@ -5054,10 +5144,54 @@ impl<'p> Emitter<'p> {
                 // by the name being bound (ADR-064 D2), and an expression has
                 // none of its own.
                 let flow = flow.binding(bound);
+                let plan = self.keep_plan(flow.function);
+                // **A buffer whose views outlive this scope goes into a keep**
+                // (ADR-209 D1), and the binding is where it now lives.
+                let put = plan.and_then(|p| p.puts.get(&span.start)).copied();
+                // **A binding a task takes with it is packed with the task's
+                // keep** (D3), and every use of it reads through the handle.
+                let packed = plan
+                    .and_then(|p| p.tethered.get(bound))
+                    .filter(|at| **at == span.start)
+                    .is_some();
+                // **A keeper that drops entries holds each text view with its
+                // own handle** (D4): `ref String` is `Held` in its type.
+                let holding = plan.is_some_and(|p| p.element_keepers.contains(bound));
+                *self.holding.borrow_mut() = holding;
                 let annotation = match ty {
+                    Some(_) if put.is_some() || packed => String::new(),
                     Some(ty) => format!(": {}", self.ty_counted(ty, Lifetimes::ELIDED, count)),
                     None => String::new(),
                 };
+                *self.holding.borrow_mut() = false;
+                if packed {
+                    let Some(held) = self.tethered_type(ty.as_ref(), value) else {
+                        return Err(refused_at!(
+                            span.start,
+                            "`{bound}` goes to a task and keeps a buffer alive, and its type is \
+                             not written: write it, `let {bound}: … = …`, so the handle it \
+                             travels in can be declared (ADR-209 D3)"
+                        ));
+                    };
+                    let wrapper = self.tether_wrapper(&held);
+                    out.push(&format!(
+                        "let {mutable}{} = {wrapper} {{ value: ",
+                        escaped(bound)
+                    ));
+                    self.expr(out, value, depth, flow)?;
+                    out.push(&format!(", _keep: std::sync::Arc::clone(&{KEEP_TASK}) }};"));
+                    return Ok(());
+                }
+                if let Some(keep) = put {
+                    out.push(&format!(
+                        "let {mutable}{} = {}.put(",
+                        escaped(bound),
+                        Self::keep_expr(keep, false)
+                    ));
+                    self.expr(out, value, depth, flow)?;
+                    out.push(");");
+                    return Ok(());
+                }
                 // **The annotation is no longer the constructor**
                 // ([ADR-064](../../../docs/specification/adr/adr-064.md) D2). What
                 // used to be allocated here, out of an answer the checker had to
@@ -5573,7 +5707,17 @@ impl<'p> Emitter<'p> {
             Expr::Variable(name) if self.constructs_by_name(self.text(*name)) => {
                 out.push(&self.path(&[self.text(*name), "new"]))
             }
-            Expr::Variable(name) => out.push(&self.name(*name)),
+            Expr::Variable(name) => {
+                out.push(&self.name(*name));
+                // **A binding packed for a task is read through its handle**
+                // (ADR-209 D3), for as long as the read borrows it.
+                let packed = self
+                    .keep_plan(flow.function)
+                    .is_some_and(|p| p.tethered.contains_key(self.text(*name)));
+                if packed {
+                    out.push(".get()");
+                }
+            }
             // ADR-017: the template is compiled where it is written. What comes
             // out is the string building a hand-written renderer would do, with
             // `html::Render` at every hole - which is what makes the escaping a
@@ -6293,7 +6437,10 @@ impl<'p> Emitter<'p> {
                 // fallback is still written as the value it stands for, so the
                 // two sides do not have the same type and the language below is
                 // what joins them.
-                let bare = a_number(fallback);
+                // **And except for text where the left side is a view of text**
+                // (ADR-209 §6): the literal already is one.
+                let bare = a_number(fallback)
+                    || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(at));
                 out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;
                 out.push(", || ");
@@ -6935,6 +7082,11 @@ impl<'p> Emitter<'p> {
         if let Expr::Variable(name) = func {
             self.dsl_parameters(out, self.text(*name), args.len(), config, depth, flow)?;
         }
+        // **The keep, last** (ADR-209 D2): where the callee's views leave it,
+        // the caller says where they live.
+        let keep = self
+            .keeping_callee(func)
+            .and_then(|key| self.keep_argument(flow, &key));
 
         // Kap 5.1: the language below has no named arguments and no defaults,
         // so the options become positional here, in the order the *declaration*
@@ -6961,6 +7113,12 @@ impl<'p> Emitter<'p> {
                     None => out.push(&option.default),
                 }
             }
+        }
+        if let Some(keep) = keep {
+            if !args.is_empty() || !config.is_empty() {
+                out.push(", ");
+            }
+            out.push(&keep);
         }
 
         out.push(")");
@@ -8627,7 +8785,31 @@ impl<'p> Emitter<'p> {
         }
         out.push("(");
         let takes = self.takes_a_handle(self.text(method));
-        self.args(out, self.text(method), args, &takes, depth, flow)?;
+        // **Views put into a keeper that drops entries are held** (ADR-209 D4).
+        let held = receiver
+            .and_then(|receiver| crate::contracts::keep::root_of(self.parsed, receiver))
+            .and_then(|root| {
+                self.keep_plan(flow.function)
+                    .and_then(|p| p.holds.get(&(flow.statement, root)))
+                    .cloned()
+            });
+        *self.hold_args.borrow_mut() = held;
+        let written_args = self.args(out, self.text(method), args, &takes, depth, flow);
+        *self.hold_args.borrow_mut() = None;
+        written_args?;
+        // **And a method that takes a keep is given one** (D2).
+        let keeping = crate::contracts::keep::keeping_method_key(
+            &self.own_contracts,
+            flow.function.rsplit_once("::").map(|(t, _)| t),
+            matches!(receiver, Some(Expr::Variable(n)) if self.text(*n) == "self"),
+            self.text(method),
+        );
+        if let Some(keep) = keeping.and_then(|key| self.keep_argument(flow, &key)) {
+            if !args.is_empty() {
+                out.push(", ");
+            }
+            out.push(&keep);
+        }
         match witness {
             // The witness is an **argument** of the door and not an option of
             // it, so it is written where the signature puts it — after the
@@ -9038,7 +9220,25 @@ impl<'p> Emitter<'p> {
                         out.push(")");
                     }
                 }
-                _ => self.expr(out, arg, depth, inside)?,
+                _ => {
+                    let held = self
+                        .hold_args
+                        .borrow()
+                        .as_ref()
+                        .and_then(|h| h.get(&i).copied());
+                    match held {
+                        // SAFETY: the view points into the buffer this keep
+                        // holds - the plan followed it there (ADR-209 D4).
+                        Some(buffer) => {
+                            out.push(&format!(
+                                "unsafe {{ nikaia_std::tether::hold(&__keep_{buffer}, "
+                            ));
+                            self.expr(out, arg, depth, inside)?;
+                            out.push(") }");
+                        }
+                        None => self.expr(out, arg, depth, inside)?,
+                    }
+                }
             }
             // `.as_ptr()` and `.as_mut_ptr()`, which a `Vec`, an `Array` and
             // text all answer - so one call writes the address of whatever a
@@ -10301,4 +10501,210 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
     }
 
     Ok((format, holes))
+}
+
+// ---------------------------------------------------------------------------
+// The tether: where a buffer lives, written out
+// ([ADR-209](../../docs/specification/adr/adr-209.md))
+// ---------------------------------------------------------------------------
+
+/// The name of the keep a function was given.
+const KEEP_PARAM: &str = "__keep";
+/// The keep declared first in a function's body (D2).
+const KEEP_FRAME: &str = "__keep_frame";
+/// The keep a function's tasks share (D3).
+const KEEP_TASK: &str = "__keep_task";
+
+impl Emitter<'_> {
+    /// The keep plan of the function being written.
+    fn keep_plan(&self, function: &str) -> Option<&crate::contracts::keep::Plan> {
+        match self.keep_plans.get(function) {
+            Some(plan) => Some(plan),
+            None => self.keep_plans.get(self.keep_function.borrow().as_str()),
+        }
+    }
+
+    /// How a keep is reached where a buffer is put into it or a call is given
+    /// it.
+    fn keep_expr(keep: crate::contracts::keep::KeepAt, lent: bool) -> String {
+        use crate::contracts::keep::KeepAt;
+        match keep {
+            KeepAt::Param => KEEP_PARAM.to_string(),
+            KeepAt::Frame => match lent {
+                true => format!("&{KEEP_FRAME}"),
+                false => KEEP_FRAME.to_string(),
+            },
+            KeepAt::Local(at) | KeepAt::Element(at) => match lent {
+                true => format!("&__keep_{at}"),
+                false => format!("__keep_{at}"),
+            },
+            // SAFETY is the function's own shape: `__keep_task` is declared
+            // first, so it outlives every local derived from it, and whatever
+            // leaves with a task is packed beside a clone of it (D3).
+            KeepAt::Task => format!("unsafe {{ nikaia_std::tether::forever(&{KEEP_TASK}) }}"),
+        }
+    }
+
+    /// The keeps declared before one statement: the function's own, before
+    /// its first statement, and one per call or buffer that needs a keep of
+    /// its own.
+    fn keep_prelude(&self, function: &str, at: usize) -> Option<String> {
+        use crate::contracts::keep::KeepAt;
+        let plan = self.keep_plan(function)?;
+        let mut lines = Vec::new();
+        if plan.first == Some(at) {
+            if plan.frame_keep {
+                lines.push(format!(
+                    "let {KEEP_FRAME} = nikaia_std::tether::Keep::new();"
+                ));
+            }
+            if plan.task_keep {
+                lines.push(format!(
+                    "let {KEEP_TASK} = std::sync::Arc::new(nikaia_std::tether::Keep::new());"
+                ));
+            }
+        }
+        if plan.local_keeps.contains(&at) {
+            lines.push(format!(
+                "let __keep_{at} = nikaia_std::tether::Keep::new();"
+            ));
+        }
+        let element = plan
+            .puts
+            .values()
+            .chain(plan.calls.values())
+            .any(|keep| *keep == KeepAt::Element(at));
+        if element {
+            lines.push(format!(
+                "let __keep_{at} = std::sync::Arc::new(nikaia_std::tether::Keep::new());"
+            ));
+        }
+        (!lines.is_empty()).then(|| lines.join(" "))
+    }
+
+    /// Declare the keeps a statement needs, once.
+    fn write_keep_prelude(&self, out: &mut Out, function: &str, at: usize, depth: usize) {
+        if self.preluded.borrow().contains(&at) {
+            return;
+        }
+        if let Some(prelude) = self.keep_prelude(function, at) {
+            self.preluded.borrow_mut().insert(at);
+            out.push(&prelude);
+            out.push("\n");
+            out.push(&"    ".repeat(depth));
+        }
+    }
+
+    /// The keep a call to `callee` is given in this statement, where the
+    /// callee takes one.
+    fn keep_argument(&self, flow: Flow<'_>, callee: &str) -> Option<String> {
+        let plan = self.keep_plan(flow.function)?;
+        let keep = plan
+            .calls
+            .get(&(flow.statement, callee.to_string()))
+            .copied()?;
+        Some(Self::keep_expr(keep, true))
+    }
+
+    /// The ledger key a written callee resolves to, the way the keep plan
+    /// resolved it.
+    fn keeping_callee(&self, func: &Expr) -> Option<String> {
+        let name = crate::contracts::keep::callee_name(self.parsed, func)?;
+        let (key, contract) = self
+            .own_contracts
+            .lookup(&name)
+            .or_else(|| self.library.lookup(&name))?;
+        crate::contracts::keep::takes_a_keep(contract).then_some(key)
+    }
+
+    /// The lifetimes a function that takes a keep writes its tethered
+    /// positions with, where it takes one.
+    fn kept_lifetimes(&self, key: &str, lifetimes: Lifetimes) -> Option<Lifetimes> {
+        let contract = self.own_contracts.functions.get(key)?;
+        if !crate::contracts::keep::takes_a_keep(contract) {
+            return None;
+        }
+        Some(match lifetimes.params {
+            "'a" => Lifetimes::KEPT_BY_THE_SUBJECT,
+            _ => Lifetimes::KEPT,
+        })
+    }
+
+    /// Whether this position of a function is one its views leave through.
+    fn tethered_position(&self, key: &str, position: &str) -> bool {
+        self.own_contracts.functions.get(key).is_some_and(|c| {
+            c.views.iter().any(|h| {
+                h.position == position && h.state == crate::contracts::tether::State::Tethered
+            })
+        })
+    }
+
+    /// The type a task's tethered binding holds, as the source wrote it: the
+    /// `let`'s annotation, or the declared result of the function it calls.
+    fn tethered_type(&self, ty: Option<&Type>, value: &Expr) -> Option<Type> {
+        if let Some(ty) = ty {
+            return Some(ty.clone());
+        }
+        let call = match value {
+            Expr::Try(inner) => inner.as_ref(),
+            other => other,
+        };
+        let Expr::Call { func, .. } = call else {
+            return None;
+        };
+        let Expr::Variable(name) = func.as_ref() else {
+            return None;
+        };
+        let wanted = self.text(*name);
+        self.parsed
+            .program
+            .items
+            .iter()
+            .find_map(|item| match &item.node {
+                Item::Fn {
+                    name: Some(n),
+                    ret_type: Some(ret),
+                    ..
+                } if self.text(*n) == wanted => Some(ret.clone()),
+                _ => None,
+            })
+    }
+
+    /// The handle type one tethered binding is packed in (D3), declared once
+    /// per type: the value with its views stretched to `'static`, the keep
+    /// beside it, and `get` shortening them again for as long as it is
+    /// borrowed - which `rustc` only accepts where the type is covariant, so
+    /// the shortening is checked rather than trusted.
+    fn tether_wrapper(&self, ty: &Type) -> String {
+        let stretched = self.ty(ty, Lifetimes::STATIC);
+        let shortened = self.ty(ty, Lifetimes::SHORTENED);
+        let mut wrappers = self.wrappers.borrow_mut();
+        let position = wrappers
+            .iter()
+            .position(|w| w.contains(&format!("value: {stretched},")));
+        let n = match position {
+            Some(n) => n,
+            None => {
+                let n = wrappers.len();
+                wrappers.push(format!(
+                    "/// A value that carries the keep its views point into \
+                     (ADR-209 D3): its views are `'static` only while it is\n\
+                     /// packed, and `get` hands them out for as long as it is borrowed.\n\
+                     #[allow(non_camel_case_types)]\n\
+                     struct __Tethered{n} {{\n    value: {stretched},\n    _keep: std::sync::Arc<nikaia_std::tether::Keep>,\n}}\n\n\
+                     impl __Tethered{n} {{\n    fn get<'s>(&'s self) -> &'s {shortened} {{\n        &self.value\n    }}\n}}\n"
+                ));
+                n
+            }
+        };
+        format!("__Tethered{n}")
+    }
+
+    /// The handle types, at the end of the unit.
+    fn tether_wrappers(&self, out: &mut Out) {
+        for wrapper in self.wrappers.borrow().iter() {
+            out.push("\n");
+            out.push(wrapper);
+        }
+    }
 }

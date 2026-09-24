@@ -25,6 +25,7 @@
 // compiler that infers more will write a different name there, and `--locked`
 // will say so rather than quietly accepting the weaker answer.
 
+pub mod keep;
 pub mod keeps;
 pub mod locks;
 pub mod order;
