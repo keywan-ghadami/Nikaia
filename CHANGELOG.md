@@ -4,6 +4,52 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.184] — 2026-09-24
+
+**A view of text is asked for a copy only where something keeps it — and the
+refusal says why** — [ADR-208](docs/specification/adr/adr-208.md). The owner's
+point after 0.0.183: a language that hides ownership this thoroughly owes the
+reason at the one place it does not, or the reader asks why a compiler that knows
+exactly what to write does not write it.
+
+### A correct program that was refused
+
+`fn relay(city: ref String) { show(city) }` for a `show(s: String)` that only
+reads asked for `city.to_owned()` — a copy nothing would keep, since the parameter
+is a `&str` below (ADR-207 D3). **D1:** a view handed to a `String` the callee
+only reads is lent as it is, for a function this compiler declares; a `ref` the
+source writes there is still `NK1137`.
+
+### The refusal that stays, explained
+
+Where something keeps the text — a field, an annotated `let`, a `return` or a
+body's last value, an argument the callee keeps — `NK1102`/`NK1103`/`NK1104`/
+`NK1106` now say whose text it is, what keeps it, and what a copy made on its own
+would cost (ADR-005 §3), in three cases:
+
+```text
+error[NK1106]: `Reading.name` is `String`, and this is `ref String`
+     = `city` is declared `ref String`: the text belongs to the caller, who still has it
+     = `Reading` keeps its `name` after this line, so it needs text of its own
+     = Nikaia copies text only where the program says so: a copy costs as much as the
+       text is long, and one made on its own would run every time this line does, with
+       nothing in the source to show it (ADR-005 §3)
+     help: declare `city: String`, and the caller hands its text over instead of
+       lending it - or write `city.to_owned()` to copy it here
+```
+
+A **name bound to a literal** gets the honest *not yet*: written in place the
+literal would be built on that line (ADR-207); through a name it is not, because
+that would change the type the name was declared with — and the help names the
+two spellings that work. **Any other view** says it points into text something
+else owns.
+
+### In the tree
+
+`a_view_kept` in the checker, read by every keeping position; a binding remembers
+the literal it was bound to. Two new tests in `tests/text_literals.rs` — D1 run
+end to end, each explanation checked. Part III C.4's example is the new message.
+
 ## [0.0.183] — 2026-09-24
 
 **A text literal is a `String` where one is wanted** —

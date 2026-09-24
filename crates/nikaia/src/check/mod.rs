@@ -1798,6 +1798,12 @@ struct Local {
     /// question — *which integer type did a declaration pin* — that this does
     /// not answer.
     built: Option<build_time::Value>,
+    /// **The text literal a `let` bound this name to**, where it did — for the
+    /// one sentence that has to say so: `let s = "x"` and then `Person { name:
+    /// s }` is refused, and a reader asks why the compiler that builds `"x"`
+    /// into a `String` on that line does not do the same through `s`
+    /// ([ADR-208](../../docs/specification/adr/adr-208.md) D2).
+    literal: Option<String>,
     /// Where the `let` stands, for a binding whose value was an **empty list**
     /// and whose element type nothing has said yet
     /// ([ADR-135](../../docs/specification/adr/adr-135.md) D2).
@@ -1845,6 +1851,7 @@ impl Local {
             constant: local.constant,
             lent: local.lent,
             built: local.built.clone(),
+            literal: local.literal.clone(),
             immutable: local.immutable.clone(),
             changing: local.changing,
             empty_list: local.empty_list,
@@ -1853,6 +1860,7 @@ impl Local {
 
     fn free(name: String, ty: Ty) -> Self {
         Local {
+            literal: None,
             name,
             ty,
             constant: None,
@@ -3279,6 +3287,7 @@ impl<'a> Checker<'a> {
             let name = self.parsed.text(arg.name).to_string();
             self.nameable(&name, &arg.span, "a parameter");
             frame.push(Local {
+                literal: None,
                 name,
                 ty: self.declared(&arg.ty, &arg.span).erase(&parameters),
                 constant: None,
@@ -3361,9 +3370,21 @@ impl<'a> Checker<'a> {
                 }
                 _ => tail,
             };
-            self.expect(&tail, expected, span, "returns", |found, want| {
-                format!("this function hands back `{found}`, and it declares `{want}`")
-            });
+            let value = match body.stmts.last().map(|s| &s.node) {
+                Some(Stmt::Expr(value)) => Some(value),
+                _ => None,
+            };
+            self.expect_kept(
+                &tail,
+                expected,
+                value,
+                "the function hands it to its caller, who keeps it after this call has ended",
+                span,
+                "returns",
+                |found, want| {
+                    format!("this function hands back `{found}`, and it declares `{want}`")
+                },
+            );
         }
 
         // **`NK2101`, once the whole body has been seen.** The question is what
@@ -4297,6 +4318,7 @@ impl<'a> Checker<'a> {
     ) -> Local {
         let asked = self.at_a_write_door && !mutable.contains(&name);
         Local {
+            literal: None,
             name: self.parsed.text(name).to_string(),
             ty,
             constant: None,
@@ -5419,9 +5441,15 @@ impl<'a> Checker<'a> {
                         let found = self
                             .literal_by_use(&found, &want, value, span)
                             .unwrap_or(found);
-                        self.expect(&found, &want, span.clone(), "let", |found, want| {
-                            format!("this is `{found}`, and the `let` says `{want}`")
-                        });
+                        self.expect_kept(
+                            &found,
+                            &want,
+                            Some(value),
+                            "the `let` says `String`, which is text this binding owns",
+                            span.clone(),
+                            "let",
+                            |found, want| format!("this is `{found}`, and the `let` says `{want}`"),
+                        );
                         self.a_number_read_through_a_lent_binding(&want, value, span);
                         want
                     }
@@ -5478,6 +5506,10 @@ impl<'a> Checker<'a> {
                     // is a `comptime`'s, which is the one that *must* fold.
                     built: None,
                     empty_list: pending,
+                    literal: match (ty, value) {
+                        (None, Expr::LitStr { text, .. }) => Some(text.clone()),
+                        _ => None,
+                    },
                     // **Part I 2.1**: without the word, a change to this name
                     // is `NK1139`. The span is the statement's, which is the
                     // `let` itself — a binding has no narrower one.
@@ -6577,9 +6609,12 @@ impl<'a> Checker<'a> {
                                     .insert(value.map(argument_shape).unwrap_or_default(), how);
                                 continue;
                             }
-                            self.expect(
+                            let keeper = format!("`{owner}` keeps its `{field}` after this line");
+                            self.expect_kept(
                                 &found,
                                 &want,
+                                value,
+                                &keeper,
                                 span.clone(),
                                 "field",
                                 move |found, want| {
@@ -8166,6 +8201,31 @@ impl<'a> Checker<'a> {
                     .or_else(|| self.text_literal(want, given, kept))
             });
             let found = array.as_ref().unwrap_or(found);
+            // **A view handed to a `String` the callee only reads is lent as it
+            // is** ([ADR-208](../../docs/specification/adr/adr-208.md) D1). The
+            // parameter is a `&str` below (ADR-207 D3), so the view already is
+            // what the callee takes: asking for `.to_owned()` here asked for a
+            // copy nothing would keep. Only for a function this compiler
+            // declares, because only there is the `&str` its own writing.
+            //
+            // **Not a `ref` the source wrote**, which is `NK1137`'s below: the
+            // reference at a lending call is the compiler's, and a view that
+            // arrives as a view is the case this is for.
+            let wrote_ref = matches!(
+                given.get(at),
+                Some(Expr::Unary {
+                    op: crate::ast::UnaryOp::Ref,
+                    ..
+                })
+            );
+            if !kept
+                && !wrote_ref
+                && *found == Ty::view("str")
+                && *want == Ty::named("String")
+                && self.own.functions.contains_key(key)
+            {
+                continue;
+            }
             // **A `usize` at the C boundary takes this language's own integer**
             // ([ADR-147](../../docs/specification/adr/adr-147.md) D2,
             // [ADR-048](../../docs/specification/adr/adr-048.md) D1). A length
@@ -8248,6 +8308,15 @@ impl<'a> Checker<'a> {
                 });
                 continue;
             }
+            let (why, help) = match self.a_view_kept(
+                found,
+                want,
+                given.get(at),
+                &format!("`{key}` keeps its `{name}` after the call returns"),
+            ) {
+                Some((why, help)) => (why, help),
+                None => (Vec::new(), convert(found, want)),
+            };
             self.checked.findings.push(Finding {
                 severity: Severity::Error,
                 span: span.clone(),
@@ -8257,8 +8326,10 @@ impl<'a> Checker<'a> {
                     want.text(),
                     found.text()
                 ),
-                notes: vec![format!("`{key}{}`", signature.text())],
-                help: Some(convert(found, want)),
+                notes: std::iter::once(format!("`{key}{}`", signature.text()))
+                    .chain(why)
+                    .collect(),
+                help: Some(help),
             });
         }
 
@@ -8303,6 +8374,126 @@ impl<'a> Checker<'a> {
         };
         let bound = bindings(contract, found);
         ty::substitute(result, &bound).fits(want)
+    }
+
+    /// [`Checker::expect`], for a position that has the value in hand, so a
+    /// view of text kept where text of its own is wanted can say **why** here
+    /// ([ADR-208](../../docs/specification/adr/adr-208.md) D2). `keeper` is the
+    /// position's own words for what keeps it.
+    #[allow(clippy::too_many_arguments)]
+    fn expect_kept(
+        &mut self,
+        found: &Ty,
+        want: &Ty,
+        value: Option<&Expr>,
+        keeper: &str,
+        span: Span,
+        what: &str,
+        message: impl FnOnce(&str, &str) -> String,
+    ) {
+        let before = self.checked.findings.len();
+        self.expect(found, want, span, what, message);
+        if self.checked.findings.len() == before {
+            return;
+        }
+        if let Some((why, help)) = self.a_view_kept(found, want, value, keeper) {
+            if let Some(finding) = self.checked.findings.last_mut() {
+                finding.notes.extend(why);
+                finding.help = Some(help);
+            }
+        }
+    }
+
+    /// **Why a view of text needs `.to_owned()` here, said for the case it is**
+    /// ([ADR-208](../../docs/specification/adr/adr-208.md) D2).
+    ///
+    /// A language that hides ownership owes the reader the reason at the one
+    /// place it does not: otherwise the question is *the compiler knows exactly
+    /// what to write, so why is it asking me?* Three answers, because there
+    /// are three situations and one sentence for all of them fits none:
+    ///
+    /// * **a name bound to a literal** — the compiler *would* build the literal
+    ///   into a `String` written here, and says so, with the two ways to write
+    ///   it that need nothing;
+    /// * **a parameter declared `ref String`** — the text is the caller's, and
+    ///   the better answer is usually to let the caller hand it over;
+    /// * **any other view** — it points into something that stays where it is.
+    ///
+    /// And the reason itself, once: a copy costs as much as the text is long,
+    /// and one the compiler made on its own would happen on every run with no
+    /// line in the program to show for it ([ADR-005](../../docs/specification/adr/adr-005.md) §3).
+    ///
+    /// `None` where this is not that case, and the caller keeps its own words.
+    fn a_view_kept(
+        &self,
+        found: &Ty,
+        want: &Ty,
+        value: Option<&Expr>,
+        keeper: &str,
+    ) -> Option<(Vec<String>, String)> {
+        if *found != Ty::view("str") || *want != Ty::named("String") {
+            return None;
+        }
+        let cost = "Nikaia copies text only where the program says so: a copy costs as much \
+                    as the text is long, and one made on its own would run every time this \
+                    line does, with nothing in the source to show it (ADR-005 §3)"
+            .to_string();
+        let named = match value {
+            Some(Expr::Variable(name)) => Some(self.parsed.text(*name).to_string()),
+            _ => None,
+        };
+        let binding = named.as_deref().and_then(|name| self.binding(name));
+        if let (Some(name), Some(literal)) = (&named, binding.and_then(|b| b.literal.clone())) {
+            return Some((
+                vec![
+                    format!(
+                        "`{name}` is bound to the literal \"{literal}\", and a name bound to a \
+                         literal is a view of it"
+                    ),
+                    format!(
+                        "{keeper}, so it needs text of its own. Written here, the literal would \
+                         be built into one on this line (ADR-207); through a name it is not, \
+                         yet - that would change the type `{name}` was declared with, on a line \
+                         above this one"
+                    ),
+                ],
+                format!(
+                    "write \"{literal}\" here, or declare `let {name}: String = \"{literal}\"` \
+                     - either builds the text once, as the literal would"
+                ),
+            ));
+        }
+        let parameter = binding.is_some_and(|b| {
+            b.immutable
+                .as_ref()
+                .is_some_and(|i| i.kind == Kind::Parameter)
+        });
+        if let (Some(name), true) = (&named, parameter) {
+            return Some((
+                vec![
+                    format!(
+                        "`{name}` is declared `ref String`: the text belongs to the caller, \
+                         who still has it"
+                    ),
+                    format!("{keeper}, so it needs text of its own"),
+                    cost,
+                ],
+                format!(
+                    "declare `{name}: String`, and the caller hands its text over instead of \
+                     lending it - or write `{name}.to_owned()` to copy it here"
+                ),
+            ));
+        }
+        Some((
+            vec![
+                "this is a view: it points into text something else owns, and that text \
+                 stays where it is"
+                    .to_string(),
+                format!("{keeper}, so it needs text of its own"),
+                cost,
+            ],
+            "write `.to_owned()` to copy it here".to_string(),
+        ))
     }
 
     /// Report only when both sides are known and they disagree.
@@ -12799,6 +12990,7 @@ impl<'a> Checker<'a> {
     /// (ADR-043 D5). Only [`Stmt::Let`] ever passes anything but `None`.
     fn bind_with(&mut self, name: String, ty: Ty, constant: Option<i128>) {
         self.bind_local(Local {
+            literal: None,
             name,
             ty,
             constant,
@@ -13874,6 +14066,7 @@ impl<'a> Checker<'a> {
         // the next constant that read it was `NK1127` although the one before
         // it had just been computed.
         self.bind_local(Local {
+            literal: None,
             name: bound,
             ty: held,
             lent: false,
@@ -13976,9 +14169,15 @@ impl<'a> Checker<'a> {
                 .literal_by_use(&found, &expected, value, span)
                 .unwrap_or(found);
         }
-        self.expect(&found, &expected, span.clone(), "returns", |found, want| {
-            format!("this returns `{found}`, and the function declares `{want}`")
-        });
+        self.expect_kept(
+            &found,
+            &expected,
+            value,
+            "the function hands it to its caller, who keeps it after this call has ended",
+            span.clone(),
+            "returns",
+            |found, want| format!("this returns `{found}`, and the function declares `{want}`"),
+        );
     }
 
     /// `NK1132`: a `break` or a `continue` with no loop to act on.

@@ -802,8 +802,10 @@ half is built** by [ADR-207](specification/adr/adr-207.md) at 0.0.183 — a lite
 is a `String` wherever one is wanted, constructed where it is kept and lent as
 it is where it is read — and with it `NK1106`'s help and the literal sites in
 `examples/`. **What is not**: two types in the checker, so a *view* in a
-`String` slot (and a name bound to a literal) is refused with the `.to_owned()`
-help, and no text carries a handle.
+`String` slot where something keeps it (and a name bound to a literal) is refused
+— saying why, for the case it is ([ADR-208](specification/adr/adr-208.md) D2) — and
+no text carries a handle. A view handed to a `String` the callee only reads is
+lent as it is (D1).
 
 *What it needs, in the record's order (§5):* the checker's acceptance of a view
 with D2's refusal; text represented as `Bytes` is, with the state from the

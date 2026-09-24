@@ -183,3 +183,63 @@ fn a_literal_beside_text_of_its_own_becomes_it() {
         "2 anonymous zero ada many 5"
     );
 }
+
+/// **A view handed to a `String` the callee only reads is lent as it is**
+/// ([ADR-208](../../../docs/specification/adr/adr-208.md) D1). The parameter is
+/// a `&str` below, so `.to_owned()` there asked for a copy nothing would keep.
+#[test]
+fn a_view_handed_to_a_reader_needs_no_copy() {
+    let source = "fn show(s: String) { println(s) }\n\
+                  fn relay(city: ref String) { show(city) }\n\
+                  fn main() { relay(\"Hamburg\") }\n";
+    assert!(findings(source).is_empty(), "{:?}", findings(source));
+    let rust = lowered(source);
+    assert!(rust.contains("show(city)"), "{rust}");
+    assert_eq!(ran("relay", source).trim(), "Hamburg");
+}
+
+/// The refusal that stays says **why**, for the case it is (ADR-208 D2):
+/// whose text it is, what keeps it, and what a copy the compiler made on its
+/// own would cost.
+#[test]
+fn a_kept_view_is_explained_for_the_case_it_is() {
+    let notes = |source: &str| {
+        let found = findings(source);
+        assert_eq!(found.len(), 1, "{found:?}");
+        (
+            found[0].notes.join("\n"),
+            found[0].help.clone().unwrap_or_default(),
+        )
+    };
+
+    // A parameter: the caller's text, and the answer that copies nothing.
+    let (why, help) = notes(
+        "struct Person { name: String }\n\
+         fn make(n: ref String) -> Person { return Person { name: n } }\n",
+    );
+    assert!(why.contains("the text belongs to the caller"), "{why}");
+    assert!(why.contains("`Person` keeps its `name`"), "{why}");
+    assert!(why.contains("ADR-005"), "{why}");
+    assert!(help.contains("declare `n: String`"), "{help}");
+    assert!(help.contains("n.to_owned()"), "{help}");
+
+    // A name bound to a literal: the compiler would have built it, and says so.
+    let (why, help) = notes(
+        "struct Person { name: String }\n\
+         fn main() { let s = \"Ada\"\n let p = Person { name: s } }\n",
+    );
+    assert!(why.contains("bound to the literal \"Ada\""), "{why}");
+    assert!(why.contains("ADR-207"), "{why}");
+    assert!(help.contains("let s: String = \"Ada\""), "{help}");
+
+    // Any other view: it points into something that stays.
+    let (why, help) = notes(
+        "struct Person { name: String }\n\
+         fn make(n: ref String) -> Person { return Person { name: n.trim() } }\n",
+    );
+    assert!(
+        why.contains("points into text something else owns"),
+        "{why}"
+    );
+    assert!(help.contains(".to_owned()"), "{help}");
+}
