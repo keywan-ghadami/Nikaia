@@ -30,3 +30,11 @@ node_modules/
 /benches/nikaia.contracts
 /tests/samples/*.rs
 /tests/samples/nikaia.contracts
+
+# The documentation site, as `scripts/site-build.sh` builds it, and what the
+# build and `wrangler` leave beside it.
+/_site/
+/.jekyll-cache/
+/.sass-cache/
+/.wrangler/
+/scripts/site-jekyll/Gemfile.lock

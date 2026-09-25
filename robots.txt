@@ -1,0 +1,7 @@
+# Every page on nikaia-lang.org is public documentation, for anyone and
+# anything that reads it: search engines, and language models too
+# (`/llms.txt` lists the pages for them).
+User-agent: *
+Allow: /
+
+Sitemap: https://nikaia-lang.org/sitemap.xml

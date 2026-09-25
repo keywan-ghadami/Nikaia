@@ -1,0 +1,22 @@
+// The Worker that serves the documentation site at nikaia-lang.org.
+//
+// It has no script: `_site`, which `scripts/site-build.sh` writes, is served
+// as static assets. Cloudflare Workers Builds runs that script as its build
+// command and `npx wrangler deploy` as its deploy command.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nikaia-lang",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./_site",
+    // `/docs/foo` finds `docs/foo.html`, `/docs/` finds `docs/index.html`.
+    "html_handling": "auto-trailing-slash",
+    // The site has no 404 page of its own: a miss is a bare 404.
+    "not_found_handling": "none"
+  },
+  // The zone nikaia-lang.org must be in the same Cloudflare account. Deploying
+  // creates the DNS record and the certificate for this hostname.
+  "routes": [
+    { "pattern": "nikaia-lang.org", "custom_domain": true }
+  ]
+}

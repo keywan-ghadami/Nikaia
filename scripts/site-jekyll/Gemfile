@@ -1,0 +1,38 @@
+# The site's Ruby dependencies, for building it anywhere but GitHub Pages:
+# Cloudflare Workers Builds, or `scripts/site-build.sh` on a desk.
+#
+# These are the gems GitHub Pages builds with, at the versions it pins
+# (github-pages 232), named one by one rather than through the `github-pages`
+# gem. That gem brings `jekyll-github-metadata`, which fills `site.github` by
+# calling the GitHub API during the build: unauthenticated, from a shared
+# build machine, that is a rate limit away from a failed or a different site.
+# What the layout reads from `site.github` is written by the build script
+# instead, and the one tag it uses is in `plugins/` beside this file.
+#
+# It lives here and not at the repository root so that the GitHub Pages
+# build, which brings its own `github-pages` bundle, never sees it.
+source "https://rubygems.org"
+
+gem "jekyll", "3.10.0"
+gem "kramdown", "2.4.0"
+gem "kramdown-parser-gfm", "1.1.0"
+gem "rouge", "3.30.0"
+gem "jekyll-theme-primer", "0.6.0"
+
+# The plugins GitHub Pages turns on by default and `_config.yml` relies on,
+# and the two its theme and its `plugins:` list name.
+group :jekyll_plugins do  # loaded by `plugins:` in the build script
+  gem "jekyll-optional-front-matter", "0.3.2"
+  gem "jekyll-readme-index", "0.3.0"
+  gem "jekyll-relative-links", "0.6.1"
+  gem "jekyll-titles-from-headings", "0.5.3"
+  gem "jekyll-default-layout", "0.1.5"
+  gem "jekyll-seo-tag", "2.8.0"
+  gem "jekyll-sitemap", "1.4.0"
+end
+
+# No longer default gems from Ruby 3.4 on, and Jekyll 3 still loads them.
+gem "csv"
+gem "base64"
+gem "bigdecimal"
+gem "logger"
