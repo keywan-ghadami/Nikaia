@@ -513,9 +513,12 @@ impl Walk<'_> {
         let (parsed, parameters, ledger, library) =
             (self.parsed, self.parameters, self.ledger, self.library);
         let unresolved = self.unresolved;
+        let fields = self.fields;
         let uses = &mut *self.uses;
         super::sync::visit_stmt(parsed, stmt, &mut |expr| {
-            classify(parsed, parameters, ledger, library, unresolved, uses, expr);
+            classify(
+                parsed, parameters, fields, ledger, library, unresolved, uses, expr,
+            );
         });
 
         // And the blocks it holds. A lambda's body is one of them — it runs
@@ -630,6 +633,7 @@ impl Walk<'_> {
 fn classify(
     parsed: &Parsed,
     parameters: &BTreeSet<String>,
+    fields: &BTreeMap<String, BTreeMap<String, super::ty::Ty>>,
     ledger: &Ledger,
     library: &Ledger,
     unresolved: bool,
@@ -640,8 +644,10 @@ fn classify(
         // **A struct literal keeps every field it is given.** The struct
         // outlives the call wherever it goes, and where it goes is not this
         // expression's question.
-        Expr::StructLit { fields, .. } => {
-            for field in fields {
+        Expr::StructLit {
+            fields: written, ..
+        } => {
+            for field in written {
                 let Some(value) = field.value.as_ref() else {
                     // `P { x }` is the field and the name in one, and the name
                     // may be a parameter.
@@ -650,7 +656,7 @@ fn classify(
                     }
                     continue;
                 };
-                if let Some(name) = parameter_named(parsed, parameters, value) {
+                if let Some(name) = part_of_a_parameter(parsed, parameters, fields, value) {
                     uses.kept.insert(name);
                 }
             }
@@ -718,7 +724,7 @@ fn classify(
         Expr::Call { func, args, .. } => {
             let callee = resolve(parsed, ledger, library, func);
             for (at, arg) in args.iter().enumerate() {
-                let Some(name) = parameter_named(parsed, parameters, arg) else {
+                let Some(name) = part_of_a_parameter(parsed, parameters, fields, arg) else {
                     continue;
                 };
                 match &callee {
@@ -794,7 +800,7 @@ fn classify(
                 }
             }
             for (at, arg) in args.iter().enumerate() {
-                let Some(name) = parameter_named(parsed, parameters, arg) else {
+                let Some(name) = part_of_a_parameter(parsed, parameters, fields, arg) else {
                     continue;
                 };
                 // The receiver is the callee's first parameter, so an
@@ -843,6 +849,39 @@ fn parameter_named(parsed: &Parsed, parameters: &BTreeSet<String>, expr: &Expr) 
     };
     let name = parsed.text(*ident).to_string();
     parameters.contains(&name).then_some(name)
+}
+
+/// **The parameter an expression is, or is a moving part of**
+/// ([ADR-214](../../../docs/specification/adr/adr-214.md) D2).
+///
+/// `xs.push(p.name)` hands over the field, and a field cannot be taken out of a
+/// loan: the parameter was written `&P` and `rustc` said *cannot move out of
+/// `p.name` which is behind a shared reference*, about a file nobody wrote.
+/// So a part handed to what keeps it keeps the whole, as a part handed **back**
+/// already did ([`Walk::reached`]). A field that copies takes nothing away, a
+/// field this file cannot see the type of keeps (the column's polarity), and
+/// `self` is `NK1131`'s rather than this one's.
+fn part_of_a_parameter(
+    parsed: &Parsed,
+    parameters: &BTreeSet<String>,
+    fields: &BTreeMap<String, BTreeMap<String, super::ty::Ty>>,
+    expr: &Expr,
+) -> Option<String> {
+    let Expr::Field { base, name } = expr else {
+        return parameter_named(parsed, parameters, expr);
+    };
+    let root = match parameter_named(parsed, parameters, base) {
+        Some(root) => {
+            let copies = fields
+                .get(&root)
+                .and_then(|fields| fields.get(parsed.text(*name)))
+                .is_some_and(|ty| !moves(ty));
+            (!copies).then_some(root)?
+        }
+        // A deeper part: its type is not in the table, so it keeps.
+        None => part_of_a_parameter(parsed, parameters, fields, base)?,
+    };
+    (root != "self").then_some(root)
 }
 
 /// The ledger key a plain call's callee resolves to, if any names it.

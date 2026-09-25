@@ -438,3 +438,18 @@ fn the_arms_of_one_choice_do_not_take_from_each_other() {
         ["NK2702"]
     );
 }
+
+/// **Two walks in one statement** are one after the other (ADR-214 D1).
+#[test]
+fn two_walks_in_one_statement_are_refused() {
+    assert_eq!(
+        codes(
+            "fn main() {\n\
+             \x20   let xs = [1, 2]\n\
+             \x20   let s = xs.iter()\n\
+             \x20   println(f\"{s.count() + s.count()}\")\n\
+             }\n"
+        ),
+        ["NK2702"]
+    );
+}

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.189 (Draft)
+**Version:** 0.0.190 (Draft)
 **Date:** 2026-09-25
 
 ---
@@ -2094,7 +2094,11 @@ a **method's** argument.
 > (`NK2105`, [ADR-213](adr/adr-213.md) D3, 0.0.189): an argument kept, a key or
 > a value written into a container, a field, an element, a `let` that renames
 > it, an assignment — and inside a loop or a lambda, the next turn's hand-over
-> of what is already gone.
+> of what is already gone. Since 0.0.190 ([ADR-214](adr/adr-214.md)) also a
+> second use in the **same** statement, and a **part**: after `xs.push(p.name)`,
+> `p.x` is still there and `p.name` and `p` are not; a part of something only
+> lent is refused where it is handed over (`NK2106`); and a parameter whose part
+> is handed over is kept, so its caller hands it over whole.
 
 ### 6.6. Escaping References Are Tethered
 

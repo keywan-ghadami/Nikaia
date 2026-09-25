@@ -966,6 +966,8 @@ fn walked<'a>(
         branch: Vec::new(),
         next_choice: 0,
         reads_on_paths: Vec::new(),
+        read_index: std::collections::HashMap::new(),
+        lent_lets: BTreeSet::new(),
         handed: Vec::new(),
         writing_index: false,
         read_a_map: false,
@@ -976,6 +978,7 @@ fn walked<'a>(
         written_at: Vec::new(),
         repeats: Vec::new(),
         reading_only: false,
+        read_seq: 0,
         empty_lists: BTreeMap::new(),
         opaque_methods: BTreeSet::new(),
         widening_casts: BTreeSet::new(),
@@ -2231,7 +2234,7 @@ struct Checker<'a> {
     /// comes *after* the walk, and a single pass reaches a later statement later.
     /// The statement's end and not its start, because the walk itself is a read
     /// inside that statement.
-    walked: Vec<(String, Ty, usize, Choices, Option<usize>)>,
+    walked: Vec<Taken>,
     /// **Which branch of which `if` or `match` the walk is in**, outermost
     /// first ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
     ///
@@ -2242,14 +2245,23 @@ struct Checker<'a> {
     branch: Choices,
     /// The next number to give a choice: one per `if` and per `match` walked.
     next_choice: usize,
-    /// Every read of a name: the name, the byte its statement starts at, and
-    /// the branch it stood in (`NK2702`'s and `NK2105`'s reads).
-    reads_on_paths: Vec<(String, usize, Choices)>,
+    /// Every read of a name or a part of one, in the order the walk met them
+    /// (`NK2702`'s and `NK2105`'s reads, [`Read`]).
+    reads_on_paths: Vec<Read>,
+    /// Which read an expression **is**, by the expression's address, so that
+    /// `p.name` extends the read of `p` it stands on and a hand-over names the
+    /// read that was handed ([ADR-214](../../docs/specification/adr/adr-214.md)
+    /// D1). Also what keeps an expression walked twice from counting as two
+    /// reads.
+    read_index: std::collections::HashMap<(usize, usize), usize>,
+    /// The `let`s whose name is a **view** of a place (ADR-094 D4), by name and
+    /// the frame it was bound in: a part of one cannot be handed over.
+    lent_lets: BTreeSet<(String, usize)>,
     /// **Data handed to something that keeps it**
     /// ([ADR-213](../../docs/specification/adr/adr-213.md) D3): the name, its
     /// type, the byte the handing statement ends on, the branch, and the words
     /// for what took it. `NK2105` is a later read on the same path.
-    handed: Vec<Handed2105>,
+    handed: Vec<Taken>,
     /// Set by an assignment whose target is an index, for the one `Index` it
     /// walks: a key **written** is handed to the map, a key read is lent
     /// (ADR-213 D1).
@@ -2271,6 +2283,8 @@ struct Checker<'a> {
     /// *revives* a name the task took - `message = "other"` after the `spawn` is
     /// a correct program - so those are collected separately.
     read_at: Vec<(String, usize)>,
+    /// Every **path** assigned to - a name, or a part of one, `p.name` - by
+    /// the byte its statement starts at.
     written_at: Vec<(String, usize)>,
     /// **The loops and lambdas around the expression being walked**, innermost
     /// last ([ADR-212](../../docs/specification/adr/adr-212.md) D4): where each
@@ -2286,6 +2300,8 @@ struct Checker<'a> {
     /// ([ADR-212](../../docs/specification/adr/adr-212.md) D4): an
     /// assignment's target, and the operand of a `&`.
     reading_only: bool,
+    /// How many reads the walk has met so far: each read's place in the order.
+    read_seq: usize,
     /// The `let`s in the body being walked whose value was an **empty list**
     /// and whose element type nothing has said yet
     /// ([ADR-135](../../docs/specification/adr/adr-135.md) D2), by the `let`'s
@@ -2506,17 +2522,61 @@ enum Reached<'a> {
     Method(&'a str),
 }
 
-/// One hand-over `NK2105` asks about: the name, its type, the byte the
-/// statement that handed it ends on, the branch it stood in, and what took it.
-struct Handed2105 {
-    name: String,
+/// **Something taken**: a sequence walked (`NK2702`) or data handed to what
+/// keeps it (`NK2105`).
+struct Taken {
+    /// A name, or a part of one: `p.name` ([ADR-214](../../docs/specification/adr/adr-214.md) D2).
+    path: String,
     ty: Ty,
+    /// The bytes the statement that took it starts and ends at.
+    from: usize,
     at: usize,
-    path: Choices,
-    to: String,
-    /// Where a branch that left the function ends, for a hand-over inside it:
+    /// **Where in that statement**: the order the walk read it in, so a later
+    /// read in the same statement is after it (ADR-214 D1).
+    seq: usize,
+    /// The branch it was taken in.
+    choices: Choices,
+    /// Where a branch that left the function ends, for a taking inside it:
     /// nothing after that is on its path (ADR-213 D4).
     until: Option<usize>,
+    /// What took it, in words (`NK2105`).
+    to: String,
+}
+
+/// **One read**: of what, in which statement, on which path, in which order.
+struct Read {
+    path: String,
+    at: usize,
+    choices: Choices,
+    seq: usize,
+}
+
+/// An expression's address, which is what tells two reads of one name apart
+/// in one statement (ADR-214 D1).
+fn address(expr: &Expr) -> usize {
+    expr as *const Expr as usize
+}
+
+/// Whether reading `read` touches what taking `taken` took: the same path, a
+/// part of it (`p.name` after `p`), or the whole it was part of (`p` after
+/// `p.name`).
+fn overlaps(read: &str, taken: &str) -> bool {
+    read == taken
+        || read
+            .strip_prefix(taken)
+            .is_some_and(|rest| rest.starts_with('.'))
+        || taken
+            .strip_prefix(read)
+            .is_some_and(|rest| rest.starts_with('.'))
+}
+
+/// Whether assigning `written` gives `taken` a value again: the same path, or
+/// the whole it is a part of.
+fn revives(written: &str, taken: &str) -> bool {
+    written == taken
+        || taken
+            .strip_prefix(written)
+            .is_some_and(|rest| rest.starts_with('.'))
 }
 
 /// How a key goes into the brackets of a map whose keys are owned
@@ -3611,6 +3671,8 @@ impl<'a> Checker<'a> {
         self.a_sequence_was_walked_twice();
         self.data_handed_over_is_used_again();
         self.reads_on_paths.clear();
+        self.read_index.clear();
+        self.lent_lets.clear();
         self.a_task_took_what_is_used_again();
 
         self.expected = outer;
@@ -4878,8 +4940,8 @@ impl<'a> Checker<'a> {
         // container's methods take a view and are untouched.
         if matches!(&on, Ty::Seq { shape, .. } if !shape.replays) && walks_by_value(contract) {
             if let Some(name) = self.receiver_name.clone() {
-                self.walked
-                    .push((name, on.clone(), span.end, self.branch.clone(), None));
+                let taken = self.taken(name, on.clone(), self.read_seq, "", span);
+                self.walked.push(taken);
             }
         }
         // ADR-023 D8: the failure leaves at the call, and the emitter
@@ -5720,7 +5782,7 @@ impl<'a> Checker<'a> {
                 let bound: Vec<&str> = names.iter().map(|n| self.parsed.text(*n)).collect();
                 if bound.iter().any(|n| *n != "_") {
                     let to = format!("bound to `{}` by a `let`", bound.join("`, `"));
-                    self.hands_over(value, &to, span);
+                    self.hands_over(value, &found, &to, span);
                 }
                 // **A `let` over a place is a view of it** (ADR-094 D4), and
                 // the emitter needs to know before it writes the line. A bare
@@ -5729,6 +5791,11 @@ impl<'a> Checker<'a> {
                 // separates this rule from `for`'s.
                 if matches!(value, Expr::Field { .. } | Expr::Index { .. }) && moves_away(&found) {
                     self.checked.lent_lets.insert(span.start);
+                    for name in names {
+                        let name = self.parsed.text(*name).to_string();
+                        self.lent_lets
+                            .insert((name, self.scope.len().saturating_sub(1)));
+                    }
                 }
                 // **A tuple of names takes the value apart**
                 // ([ADR-098](../../../docs/specification/adr/adr-098.md)). The
@@ -5872,9 +5939,10 @@ impl<'a> Checker<'a> {
                 // it - `message = "other"` after the `spawn` is a correct
                 // program - so the target is recorded before it is walked, and
                 // walking it records a read this must not be confused with.
-                if let Expr::Variable(name) = target {
-                    self.written_at
-                        .push((self.parsed.text(*name).to_string(), span.start));
+                // **And a part of one** (ADR-214 D2): `p.name = …` gives back
+                // what `xs.push(p.name)` took.
+                if let Some(path) = self.place_path(target) {
+                    self.written_at.push((path, span.start));
                 }
                 // **D3**: an assignment into a parameter, or into a place
                 // rooted at one, changes the caller's value and says `mut`.
@@ -5924,7 +5992,7 @@ impl<'a> Checker<'a> {
                         Expr::Index { .. } => "written into a container",
                         _ => "assigned to another name",
                     };
-                    self.hands_over(value, to, span);
+                    self.hands_over(value, &found, to, span);
                 }
                 // **A write to shared mutable state goes through a door**
                 // ([ADR-099](../../../docs/specification/adr/adr-099.md)).
@@ -6110,11 +6178,7 @@ impl<'a> Checker<'a> {
                 }
                 match self.lookup(name) {
                     Some(ty) => {
-                        self.reads_on_paths.push((
-                            name.to_string(),
-                            span.start,
-                            self.branch.clone(),
-                        ));
+                        self.a_read(expr, name.to_string(), span);
                         self.a_sequence_is_taken(name, &ty, span);
                         ty
                     }
@@ -6723,6 +6787,7 @@ impl<'a> Checker<'a> {
             Expr::Field { base, name } => {
                 let on = self.expr(base, span);
                 let field = self.parsed.text(*name).to_string();
+                self.a_read_of_a_part(base, expr, &field, span);
                 if let Ty::Nullable(_) = &on {
                     self.reaches_into_a_nullable(&on, Reached::Field(&field), span);
                     return Ty::Unknown;
@@ -6938,7 +7003,7 @@ impl<'a> Checker<'a> {
                             if !want.is_a_view() {
                                 let to = format!("put into `{name}`'s `{field}`");
                                 match &init.value {
-                                    Some(value) => self.hands_over(value, &to, span),
+                                    Some(value) => self.hands_over(value, &found, &to, span),
                                     None => self.hands_over_name(&field, &to, span),
                                 }
                             }
@@ -7264,11 +7329,11 @@ impl<'a> Checker<'a> {
             }
 
             Expr::Tuple(parts) => {
-                let found = Ty::Tuple(parts.iter().map(|p| self.expr(p, span)).collect());
-                for part in parts {
-                    self.hands_over(part, "put into a tuple", span);
+                let found: Vec<Ty> = parts.iter().map(|p| self.expr(p, span)).collect();
+                for (part, ty) in parts.iter().zip(&found) {
+                    self.hands_over(part, ty, "put into a tuple", span);
                 }
-                found
+                Ty::Tuple(found)
             }
 
             // **`[1, 2, 3]` is a `Vec[T]`**
@@ -8664,10 +8729,18 @@ impl<'a> Checker<'a> {
             );
             // **What the callee keeps, it is given** (ADR-213 D3): no `&` is
             // written for this position, so a name here moves.
-            if kept && !want.is_a_view() && !signature.mutable.contains(name) {
+            // **Not across the C boundary**: what a C declaration takes it
+            // takes by address or by copy, and the call writes that address
+            // ([ADR-147](../../docs/specification/adr/adr-147.md) D1).
+            if kept
+                && !want.is_a_view()
+                && !signature.mutable.contains(name)
+                && !self.foreign_names.contains(written)
+            {
                 if let Some(given) = given.get(at) {
                     self.hands_over(
                         given,
+                        found,
                         &format!("handed to `{written}`, which keeps it"),
                         span,
                     );
@@ -9519,8 +9592,8 @@ impl<'a> Checker<'a> {
             return;
         };
         let name = self.parsed.text(*name).to_string();
-        self.walked
-            .push((name, over.clone(), span.end, self.branch.clone(), None));
+        let taken = self.taken(name, over.clone(), self.read_seq, "", span);
+        self.walked.push(taken);
     }
 
     /// **A key in the brackets of a map whose keys are owned**
@@ -9561,7 +9634,7 @@ impl<'a> Checker<'a> {
                             format!("this key is `{found}`, and the map's keys are `{want}`")
                         },
                     );
-                    self.hands_over(index, "written into the map as a key", span);
+                    self.hands_over(index, found, "written into the map as a key", span);
                 }
                 KeyForm::Handed
             }
@@ -9590,38 +9663,49 @@ impl<'a> Checker<'a> {
     /// read on the same path is `NK2105`. And, as for a sequence, a name from
     /// outside a loop or a lambda handed over inside it is refused where it is
     /// handed, because the next turn hands over what is already gone.
-    fn hands_over(&mut self, value: &Expr, to: &str, span: &Span) {
-        let Expr::Variable(name) = value else {
+    fn hands_over(&mut self, value: &Expr, ty: &Ty, to: &str, span: &Span) {
+        let Some(&at) = self.read_index.get(&(address(value), span.start)) else {
             return;
         };
-        let name = self.parsed.text(*name).to_string();
-        self.hands_over_name(&name, to, span);
+        if !matches!(value, Expr::Variable(_) | Expr::Field { .. }) {
+            return;
+        }
+        let (path, seq) = (
+            self.reads_on_paths[at].path.clone(),
+            self.reads_on_paths[at].seq,
+        );
+        self.hands_over_path(path, ty, seq, to, span);
     }
 
+    /// The same for `P { name }`, whose field is its name and which no read
+    /// stands for.
     fn hands_over_name(&mut self, name: &str, to: &str, span: &Span) {
+        let Some(ty) = self.lookup(name) else {
+            return;
+        };
+        self.hands_over_path(name.to_string(), &ty, self.read_seq, to, span);
+    }
+
+    fn hands_over_path(&mut self, path: String, ty: &Ty, seq: usize, to: &str, span: &Span) {
         // A task's body is `NK2101`'s: what it uses it took with it already.
         if !self.task_bindings.is_empty() {
             return;
         }
-        let Some(ty) = self.lookup(name) else {
-            return;
-        };
         // A stamp is not data: what is under it decides (ADR-111 D2).
         if !moves_away(&ty.unseen()) {
             return;
         }
-        self.handed.push(Handed2105 {
-            name: name.to_string(),
-            ty: ty.clone(),
-            at: span.end,
-            path: self.branch.clone(),
-            to: to.to_string(),
-            until: None,
-        });
+        let root = path.split('.').next().unwrap_or_default().to_string();
+        if path.contains('.') && self.lent_here(&root) {
+            self.a_part_of_a_loan_handed_over(&path, &root, to, span);
+            return;
+        }
+        let taken = self.taken(path.clone(), ty.clone(), seq, to, span);
+        self.handed.push(taken);
         let Some(bound) = self
             .scope
             .iter()
-            .rposition(|frame| frame.iter().any(|local| local.name == name))
+            .rposition(|frame| frame.iter().any(|local| local.name == root))
         else {
             return;
         };
@@ -9630,7 +9714,7 @@ impl<'a> Checker<'a> {
             .iter()
             .rev()
             .take_while(|r| r.frame > bound)
-            .find(|r| r.takes_again(name))
+            .find(|r| r.takes_again(&root))
         else {
             return;
         };
@@ -9643,18 +9727,142 @@ impl<'a> Checker<'a> {
             code: "NK2105",
             severity: Severity::Error,
             span: span.clone(),
-            message: format!("`{name}` is {to}, inside a {what} it was declared outside of"),
+            message: format!("`{path}` is {to}, inside a {what} it was declared outside of"),
             notes: vec![
                 format!(
-                    "`{name}` is a `{ty}`, and what keeps a value is given it rather than a \
+                    "`{path}` is a `{ty}`, and what keeps a value is given it rather than a \
                      copy - {again}"
                 ),
                 "a number, a `bool`, a `char` and a view would not be: they are copied".to_string(),
             ],
             help: Some(format!(
-                "hand over a copy each time: `{name}.clone()` where it is handed over"
+                "hand over a copy each time: `{path}.clone()` where it is handed over"
             )),
         });
+    }
+
+    /// Whether a name is only **lent** to this body: a parameter or a `self`
+    /// declared a view, a `for` binding over a place, a `let` over one.
+    fn lent_here(&self, name: &str) -> bool {
+        let Some(frame) = self
+            .scope
+            .iter()
+            .rposition(|frame| frame.iter().any(|local| local.name == name))
+        else {
+            return false;
+        };
+        if self.lent_lets.contains(&(name.to_string(), frame)) {
+            return true;
+        }
+        self.binding(name)
+            .is_some_and(|local| local.lent || local.ty.is_a_view())
+    }
+
+    /// **`NK2106`: a part of something lent, handed to what keeps it**
+    /// ([ADR-214](../../docs/specification/adr/adr-214.md) D2).
+    ///
+    /// `xs.push(p.name)` with `p` a view takes the field out of a value this
+    /// body does not own: the language below said *cannot move out of
+    /// `p.name` which is behind a shared reference*, about a file nobody wrote.
+    fn a_part_of_a_loan_handed_over(&mut self, path: &str, root: &str, to: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            code: "NK2106",
+            severity: Severity::Error,
+            span: span.clone(),
+            message: format!("`{path}` is {to}, and `{root}` is only lent here"),
+            notes: vec![
+                format!(
+                    "`{root}` belongs to whoever lent it - a `ref` parameter, a `for` over a \
+                     list, a `let` over a place - so a part of it cannot be given away: the \
+                     owner still has it"
+                ),
+                "what keeps a value is given it rather than a copy, and a copy is the \
+                 program's to write (ADR-005 §3, ADR-094 D2)"
+                    .to_string(),
+            ],
+            help: Some(format!("hand over a copy: `{path}.clone()`")),
+        });
+    }
+
+    /// A place as a path - `name`, `p.name`, `a.b.c` - where it is one.
+    fn place_path(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Variable(name) => Some(self.parsed.text(*name).to_string()),
+            Expr::Field { base, name } => Some(format!(
+                "{}.{}",
+                self.place_path(base)?,
+                self.parsed.text(*name)
+            )),
+            _ => None,
+        }
+    }
+
+    /// A read of a name, recorded once per expression and statement.
+    fn a_read(&mut self, expr: &Expr, path: String, span: &Span) {
+        let key = (address(expr), span.start);
+        if self.read_index.contains_key(&key) {
+            return;
+        }
+        self.read_seq += 1;
+        self.read_index.insert(key, self.reads_on_paths.len());
+        self.reads_on_paths.push(Read {
+            path,
+            at: span.start,
+            choices: self.branch.clone(),
+            seq: self.read_seq,
+        });
+    }
+
+    /// `p.name` extends the read of `p` it stands on: what is read is the part
+    /// ([ADR-214](../../docs/specification/adr/adr-214.md) D2).
+    fn a_read_of_a_part(&mut self, base: &Expr, expr: &Expr, field: &str, span: &Span) {
+        let Some(&at) = self.read_index.get(&(address(base), span.start)) else {
+            return;
+        };
+        let read = &mut self.reads_on_paths[at];
+        read.path.push('.');
+        read.path.push_str(field);
+        self.read_index.insert((address(expr), span.start), at);
+    }
+
+    /// A taking, where it stands.
+    fn taken(&self, path: String, ty: Ty, seq: usize, to: &str, span: &Span) -> Taken {
+        Taken {
+            path,
+            ty,
+            from: span.start,
+            at: span.end,
+            seq,
+            choices: self.branch.clone(),
+            until: None,
+            to: to.to_string(),
+        }
+    }
+
+    /// **The first read after a taking, on a path that passes both**
+    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D4,
+    /// [ADR-213](../../docs/specification/adr/adr-213.md) D4,
+    /// [ADR-214](../../docs/specification/adr/adr-214.md) D1): in a later
+    /// statement, or later in the same one; not in another arm of a choice the
+    /// taking stood in; not past a branch that left the function; and touching
+    /// what was taken. `None` where an assignment gave it back first - in the
+    /// same statement too, since `name = f(name)` writes after it reads.
+    fn first_read_after(&self, taken: &Taken) -> Option<(usize, String)> {
+        let read = self
+            .reads_on_paths
+            .iter()
+            .filter(|read| {
+                overlaps(&read.path, &taken.path)
+                    && !apart(&taken.choices, &read.choices)
+                    && taken.until.is_none_or(|end| read.at < end)
+                    && (read.at >= taken.at || (read.at == taken.from && read.seq > taken.seq))
+            })
+            .min_by_key(|read| (read.at, read.seq))?;
+        let used = read.at;
+        let given_back = self.written_at.iter().any(|(written, when)| {
+            revives(written, &taken.path) && *when >= taken.from && *when <= used
+        });
+        (!given_back).then(|| (used, read.path.clone()))
     }
 
     /// Where a walk or a hand-over recorded from here on stands.
@@ -9676,7 +9884,7 @@ impl<'a> Checker<'a> {
             return;
         }
         for walked in &mut self.walked[from.0..] {
-            walked.4.get_or_insert(span.end);
+            walked.until.get_or_insert(span.end);
         }
         for handed in &mut self.handed[from.1..] {
             handed.until.get_or_insert(span.end);
@@ -9692,37 +9900,21 @@ impl<'a> Checker<'a> {
     /// again.
     fn data_handed_over_is_used_again(&mut self) {
         let handed = std::mem::take(&mut self.handed);
-        let read = &self.reads_on_paths;
-        let written = &self.written_at;
         let mut said: BTreeSet<usize> = BTreeSet::new();
         let mut findings = Vec::new();
-        for Handed2105 {
-            name,
-            ty,
-            at,
-            path,
-            to,
-            until,
-        } in handed
-        {
-            let Some(&(_, used, _)) = read
-                .iter()
-                .filter(|(seen, when, on)| {
-                    seen == &name
-                        && *when >= at
-                        && !apart(&path, on)
-                        && until.is_none_or(|end| *when < end)
-                })
-                .min_by_key(|(_, when, _)| *when)
-            else {
+        for taken in handed {
+            let Some((used, read)) = self.first_read_after(&taken) else {
                 continue;
             };
-            if written
-                .iter()
-                .any(|(seen, when)| seen == &name && *when >= at && *when <= used)
-            {
-                continue;
-            }
+            let Taken {
+                path: name, ty, to, ..
+            } = taken;
+            // The part read where the whole was taken, or the whole where a
+            // part was: the sentence says which (ADR-214 D2).
+            let message = match read == name {
+                true => format!("`{name}` was {to}, and is used here again"),
+                false => format!("`{read}` is used here, and `{name}` was {to}"),
+            };
             if !said.insert(used) {
                 continue;
             }
@@ -9733,7 +9925,7 @@ impl<'a> Checker<'a> {
                     start: used,
                     end: used,
                 },
-                message: format!("`{name}` was {to}, and is used here again"),
+                message,
                 notes: vec![
                     format!(
                         "`{name}` is a `{ty}`, and what keeps a value is given it rather than \
@@ -9774,13 +9966,8 @@ impl<'a> Checker<'a> {
         if self.reading_only || !matches!(ty, Ty::Seq { shape, .. } if !shape.replays) {
             return;
         }
-        self.walked.push((
-            name.to_string(),
-            ty.clone(),
-            span.end,
-            self.branch.clone(),
-            None,
-        ));
+        let taken = self.taken(name.to_string(), ty.clone(), self.read_seq, "", span);
+        self.walked.push(taken);
         let Some(bound) = self
             .scope
             .iter()
@@ -9853,34 +10040,14 @@ impl<'a> Checker<'a> {
     /// again is a correct program.
     fn a_sequence_was_walked_twice(&mut self) {
         let walked = std::mem::take(&mut self.walked);
-        let read = &self.reads_on_paths;
-        let written = &self.written_at;
         let mut said: BTreeSet<usize> = BTreeSet::new();
         let mut findings = Vec::new();
 
-        for (name, ty, at, taken_in, until) in walked {
-            // The first read after the walk **on a path that passes both**:
-            // one in the other arm of an `if` is not after it (ADR-212 D4),
-            // and nothing after a branch that left the function is (ADR-213
-            // D4).
-            let Some(&(_, used, _)) = read
-                .iter()
-                .filter(|(seen, when, path)| {
-                    seen == &name
-                        && *when >= at
-                        && !apart(&taken_in, path)
-                        && until.is_none_or(|end| *when < end)
-                })
-                .min_by_key(|(_, when, _)| *when)
-            else {
+        for taken in walked {
+            let Some((used, _)) = self.first_read_after(&taken) else {
                 continue;
             };
-            if written
-                .iter()
-                .any(|(seen, when)| seen == &name && *when >= at && *when <= used)
-            {
-                continue;
-            }
+            let (name, ty) = (taken.path, taken.ty);
             // Once per site: a name walked twice and read three times is one
             // mistake, and three carets on it is three readings of the same line.
             if !said.insert(used) {
@@ -11483,8 +11650,8 @@ impl<'a> Checker<'a> {
         let mut kind: Option<(&'static str, String)> = None;
         let mut said = false;
         let founds: Vec<Ty> = items.iter().map(|item| self.expr(item, span)).collect();
-        for item in items {
-            self.hands_over(item, "put into a list", span);
+        for (item, ty) in items.iter().zip(&founds) {
+            self.hands_over(item, ty, "put into a list", span);
         }
         // **A text literal takes its neighbours' text** (ADR-207 D2): where
         // the list already holds text of its own, `["a", f"c"]` is a list of

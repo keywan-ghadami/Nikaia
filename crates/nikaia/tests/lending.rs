@@ -216,7 +216,7 @@ fn a_let_over_a_place_is_a_view() {
     // which is what this test is about, one spelling on
     // ([ADR-161](../../../docs/specification/adr/adr-161.md) D6).
     assert!(
-        rust.contains("let row = &(*nikaia_std::index::get(&store.rows,"),
+        rust.contains("let row = &*nikaia_std::index::get(&store.rows,"),
         "{rust}"
     );
 }

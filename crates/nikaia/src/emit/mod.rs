@@ -6161,16 +6161,19 @@ impl<'p> Emitter<'p> {
                     // the one place this needs no type: a range is a run and a
                     // key is not, in this language and in the one below alike.
                     //
-                    // **And no parentheses around a slice read.** They are
-                    // what makes `*get(…).len()` mean the deref of the length
-                    // rather than the length of the deref; a read with no `*`
-                    // is a call and a call binds tighter than anything, so the
-                    // pair would be a `rustc` warning about a file nobody
+                    // **And no parentheses here at all**
+                    // ([ADR-214](../../docs/specification/adr/adr-214.md) D3).
+                    // A pair around `*get(…)` is what makes `(*get(…)).len()`
+                    // the length of the deref rather than the deref of the
+                    // length - but only where a postfix follows, and a postfix
+                    // is written through `postfix_base`, which adds it. Written
+                    // here, it stood around every read: `m[k] ?? 0` and
+                    // `let x = m[k]` were `rustc` warnings about a file nobody
                     // wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
                     let slicing = matches!(&**index, Expr::Range { .. });
                     match slicing {
                         true => out.push("nikaia_std::index::get(&"),
-                        false => out.push("(*nikaia_std::index::get(&"),
+                        false => out.push("*nikaia_std::index::get(&"),
                     }
                     self.postfix_base(out, base, depth, flow)?;
                     out.push(", ");
@@ -6226,10 +6229,7 @@ impl<'p> Emitter<'p> {
                             out.push(")");
                         }
                     }
-                    match slicing {
-                        true => out.push(")"),
-                        false => out.push("))"),
-                    }
+                    out.push(")");
                     return Ok(());
                 }
                 self.postfix_base(out, base, depth, flow)?;
@@ -9034,7 +9034,13 @@ impl<'p> Emitter<'p> {
     /// how the tree was written - and without them the emitted Rust means
     /// something else and often still compiles.
     fn postfix_base(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
-        let parenthesise = self.emits_as_cast(expr)
+        // **A read through the brackets is a `*`**, which binds looser than a
+        // postfix: `*get(…).len()` is the deref of the length. The one place
+        // its parentheses belong (ADR-214 D3).
+        let a_read = !flow.in_a_place
+            && matches!(expr, Expr::Index { index, .. } if !matches!(&**index, Expr::Range { .. }));
+        let parenthesise = a_read
+            || self.emits_as_cast(expr)
             || matches!(
                 expr,
                 Expr::Binary { .. }

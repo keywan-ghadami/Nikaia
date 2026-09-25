@@ -4,6 +4,32 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.190] — 2026-09-25
+
+**A taking has a place in its statement and a path in its value** —
+[ADR-214](docs/specification/adr/adr-214.md), the owner's *fix the open
+points*: ADR-213 §3's three.
+
+**Within one statement.** `NK2702` and `NK2105` ordered reads by statement, so
+`keep(name, name)` and `s.count() + s.count()` went to `rustc`. Every read now
+has its order in the walk, and a later read in the same statement is after the
+taking. `name = name + "x"` stays a program: the assignment writes after it
+reads.
+
+**Parts.** A read of `p.name` is a read of that path. After `xs.push(p.name)`,
+`p.x` is still there; `p.name` and `p` as a whole are not (`NK2105`), and an
+assignment to either gives it back. A part of something only **lent** — a `ref`
+parameter, a `for` binding over a list, a `let` over a place — handed to what
+keeps it is **`NK2106`**. And the probes found a wall under it: `fn f(p: P) {
+xs.push(p.name) }` lowered `p` to `&P` and `rustc` refused the move; a part
+handed to what keeps it now keeps its parameter, as `return p.name` did.
+
+**The stray warning.** Every read through the brackets was `(*get(…))`, and
+`m[k] ?? 0` or `let x = xs[1]` came with *unnecessary parentheses* — the one
+the README told testers to expect. The parentheses are written only where a
+postfix needs them now, and a test compiles such a program and reads `rustc`'s
+warnings back. The README no longer mentions it.
+
 ## [0.0.189] — 2026-09-25
 
 **A key is not a position, and what is handed over is gone** —

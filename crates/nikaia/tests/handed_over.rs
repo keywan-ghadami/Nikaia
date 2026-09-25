@@ -333,3 +333,190 @@ fn what_is_not_refused_runs() {
         "c\ne 1 2",
     );
 }
+
+// --- ADR-214: within one statement, parts of a value, and no stray warning ---
+
+/// **Two hand-overs in one statement** are one after the other: the second
+/// argument is read after the first was given away (ADR-214 D1).
+#[test]
+fn a_statement_that_hands_over_twice_is_refused() {
+    one_refusal(
+        "fn keep(a: String, b: String) -> i64 {\n\
+         \x20   let mut xs: Vec[String] = []\n\
+         \x20   xs.push(a)\n\
+         \x20   xs.push(b)\n\
+         \x20   return xs.len()\n\
+         }\n\n\
+         fn main() {\n\
+         \x20   let name: String = \"n\"\n\
+         \x20   println(f\"{keep(name, name)}\")\n\
+         }\n",
+        "handed to `keep`",
+    );
+}
+
+/// **`name = f(name)` gives back what it took**, in the same statement.
+#[test]
+fn a_statement_that_takes_and_gives_back_is_a_program() {
+    runs(
+        "given-back",
+        "fn main() {\n\
+         \x20   let mut name: String = \"n\"\n\
+         \x20   name = name + \"x\"\n\
+         \x20   println(name)\n\
+         }\n",
+        "nx",
+    );
+}
+
+/// **A part of an owned value is handed over, and the rest stays**: `p.x` is
+/// still there after `p.name` went, `p.name` is not, and neither is `p` as a
+/// whole (ADR-214 D2).
+#[test]
+fn a_part_handed_over_leaves_the_rest() {
+    let head = "struct P {\n    name: String,\n    x: i64,\n}\n\n";
+    runs(
+        "part-rest",
+        &format!(
+            "{head}fn main() {{\n\
+             \x20   let mut xs: Vec[String] = []\n\
+             \x20   let p = P {{ name: \"a\", x: 1 }}\n\
+             \x20   xs.push(p.name)\n\
+             \x20   println(f\"{{p.x}} {{xs.len()}}\")\n\
+             }}\n"
+        ),
+        "1 1",
+    );
+    one_refusal(
+        &format!(
+            "{head}fn main() {{\n\
+             \x20   let mut xs: Vec[String] = []\n\
+             \x20   let p = P {{ name: \"a\", x: 1 }}\n\
+             \x20   xs.push(p.name)\n\
+             \x20   println(p.name)\n\
+             }}\n"
+        ),
+        "`p.name` was handed to `push`",
+    );
+    one_refusal(
+        &format!(
+            "{head}fn main() {{\n\
+             \x20   let mut xs: Vec[String] = []\n\
+             \x20   let p = P {{ name: \"a\", x: 1 }}\n\
+             \x20   xs.push(p.name)\n\
+             \x20   let q = p\n\
+             }}\n"
+        ),
+        "`p` is used here, and `p.name` was handed",
+    );
+    // And a part assigned again is there again.
+    runs(
+        "part-given-back",
+        &format!(
+            "{head}fn main() {{\n\
+             \x20   let mut xs: Vec[String] = []\n\
+             \x20   let mut p = P {{ name: \"a\", x: 1 }}\n\
+             \x20   xs.push(p.name)\n\
+             \x20   p.name = \"b\"\n\
+             \x20   println(p.name)\n\
+             }}\n"
+        ),
+        "b",
+    );
+}
+
+/// **A parameter whose part is handed over is kept**: it was lent (`&P`) and
+/// the body took a field out of the loan, which `rustc` refused.
+#[test]
+fn a_parameter_whose_part_is_handed_over_is_kept() {
+    runs(
+        "part-of-parameter",
+        "struct P {\n    name: String,\n    x: i64,\n}\n\n\
+         fn names(p: P) -> i64 {\n\
+         \x20   let mut xs: Vec[String] = []\n\
+         \x20   xs.push(p.name)\n\
+         \x20   return xs.len() + p.x\n\
+         }\n\n\
+         fn main() {\n\
+         \x20   let p = P { name: \"z\", x: 5 }\n\
+         \x20   println(f\"{names(p)}\")\n\
+         }\n",
+        "6",
+    );
+}
+
+/// **`NK2106`: a part of something lent is not given away** - a `ref`
+/// parameter and a `for` over a list alike.
+#[test]
+fn a_part_of_a_loan_is_not_handed_over() {
+    for source in [
+        "struct P {\n    name: String,\n}\n\n\
+         fn f(p: ref P) {\n\
+         \x20   let mut xs: Vec[String] = []\n\
+         \x20   xs.push(p.name)\n\
+         }\n\
+         fn main() {}\n",
+        "struct P {\n    name: String,\n}\n\n\
+         fn f(ps: Vec[P]) {\n\
+         \x20   let mut xs: Vec[String] = []\n\
+         \x20   for p in ps {\n\
+         \x20       xs.push(p.name)\n\
+         \x20   }\n\
+         }\n\
+         fn main() {}\n",
+    ] {
+        let found = findings(source);
+        assert_eq!(codes_of(&found), ["NK2106"], "{found:#?}");
+        assert!(
+            found[0]
+                .help
+                .as_deref()
+                .is_some_and(|h| h.contains("p.name.clone()")),
+            "{:?}",
+            found[0].help
+        );
+    }
+}
+
+/// **A read through the brackets carries no parentheses of its own**: they
+/// stood around every read, and `m[k] ?? 0` and `let x = xs[1]` were
+/// `rustc`'s *unnecessary parentheses* about a file nobody wrote (ADR-214 D3).
+/// Where a postfix follows, they are still there, because there they are
+/// needed.
+#[test]
+fn a_read_through_the_brackets_warns_about_nothing() {
+    let source = "use std::collections\n\n\
+                  fn main() {\n\
+                  \x20   let mut m: collections::HashMap[String, i64] = collections::HashMap()\n\
+                  \x20   m[\"a\"] = 3\n\
+                  \x20   let a = m[\"a\"] ?? 0\n\
+                  \x20   let xs = [1, 2, 3]\n\
+                  \x20   let v = xs[1]\n\
+                  \x20   let w = xs[2] * 2 + xs[0]\n\
+                  \x20   let f = xs[2] as f64\n\
+                  \x20   let neg = -xs[0]\n\
+                  \x20   let words = [\"ab\", \"c\"]\n\
+                  \x20   let n = words[0].len()\n\
+                  \x20   println(f\"{a} {v} {w} {f} {neg} {n}\")\n\
+                  }\n";
+    let rust = lowered(source, Build::default());
+    let dir = common::scratch_dir("handed-parentheses");
+    let path = dir.join("program.rs");
+    std::fs::write(&path, &rust).expect("write the Rust");
+    let binary = dir.join("program");
+    let compiled = common::compile(
+        &path,
+        &[
+            "--crate-type",
+            "bin",
+            "-o",
+            binary.to_str().expect("utf-8 path"),
+        ],
+    );
+    let said = String::from_utf8_lossy(&compiled.stderr);
+    assert!(compiled.status.success(), "{said}\n{rust}");
+    assert!(!said.contains("unnecessary parentheses"), "{said}\n{rust}");
+    let out = Command::new(&binary).output().expect("run it");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3 2 7 3 -1 2");
+    std::fs::remove_dir_all(&dir).ok();
+}

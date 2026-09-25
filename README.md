@@ -17,7 +17,7 @@
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
-  <img src="https://img.shields.io/badge/version-0.0.189-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.0.190-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/status-specification_+_bootstrap-orange.svg" alt="Status" />
   <img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License" />
   <a href="https://keywan-ghadami.github.io/Nikaia/"><img src="https://img.shields.io/badge/docs-github.io-blue.svg" alt="Documentation site" /></a>
@@ -392,7 +392,7 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-**Pre-alpha, as of 0.0.189.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
+**Pre-alpha, as of 0.0.190.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
 that counts *areas of scope* built, and the language area alone reads 98 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in
@@ -430,7 +430,7 @@ own words** with an `NK`-code and a help line, and the ones that are not still p
 
 Also expect: every file access names where it may reach (`fs::read(path, fs::Root::Anywhere)`)
 — that is by design, not a gap; some errors and warnings still come from `rustc` in Rust's words (mapped to your
-line, but in Rust's vocabulary — e.g. a spurious "unnecessary parentheses"); syntax and
+line, but in Rust's vocabulary); syntax and
 diagnostics change between releases with no migration; `cargo test` over the **whole
 workspace** fails some project tests for reasons in Cargo's package cache —
 use `-p nikaia`.

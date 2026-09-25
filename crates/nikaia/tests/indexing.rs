@@ -121,7 +121,7 @@ fn main() {
         "the write goes through `set`:\n{rust}"
     );
     assert!(
-        rust.contains("(*nikaia_std::index::get(&scores, nikaia_std::index::at(\"Player1\")))"),
+        rust.contains("*nikaia_std::index::get(&scores, nikaia_std::index::at(\"Player1\"))"),
         "the read goes through `get`:\n{rust}"
     );
     // **And it is no longer an index.** Rust's `Index` for a map panics on an
@@ -348,7 +348,7 @@ fn a_read_at_a_number_is_still_the_element() {
          }\n",
     );
     assert!(
-        rust.contains("(*nikaia_std::index::get(&xs"),
+        rust.contains("*nikaia_std::index::get(&xs"),
         "a number keeps the `*`: {rust}"
     );
 }
