@@ -1052,6 +1052,9 @@ struct Emitter<'p> {
     /// The arguments that are a count in `usize` below, by the entry the checker
     /// resolved ([ADR-212](../../docs/specification/adr/adr-212.md) D5).
     count_args: std::collections::BTreeSet<(usize, String, usize)>,
+    /// How a key goes into a map's brackets where the map's keys are owned
+    /// ([ADR-213](../../docs/specification/adr/adr-213.md) D1).
+    map_keys: std::collections::BTreeMap<(usize, String), crate::check::KeyForm>,
     /// The walks of a pausing sequence that have no form
     /// ([ADR-172](../../docs/specification/adr/adr-172.md) D5), by the byte the
     /// statement starts at and the method's name.
@@ -2132,6 +2135,7 @@ impl<'p> Emitter<'p> {
             pausing_loops: propagation.pausing_loops,
             owned_loops: propagation.owned_loops,
             count_args: propagation.count_args,
+            map_keys: propagation.map_keys,
             pausing_walks: propagation.pausing_walks,
             fallible_methods: propagation.methods,
             pausing_methods: propagation.pausing_methods,
@@ -5305,9 +5309,20 @@ impl<'p> Emitter<'p> {
                 out.push(after);
                 out.push("; nikaia_std::index::set(&mut ");
                 self.expr(out, base, depth, flow)?;
-                out.push(", nikaia_std::index::at(");
-                self.index_expr(out, index, depth, flow)?;
-                out.push(&format!("), {STORED}); }}"));
+                // **A key the map keeps goes in as it is** (ADR-213 D1): it is
+                // not a position, and `at` is for positions.
+                match self.map_key(span.start, index) {
+                    Some(form) => {
+                        out.push(", ");
+                        self.key(out, form, index, depth, flow)?;
+                        out.push(&format!(", {STORED}); }}"));
+                    }
+                    None => {
+                        out.push(", nikaia_std::index::at(");
+                        self.index_expr(out, index, depth, flow)?;
+                        out.push(&format!("), {STORED}); }}"));
+                    }
+                }
             }
             Stmt::Assign { target, op, value } => {
                 let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
@@ -5678,6 +5693,43 @@ impl<'p> Emitter<'p> {
         out.push(before);
         self.expr(out, value, depth, flow)?;
         out.push(after);
+        Ok(())
+    }
+
+    /// How the checker said this key goes into a map's brackets, where the
+    /// map's keys are owned ([ADR-213](../../docs/specification/adr/adr-213.md)
+    /// D1).
+    fn map_key(&self, statement: usize, index: &Expr) -> Option<crate::check::KeyForm> {
+        self.map_keys
+            .get(&(statement, crate::check::argument_shape(index)))
+            .copied()
+    }
+
+    /// A key, handed over as it is or lent with a `&`.
+    fn key(
+        &self,
+        out: &mut Out,
+        form: crate::check::KeyForm,
+        index: &Expr,
+        depth: usize,
+        flow: Flow<'_>,
+    ) -> Result<()> {
+        if form != crate::check::KeyForm::Lent {
+            return self.expr(out, index, depth, flow);
+        }
+        let bare = matches!(
+            index,
+            Expr::Variable(_)
+                | Expr::Field { .. }
+                | Expr::LitInt(_)
+                | Expr::LitChar(_)
+                | Expr::LitBool(_)
+        );
+        out.push(if bare { "&" } else { "&(" });
+        self.expr(out, index, depth, flow)?;
+        if !bare {
+            out.push(")");
+        }
         Ok(())
     }
 
@@ -6158,9 +6210,13 @@ impl<'p> Emitter<'p> {
                     // `i64` is the one width this language indexes with and
                     // `at` has nothing else to read it off.
                     let counts_down = slicing && a_negation_inside(index);
-                    match only_literals(index) && !counts_down {
-                        true => self.index_expr(out, index, depth, flow.inferred())?,
-                        false => {
+                    // **A key the map keeps nothing of is lent** (ADR-213 D1),
+                    // and a key is not a position, so `at` does not see it.
+                    let key = self.map_key(flow.statement, index);
+                    match (key, only_literals(index) && !counts_down) {
+                        (Some(form), _) => self.key(out, form, index, depth, flow)?,
+                        (None, true) => self.index_expr(out, index, depth, flow.inferred())?,
+                        (None, false) => {
                             out.push("nikaia_std::index::at(");
                             let flow = match counts_down {
                                 true => flow.widened(),

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.188 (Draft)
+**Version:** 0.0.189 (Draft)
 **Date:** 2026-09-25
 
 ---
@@ -1269,7 +1269,11 @@ use std::collections
     > its `T` and its abort. The value reached is a **view** of the map where
     > it does not copy, so a map of structs is read without an allocation
     > nobody wrote — and `m[k] ?? 0` on a map of numbers is the number
-    > ([ADR-114](adr/adr-114.md) D4).
+    > ([ADR-114](adr/adr-114.md) D4). A map whose keys it **owns** — a
+    > `HashMap[String, V]`, a `HashMap[i64, V]` — takes a key written into it
+    > as its own (a literal is built into text there, a name is handed over)
+    > and is lent one it is read with; and `m[k] ?? "-"` over a map of text is
+    > a view of text ([ADR-213](adr/adr-213.md) D1, D2).
 
     A map's hash function follows where its keys came from. Keys derived from
     data a remote peer supplied are hashed with a random per-run key, so no
@@ -2086,7 +2090,11 @@ a **method's** argument.
 > cannot yet resolve which entry the call goes to. Not built: the ledger diff that
 > narrates a kept value's moved cleanup point, and the refusal of a `&` written
 > at a call whose argument type is not known (a value a `catch` handed back, a
-> place inside a lambda).
+> place inside a lambda). **A value used after it was handed over is refused**
+> (`NK2105`, [ADR-213](adr/adr-213.md) D3, 0.0.189): an argument kept, a key or
+> a value written into a container, a field, an element, a `let` that renames
+> it, an assignment — and inside a loop or a lambda, the next turn's hand-over
+> of what is already gone.
 
 ### 6.6. Escaping References Are Tethered
 

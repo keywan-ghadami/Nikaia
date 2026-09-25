@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.189] — 2026-09-25
+
+**A key is not a position, and what is handed over is gone** —
+[ADR-213](docs/specification/adr/adr-213.md), the owner's yes to repairing the
+first wall ADR-212 §5 found.
+
+**Maps whose keys they own.** Every example keys its maps by `ref String`, so
+nothing had written `m["a"] = 1` or `m[name] = 2` on a `HashMap[String, i64]` —
+and neither compiled, nor did a read with an owned `String`, nor any key of a
+`HashMap[i64, …]`: the brackets wrapped the key in `index::at`, which is for
+**positions** and made the `i64` a `usize`. Now a key written is handed to the
+map as it is (a literal built into text there, a name handed over, a view
+refused with ADR-208's `.to_owned()` sentence), and a key read is lent. A map
+keyed by views is unchanged.
+
+**Two more on the way.** A literal assigned to a `String` — `s = "b"`,
+`ids[k] = "seven"` — was `NK1105`; an assignment keeps what it is given, so the
+literal is built there as at every other such place (ADR-207 D1). And
+`m[k] ?? "-"` over a map of text did not compile below; it is a view of text
+now, with nothing copied.
+
+**`NK2105`**: ADR-094 D2 decided long ago that a value handed to
+something that keeps it and then used again is refused in this language's
+words; nothing did, and `xs.push(name)` then `println(name)` was `rustc`'s
+*borrow of moved value*. It is refused now at every place a value is given away
+— a kept argument, a key or value written into a container, a field, an element,
+a `let` rename, an assignment — with `.clone()` as the way out, and inside a loop
+or a lambda at the hand-over itself. Built on ADR-212's machinery, and it found
+that machinery's blind spot on the way: a branch that ends in `return` or
+`throw` takes its takings with it, which the `http` example's
+`refuse(connection, …) return`, three times in a row, depends on. `NK2702`
+learned the same.
+
 ## [0.0.188] — 2026-09-25
 
 **A sequence says what it is as a whole: a range replays, a pipeline walks

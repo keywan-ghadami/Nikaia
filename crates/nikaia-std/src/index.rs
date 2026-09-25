@@ -363,6 +363,16 @@ impl<T: Copy> Or<T> for Option<&T> {
     }
 }
 
+/// **A map's text, read, with a literal after `??`**
+/// ([ADR-213](../../../docs/specification/adr/adr-213.md) D2): the map hands
+/// out its `String` by reference and the literal is a `&str`, so what the two
+/// can both be is a view of text - with nothing copied and nothing allocated.
+impl<'a> Or<&'a str> for Option<&'a String> {
+    fn or(self, fallback: impl FnOnce() -> &'a str) -> &'a str {
+        self.map(String::as_str).unwrap_or_else(fallback)
+    }
+}
+
 /// The emitted spelling: `nikaia_std::index::or(value, || fallback)`.
 ///
 /// A **free function** and not a method, because `Option` has an inherent `or`
