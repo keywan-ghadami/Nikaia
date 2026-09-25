@@ -19,8 +19,10 @@ description: >-
   Good wins. The Nikaia language specification, the decisions behind it,
   and the notes they were argued from.
 
-# A project site, served under the repository name.
-url: https://keywan-ghadami.github.io
+# Where the site lives: a Cloudflare Worker serves it at its own domain
+# (`wrangler.jsonc`, built by `scripts/site-build.sh`). Canonical links and
+# the sitemap name this host, including on the GitHub Pages copy.
+url: https://nikaia-lang.org
 baseurl: /
 
 theme: jekyll-theme-primer
@@ -73,6 +75,10 @@ exclude:
   - hello_world.rs
   - hello_world
   - .github/
+  # the Cloudflare Worker that serves the site, and what its build leaves behind
+  - wrangler.jsonc
+  - .wrangler/
+  - _site/
   # patches and findings handed to dependencies, not written for readers here
   - docs/upstream/
   # the logo's source image: 2816x1536 and 5 MB, kept in the repository and
