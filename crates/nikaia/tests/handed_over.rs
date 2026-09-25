@@ -520,3 +520,52 @@ fn a_read_through_the_brackets_warns_about_nothing() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3 2 7 3 -1 2");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// --- ADR-215: the rest of ADR-212 §5 --------------------------------------------
+
+/// **`insert` is the write under the language below's name**, handing back
+/// what it replaced; a literal key is built into the map's own text.
+#[test]
+fn insert_writes_and_hands_back_what_it_replaced() {
+    runs(
+        "insert",
+        "use std::collections\n\n\
+         fn main() {\n\
+         \x20   let mut m: collections::HashMap[String, i64] = collections::HashMap()\n\
+         \x20   m.insert(\"a\", 1)\n\
+         \x20   let before = m.insert(\"a\", 2) ?? 0\n\
+         \x20   let now = m[\"a\"] ?? 0\n\
+         \x20   println(f\"{before} {now} {m.len()}\")\n\
+         }\n",
+        "1 2 1",
+    );
+    one_refusal(
+        "use std::collections\n\n\
+         fn main() {\n\
+         \x20   let mut m: collections::HashMap[String, i64] = collections::HashMap()\n\
+         \x20   let k: String = \"a\"\n\
+         \x20   m.insert(k, 1)\n\
+         \x20   println(k)\n\
+         }\n",
+        "handed to `insert`",
+    );
+}
+
+/// **A copy is a copy of a view too**: a `String` the body only reads is a
+/// `&str` below, and `.clone()` of that was the reference.
+#[test]
+fn a_copy_of_a_view_is_text_of_its_own() {
+    runs(
+        "clone-view",
+        "fn copy(name: String) -> String {\n\
+         \x20   return name.clone()\n\
+         }\n\n\
+         fn main() {\n\
+         \x20   let c = copy(\"x\")\n\
+         \x20   let ys: Vec[i64] = [1, 2]\n\
+         \x20   let zs = ys.clone()\n\
+         \x20   println(f\"{c} {zs.len()} {ys.len()}\")\n\
+         }\n",
+        "x 2 2",
+    );
+}

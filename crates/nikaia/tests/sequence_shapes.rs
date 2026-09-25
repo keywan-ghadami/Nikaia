@@ -453,3 +453,74 @@ fn two_walks_in_one_statement_are_refused() {
         ["NK2702"]
     );
 }
+
+/// **A slice has a type** (ADR-215 D3): a run of the list, `ref Array[T]`,
+/// which is what a function writes to take one - and what `windows` hands
+/// out. Sliced through a range written in the brackets or kept in a name,
+/// literal ends included.
+#[test]
+fn a_slice_is_a_run_a_function_can_take() {
+    runs(
+        "slices",
+        "fn total(xs: ref Array[i64]) -> i64 {\n\
+         \x20   let mut t = 0\n\
+         \x20   for x in xs {\n\
+         \x20       t += x\n\
+         \x20   }\n\
+         \x20   return t\n\
+         }\n\n\
+         fn main() {\n\
+         \x20   let xs = [1, 2, 3, 4, 5]\n\
+         \x20   let part = ref xs[1..<3]\n\
+         \x20   let q = 1..2\n\
+         \x20   let named = ref xs[q]\n\
+         \x20   let t = \"hello\"\n\
+         \x20   let word = ref t[0..<1]\n\
+         \x20   println(f\"{total(part)} {total(named)} {total(xs)} {word}\")\n\
+         \x20   for w in xs.windows(2) { print(f\"{total(w)} \") }\n\
+         }\n",
+        "5 5 15 h\n3 5 7 9",
+    );
+}
+
+/// **`str::chars` is a sequence**, as `String::chars` was: a view of text can
+/// be walked from the back, and counted.
+#[test]
+fn the_characters_of_a_view_are_a_sequence() {
+    runs(
+        "str-chars",
+        "fn main() {\n\
+         \x20   let t = \"héllo\"\n\
+         \x20   let back: Vec[char] = t.chars().rev().collect()\n\
+         \x20   println(f\"{t.chars().count()} {back[0]}\")\n\
+         }\n",
+        "5 o",
+    );
+}
+
+/// **A slice handed to a list is refused here, naming the type that takes
+/// both** (ADR-215 D3): before, it was `rustc`'s *expected `&Vec<i64>`, found
+/// `&&[_]`*.
+#[test]
+fn a_slice_handed_to_a_list_says_what_to_declare() {
+    let found = findings(
+        "fn total(xs: ref Vec[i64]) -> i64 {\n\
+         \x20   return xs.len()\n\
+         }\n\n\
+         fn main() {\n\
+         \x20   let xs = [1, 2, 3]\n\
+         \x20   let part = ref xs[0..<2]\n\
+         \x20   println(f\"{total(part)}\")\n\
+         }\n",
+    );
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].code, "NK1102");
+    assert!(
+        found[0]
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("ref Array[i64]")),
+        "{:?}",
+        found[0].help
+    );
+}

@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.190 (Draft)
+**Version:** 0.0.191 (Draft)
 **Date:** 2026-09-25
 
 ---
@@ -816,7 +816,10 @@ walked from its back end is known to the compiler: a range, a list's `iter()`,
 `chars()` and a `map` over any of them can; `io::lines()` cannot, and `rev()` on
 it is refused rather than left to the language below.
 
-> **Implementation status:** Implemented ([ADR-212](adr/adr-212.md) §7).
+> **Implementation status:** Implemented ([ADR-212](adr/adr-212.md) §7). A
+> range in a list's brackets reads a **run** of it, `ref Array[T]` — the type a
+> function declares to take one — whether the range is written there or kept in
+> a name ([ADR-215](adr/adr-215.md) D3).
 
 A `for` over a list **lends** it: the elements are looked at, and the list is
 still there when the loop is over. Taking the elements away is written,

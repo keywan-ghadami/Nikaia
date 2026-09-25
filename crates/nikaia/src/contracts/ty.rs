@@ -1351,6 +1351,10 @@ fn lends_a_run_of(found: &Ty, item: &Ty) -> bool {
         Ty::Named { name, args, .. } => match (name.as_str(), args.as_slice()) {
             ("Vec" | "List", [element]) => element.fits(item),
             (ARRAY, [element, _]) => element.fits(item),
+            // **A slice is a run already** (ADR-215 D3): `ref xs[1..<3]` and a
+            // list's `windows` hand out `ref Array[T]`, which is what a
+            // declaration writes to take one.
+            (ARRAY, [element]) => element.fits(item),
             // Text is a run of bytes, and `u8` is what a declaration writes for
             // one. Both spellings, because a `&str` and a `String` hand over
             // the same bytes.

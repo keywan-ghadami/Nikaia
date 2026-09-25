@@ -1055,6 +1055,10 @@ struct Emitter<'p> {
     /// How a key goes into a map's brackets where the map's keys are owned
     /// ([ADR-213](../../docs/specification/adr/adr-213.md) D1).
     map_keys: std::collections::BTreeMap<(usize, String), crate::check::KeyForm>,
+    /// Indexes that are a range kept in a name (ADR-215 D3).
+    slice_indices: std::collections::BTreeSet<(usize, String)>,
+    /// `std` copies, written `to_owned` (ADR-215 D4).
+    owned_copies: std::collections::BTreeSet<(usize, String)>,
     /// The walks of a pausing sequence that have no form
     /// ([ADR-172](../../docs/specification/adr/adr-172.md) D5), by the byte the
     /// statement starts at and the method's name.
@@ -2136,6 +2140,8 @@ impl<'p> Emitter<'p> {
             owned_loops: propagation.owned_loops,
             count_args: propagation.count_args,
             map_keys: propagation.map_keys,
+            slice_indices: propagation.slice_indices,
+            owned_copies: propagation.owned_copies,
             pausing_walks: propagation.pausing_walks,
             fallible_methods: propagation.methods,
             pausing_methods: propagation.pausing_methods,
@@ -5696,6 +5702,15 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
+    /// Whether what stands in the brackets is a **run**: a range written there,
+    /// or one the checker says is kept in a name (ADR-215 D3).
+    fn slices(&self, statement: usize, index: &Expr) -> bool {
+        matches!(index, Expr::Range { .. })
+            || self
+                .slice_indices
+                .contains(&(statement, crate::check::argument_shape(index)))
+    }
+
     /// How the checker said this key goes into a map's brackets, where the
     /// map's keys are owned ([ADR-213](../../docs/specification/adr/adr-213.md)
     /// D1).
@@ -6170,7 +6185,7 @@ impl<'p> Emitter<'p> {
                     // here, it stood around every read: `m[k] ?? 0` and
                     // `let x = m[k]` were `rustc` warnings about a file nobody
                     // wrote ([Part III C.1](../../docs/specification/30-nikaia-tooling.md)).
-                    let slicing = matches!(&**index, Expr::Range { .. });
+                    let slicing = self.slices(flow.statement, index);
                     match slicing {
                         true => out.push("nikaia_std::index::get(&"),
                         false => out.push("*nikaia_std::index::get(&"),
@@ -6445,7 +6460,7 @@ impl<'p> Emitter<'p> {
                 // either: the source's `&` and the read's own view are one
                 // claim written twice.
                 if let (UnaryOp::Ref, Expr::Index { index, .. }) = (op, &**expr) {
-                    if matches!(&**index, Expr::Range { .. }) && !flow.in_a_place {
+                    if self.slices(flow.statement, index) && !flow.in_a_place {
                         return self.expr(out, expr, depth, flow);
                     }
                 }
@@ -8857,8 +8872,16 @@ impl<'p> Emitter<'p> {
                     .map(|a| &a.value),
                 false => None,
             };
+        let copies = receiver.is_some_and(|receiver| {
+            self.owned_copies
+                .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+        });
         let written = match self.text(method) {
             "drain" if args.is_empty() => "into_iter",
+            // **A copy is `to_owned` below** (ADR-215 D4): `.clone()` of a
+            // `&str` or a `&[T]` is the reference, and a read-only `String`
+            // parameter *is* a `&str` (ADR-207 D3).
+            "clone" if args.is_empty() && copies => "to_owned",
             "set" if witness.is_some() => "set_after",
             other => other,
         };
@@ -9038,7 +9061,7 @@ impl<'p> Emitter<'p> {
         // postfix: `*get(…).len()` is the deref of the length. The one place
         // its parentheses belong (ADR-214 D3).
         let a_read = !flow.in_a_place
-            && matches!(expr, Expr::Index { index, .. } if !matches!(&**index, Expr::Range { .. }));
+            && matches!(expr, Expr::Index { index, .. } if !self.slices(flow.statement, index));
         let parenthesise = a_read
             || self.emits_as_cast(expr)
             || matches!(

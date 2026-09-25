@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.191] — 2026-09-25
+
+**What was left of ADR-212 §5** — [ADR-215](docs/specification/adr/adr-215.md),
+the owner's yes to the last four finds, and a fifth found on the way.
+
+* **`HashMap::insert`** has an entry: the write under the language below's
+  name, handing back the value it replaced, keeping key and value. A literal
+  where the **receiver** binds the parameter to `String` (`$K`) is built into
+  text there — the per-argument check had read the signature before the
+  receiver bound it.
+* **`str::chars`** is `Seq[char] sync ends`, as `String::chars` was; it said
+  `?`, so nothing after it on a view of text was checked.
+* **A slice has a type**: `ref xs[1..<3]` is `ref Array[T]`, ADR-184's run —
+  the type a function declares to take one — and a list's `windows` and
+  `chunks` hand that out too. Handed to a `ref Array[i64]` it runs; handed to a
+  `ref Vec[i64]` it is refused here rather than in `rustc`. A range **kept in a
+  name** slices exactly as a written one, literal ends included.
+* **A copy of a view**: `fn copy(name: String) -> String { return name.clone() }`
+  did not compile — the parameter is a `&str` below (ADR-207 D3) and `.clone()`
+  of a `&str` is the `&str`. A `clone` that goes to `std` is written
+  `to_owned`, a copy of a view and of a value alike; `Vec::clone` is new.
+
 ## [0.0.190] — 2026-09-25
 
 **A taking has a place in its statement and a path in its value** —

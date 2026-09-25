@@ -622,6 +622,19 @@ touches = []
 signature = "(ref collections::HashMap[$K, $V], key: ?) -> $V?"
 doc = "What this key names, or nothing where the key is not there.\n\nA key is data and may be absent, which is why this hands back a `$V?`: the\nshape a program writes is `counts.get(k) ?? 0`, or `counts.get(k)?.field`."
 
+# **Written into, by name** ([ADR-215](../../docs/specification/adr/adr-215.md)
+# D1): `m[k] = v` is this language's form, and this is the same write under the
+# name the language below gives it, for a program that wants the value it
+# replaced. The map keeps both, so both are handed over (ADR-213 D3).
+[fn."collections::HashMap::insert"]
+pub = true
+sync = true
+mutates = true
+touches = []
+keeps = ["key", "value"]
+signature = "(ref collections::HashMap[$K, $V], key: $K, value: $V) -> $V?"
+doc = "Put a value in the map under this key, and hand back the one it replaced, or\nnothing where the key was not there.\n\nThe map keeps both the key and the value."
+
 [fn."collections::HashMap::keys"]
 pub = true
 sync = true
@@ -835,6 +848,15 @@ doc = "A list with nothing in it. It is written `Vec()`."
 # **`drain` takes the elements away** (ADR-094 D4). A `for` lends, so the body
 # that hands an element to something which keeps it says so here - and below it
 # is `into_iter`, because what D4 writes is *removing a name from scope*.
+# A copy of the list ([ADR-215](../../docs/specification/adr/adr-215.md) D4):
+# written `to_owned` below, which copies a view of a list as well as a list.
+[fn."Vec::clone"]
+pub = true
+sync = true
+touches = []
+signature = "(ref Vec[$T]) -> Vec[$T]"
+doc = "A copy of the list, owned by whoever asked for it."
+
 [fn."Vec::drain"]
 pub = true
 sync = true
@@ -993,7 +1015,7 @@ pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
-signature = "(ref Vec[$T], n: i64) -> Seq[ref Vec[$T]] sync ends sized"
+signature = "(ref Vec[$T], n: i64) -> Seq[ref Array[$T]] sync ends sized"
 doc = "The list in runs of `n` elements, the last one shorter where it does not\ndivide evenly.\n\nEach run is a view of the list, not a copy."
 
 [fn."Vec::windows"]
@@ -1001,7 +1023,7 @@ pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
-signature = "(ref Vec[$T], n: i64) -> Seq[ref Vec[$T]] sync ends sized"
+signature = "(ref Vec[$T], n: i64) -> Seq[ref Array[$T]] sync ends sized"
 doc = "Every run of `n` elements in a row, each one starting one further on.\n\nEach run is a view of the list, not a copy."
 
 [fn."Vec::push"]
@@ -1197,7 +1219,7 @@ pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
-signature = "(ref String) -> ?"
+signature = "(ref String) -> Seq[char] sync ends"
 doc = "The characters, one at a time.\n\nThey are **characters** and not bytes: a character outside ASCII is more than\none byte, and this walks one of it rather than several."
 
 [fn."str::len"]

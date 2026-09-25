@@ -333,6 +333,14 @@ pub struct Checked {
     /// the byte the statement starts at and the key's shape
     /// ([ADR-213](../../docs/specification/adr/adr-213.md) D1).
     pub map_keys: BTreeMap<(usize, String), KeyForm>,
+    /// Indexes that are a **range kept in a name**, by the byte the statement
+    /// starts at and the index's shape: a slice, like a range written in the
+    /// brackets ([ADR-215](../../docs/specification/adr/adr-215.md) D3).
+    pub slice_indices: BTreeSet<(usize, String)>,
+    /// `clone` calls that went to a `std` entry, by statement and receiver
+    /// shape: written `to_owned` below, which is a copy whether the receiver
+    /// is a value or a view of one (ADR-215 D4).
+    pub owned_copies: BTreeSet<(usize, String)>,
     /// The **method calls that can fail**, as the byte the statement they
     /// stand in starts at and the method's name (ADR-023 D8).
     ///
@@ -971,6 +979,7 @@ fn walked<'a>(
         handed: Vec::new(),
         writing_index: false,
         read_a_map: false,
+        last_resolved: None,
         receiver_name: None,
         caught_several: false,
         caught_one: None,
@@ -1297,6 +1306,10 @@ pub struct Propagation {
     pub count_args: BTreeSet<(usize, String, usize)>,
     /// [`Checked::map_keys`].
     pub map_keys: BTreeMap<(usize, String), KeyForm>,
+    /// [`Checked::slice_indices`].
+    pub slice_indices: BTreeSet<(usize, String)>,
+    /// [`Checked::owned_copies`].
+    pub owned_copies: BTreeSet<(usize, String)>,
     /// [`Checked::pausing_walks`].
     pub pausing_walks: BTreeSet<(usize, String)>,
     /// [`Checked::fallible_methods`].
@@ -1488,6 +1501,8 @@ pub fn propagation_against(
         owned_loops: checked.owned_loops,
         count_args: checked.count_args,
         map_keys: checked.map_keys,
+        slice_indices: checked.slice_indices,
+        owned_copies: checked.owned_copies,
         pausing_walks: checked.pausing_walks,
         methods: checked.fallible_methods,
         pausing_methods: checked.pausing_methods,
@@ -2269,6 +2284,9 @@ struct Checker<'a> {
     /// Set where an `Index` read a **map**, for the `??` around it: a map read
     /// hands out a view of the value, whatever the value's type (ADR-213 D2).
     read_a_map: bool,
+    /// The ledger key the last method call resolved to, for the arm around it
+    /// (ADR-215 D4).
+    last_resolved: Option<String>,
     /// The **name** of the receiver of the method call being walked, where it is
     /// a plain name ([ADR-105](../../docs/specification/adr/adr-105.md) D2).
     ///
@@ -4933,6 +4951,7 @@ impl<'a> Checker<'a> {
             return Ty::Unknown;
         };
         self.reached_method(Some(&key));
+        self.last_resolved = Some(key.clone());
         // **A method that walks a produced sequence consumes it**
         // ([ADR-105](../../docs/specification/adr/adr-105.md) D2): every `Seq`
         // entry writes its receiver `(Seq[$T], …)` and not `&Seq[$T]`, so the
@@ -5036,6 +5055,15 @@ impl<'a> Checker<'a> {
             span,
         );
         self.a_set_that_reads_what_it_writes(&on, entry, &found, span);
+        // **A literal where the receiver says text is wanted** (ADR-215 D1):
+        // `m.insert("a", 1)` on a map of `String` keys wants `$K`, which the
+        // receiver binds and the per-argument check below does not see. A
+        // method's argument is handed over, so the literal is built there.
+        for (at, given) in args.iter().enumerate() {
+            if let Some(want) = expected.get(at) {
+                self.text_literal(want, given, true);
+            }
+        }
         self.a_sequence_that_cannot_do_this(&on, method, contract, &found, span);
         self.counts_in_usize(&key, method, span);
         // **The source's own name and not the ledger's**, because what
@@ -6666,7 +6694,20 @@ impl<'a> Checker<'a> {
                         );
                     }
                 }
+                self.last_resolved = None;
                 let value = self.call_on(on, *method, args, &written, span);
+                // **A copy of `std`'s is a copy whatever the receiver is**
+                // (ADR-215 D4): below, `.clone()` of a view is the view.
+                if let Some(key) = self.last_resolved.take() {
+                    let library = key.ends_with("::clone")
+                        && self.library.functions.contains_key(&key)
+                        && !self.own.functions.contains_key(&key);
+                    if library && args.is_empty() {
+                        self.checked
+                            .owned_copies
+                            .insert((span.start, argument_shape(receiver)));
+                    }
+                }
                 self.receiver_name = outer_named;
                 self.at_a_write_door = outer_door;
                 self.inside_a_door = outer_inside;
@@ -7454,6 +7495,27 @@ impl<'a> Checker<'a> {
                 // since [ADR-154](../../docs/specification/adr/adr-154.md) D3 and
                 // what is indexed is the type rather than where it is reached
                 // from.
+                // **A range in the brackets is a slice** (ADR-215 D3): a run of
+                // the list, `ref Array[T]` - the type a function writes to take
+                // one - or a view of the text. Written there, or kept in a name.
+                let a_range = matches!(&**index, Expr::Range { .. })
+                    || matches!(&key, Ty::Seq { shape, .. } if shape.replays);
+                if a_range && !matches!(&**index, Expr::Range { .. }) {
+                    self.checked
+                        .slice_indices
+                        .insert((span.start, argument_shape(index)));
+                }
+                if a_range {
+                    return match (crate::contracts::ty::base(name), args.as_slice()) {
+                        ("Vec" | "List" | "Array", [item, ..]) => Ty::Named {
+                            name: ty::ARRAY.to_string(),
+                            args: vec![item.clone()],
+                            view: true,
+                        },
+                        ("String" | "str", []) => Ty::view("str"),
+                        _ => Ty::Unknown,
+                    };
+                }
                 match (crate::contracts::ty::base(name), args.as_slice()) {
                     // **A sequence keeps its `T` and its abort**
                     // ([ADR-114](../../docs/specification/adr/adr-114.md) D3):
@@ -15836,6 +15898,33 @@ fn convert(found: &Ty, want: &Ty) -> String {
     if becomes_shared(found, want) {
         if let Ty::Named { name, .. } = want {
             return format!("write `{name}(…)` around it - a hull you can see is one you write");
+        }
+    }
+    // **A slice where a list is declared** (ADR-215 D3): the parameter is
+    // what changes, to the type that takes a run of any list - a slice and a
+    // whole list alike - with the element the declaration already names.
+    if let (
+        Ty::Named {
+            name: slice,
+            args: run,
+            view: true,
+        },
+        Ty::Named {
+            name: list,
+            args: elements,
+            ..
+        },
+    ) = (found, want)
+    {
+        if slice == ty::ARRAY && run.len() == 1 && ty::base(list) == "Vec" {
+            let element = elements
+                .first()
+                .map(Ty::text)
+                .unwrap_or_else(|| "?".to_string());
+            return format!(
+                "this is a slice of a list; declare the parameter `ref Array[{element}]`, \
+                 which takes a slice and a whole list alike"
+            );
         }
     }
     let (found, want) = (found.text(), want.text());
