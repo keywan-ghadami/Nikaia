@@ -1046,6 +1046,12 @@ struct Emitter<'p> {
     /// ([ADR-172](../../docs/specification/adr/adr-172.md) D1), by the byte the
     /// statement starts at. Handed over exactly as `fallible_loops` is.
     pausing_loops: std::collections::BTreeSet<usize>,
+    /// The `for`s over a name holding a sequence, which is handed over rather
+    /// than lent ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
+    owned_loops: std::collections::BTreeSet<usize>,
+    /// The arguments that are a count in `usize` below, by the entry the checker
+    /// resolved ([ADR-212](../../docs/specification/adr/adr-212.md) D5).
+    count_args: std::collections::BTreeSet<(usize, String, usize)>,
     /// The walks of a pausing sequence that have no form
     /// ([ADR-172](../../docs/specification/adr/adr-172.md) D5), by the byte the
     /// statement starts at and the method's name.
@@ -2124,6 +2130,8 @@ impl<'p> Emitter<'p> {
             trusted_input: provenance == crate::contracts::Provenance::Trusted,
             fallible_loops: propagation.loops,
             pausing_loops: propagation.pausing_loops,
+            owned_loops: propagation.owned_loops,
+            count_args: propagation.count_args,
             pausing_walks: propagation.pausing_walks,
             fallible_methods: propagation.methods,
             pausing_methods: propagation.pausing_methods,
@@ -5298,7 +5306,7 @@ impl<'p> Emitter<'p> {
                 out.push("; nikaia_std::index::set(&mut ");
                 self.expr(out, base, depth, flow)?;
                 out.push(", nikaia_std::index::at(");
-                self.expr(out, index, depth, flow)?;
+                self.index_expr(out, index, depth, flow)?;
                 out.push(&format!("), {STORED}); }}"));
             }
             Stmt::Assign { target, op, value } => {
@@ -5467,8 +5475,18 @@ impl<'p> Emitter<'p> {
                 // `&&Vec<Entry>`, which Rust does not iterate. `.iter()` reads
                 // the same through any number of references, and this emitter
                 // has no types to tell the two apart with (ADR-028).
-                let lends = is_a_place(iter);
-                self.expr(out, iter, depth, flow)?;
+                //
+                // **A name holding a sequence is not a place that lends**
+                // (ADR-212 D4): it is walked by value, and a range walks a copy
+                // of itself. The checker says which loops those are.
+                let lends = is_a_place(iter) && !self.owned_loops.contains(&span.start);
+                match iter {
+                    // **A range written into the `for` stays the language
+                    // below's own** (ADR-212 D3): it is walked once, where it
+                    // stands, and needs to be nothing more.
+                    Expr::Range { .. } => self.bare_range(out, iter, depth, flow)?,
+                    _ => self.expr(out, iter, depth, flow)?,
+                }
                 if lends {
                     out.push(".iter()");
                 }
@@ -5663,6 +5681,29 @@ impl<'p> Emitter<'p> {
         Ok(())
     }
 
+    /// A range as the language below writes one, `a..b`, for the two places
+    /// that walk or slice it where it stands
+    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D3).
+    fn bare_range(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
+        let Expr::Range {
+            start,
+            end,
+            inclusive,
+        } = expr
+        else {
+            return self.expr(out, expr, depth, flow);
+        };
+        self.expr(out, start, depth, flow)?;
+        out.push(if *inclusive { "..=" } else { ".." });
+        self.expr(out, end, depth, flow)
+    }
+
+    /// What stands inside brackets: a range there is a **slice**, and stays
+    /// the language below's own (ADR-212 D3).
+    fn index_expr(&self, out: &mut Out, index: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
+        self.bare_range(out, index, depth, flow)
+    }
+
     fn expr(&self, out: &mut Out, expr: &Expr, depth: usize, flow: Flow<'_>) -> Result<()> {
         match expr {
             Expr::LitInt(v) => out.push(&integer_literal(*v, flow.widen)),
@@ -5671,14 +5712,26 @@ impl<'p> Emitter<'p> {
                 self.string(out, expr, depth, flow)?
             }
             Expr::LitChar(c) => out.push(&format!("'{c}'")),
+            // **A range is a value**
+            // ([ADR-212](../../docs/specification/adr/adr-212.md) D3): two
+            // numbers, `Copy`, and walked as often as a program likes - which
+            // the language below's `Range` is not, being its own iterator. So
+            // one that is kept, handed on or called on is `nikaia_std`'s, and
+            // only one written straight into a `for` or into brackets is Rust's
+            // (`bare_range`).
             Expr::Range {
                 start,
                 end,
                 inclusive,
             } => {
+                out.push(match inclusive {
+                    true => "nikaia_std::range::through(",
+                    false => "nikaia_std::range::span(",
+                });
                 self.expr(out, start, depth, flow)?;
-                out.push(if *inclusive { "..=" } else { ".." });
+                out.push(", ");
                 self.expr(out, end, depth, flow)?;
+                out.push(")");
             }
             Expr::LitBool(b) => out.push(&b.to_string()),
             // Part I 2.3. `None` and nothing around it: `null` has no type of
@@ -6106,14 +6159,14 @@ impl<'p> Emitter<'p> {
                     // `at` has nothing else to read it off.
                     let counts_down = slicing && a_negation_inside(index);
                     match only_literals(index) && !counts_down {
-                        true => self.expr(out, index, depth, flow.inferred())?,
+                        true => self.index_expr(out, index, depth, flow.inferred())?,
                         false => {
                             out.push("nikaia_std::index::at(");
                             let flow = match counts_down {
                                 true => flow.widened(),
                                 false => flow,
                             };
-                            self.expr(out, index, depth, flow)?;
+                            self.index_expr(out, index, depth, flow)?;
                             out.push(")");
                         }
                     }
@@ -6127,12 +6180,12 @@ impl<'p> Emitter<'p> {
                 match only_literals(index) {
                     true => {
                         out.push("[");
-                        self.expr(out, index, depth, flow.inferred())?;
+                        self.index_expr(out, index, depth, flow.inferred())?;
                         out.push("]");
                     }
                     false => {
                         out.push("[nikaia_std::index::at(");
-                        self.expr(out, index, depth, flow)?;
+                        self.index_expr(out, index, depth, flow)?;
                         out.push(")]");
                     }
                 }
@@ -9082,7 +9135,11 @@ impl<'p> Emitter<'p> {
             // language has, so the conversion is written here. Read off the
             // declaration rather than off a list of names, which is what
             // `is_count` is and has to be for a ledger's entries.
-            let wants_a_size = is_count(callee, i) || self.takes_a_size(callee, i);
+            let wants_a_size = is_count(callee, i)
+                || self.takes_a_size(callee, i)
+                || self
+                    .count_args
+                    .contains(&(flow.statement, callee.to_string(), i));
             let count = wants_a_size && !only_literals(arg);
             // **The caller writes no `&`** ([ADR-094](../../docs/specification/adr/adr-094.md)
             // D1): where the callee reads this argument rather than keeping it,

@@ -316,6 +316,19 @@ pub struct Checked {
     /// reason: which loop this is, is a question about the iterated
     /// expression's **type**, and the emitter has no types.
     pub pausing_loops: BTreeSet<usize>,
+    /// The `for`s over a **name** that holds a sequence, by the byte the
+    /// statement starts at ([ADR-212](../../docs/specification/adr/adr-212.md)
+    /// D4).
+    ///
+    /// A `for` over a place lends it and the emitter writes `.iter()`; a
+    /// sequence is walked by value and has no `.iter()`, so the name is handed
+    /// over as it is. The emitter has no types, so which loops these are is
+    /// answered here, as `pausing_loops` is.
+    pub owned_loops: BTreeSet<usize>,
+    /// The arguments that are a **count the language below takes in `usize`**,
+    /// by the byte the statement starts at, the method as written and the
+    /// position ([ADR-212](../../docs/specification/adr/adr-212.md) D5).
+    pub count_args: BTreeSet<(usize, String, usize)>,
     /// The **method calls that can fail**, as the byte the statement they
     /// stand in starts at and the method's name (ADR-023 D8).
     ///
@@ -946,11 +959,16 @@ fn walked<'a>(
         inside_unsafe: false,
         moved_into_a_task: Vec::new(),
         walked: Vec::new(),
+        branch: Vec::new(),
+        next_choice: 0,
+        sequence_reads: Vec::new(),
         receiver_name: None,
         caught_several: false,
         caught_one: None,
         read_at: Vec::new(),
         written_at: Vec::new(),
+        repeats: Vec::new(),
+        reading_only: false,
         empty_lists: BTreeMap::new(),
         opaque_methods: BTreeSet::new(),
         widening_casts: BTreeSet::new(),
@@ -1242,6 +1260,10 @@ pub struct Propagation {
     pub loops: BTreeSet<usize>,
     /// [`Checked::pausing_loops`].
     pub pausing_loops: BTreeSet<usize>,
+    /// [`Checked::owned_loops`].
+    pub owned_loops: BTreeSet<usize>,
+    /// [`Checked::count_args`].
+    pub count_args: BTreeSet<(usize, String, usize)>,
     /// [`Checked::pausing_walks`].
     pub pausing_walks: BTreeSet<(usize, String)>,
     /// [`Checked::fallible_methods`].
@@ -1430,6 +1452,8 @@ pub fn propagation_against(
     Propagation {
         loops: checked.fallible_loops,
         pausing_loops: checked.pausing_loops,
+        owned_loops: checked.owned_loops,
+        count_args: checked.count_args,
         pausing_walks: checked.pausing_walks,
         methods: checked.fallible_methods,
         pausing_methods: checked.pausing_methods,
@@ -2176,7 +2200,20 @@ struct Checker<'a> {
     /// comes *after* the walk, and a single pass reaches a later statement later.
     /// The statement's end and not its start, because the walk itself is a read
     /// inside that statement.
-    walked: Vec<(String, Ty, usize)>,
+    walked: Vec<(String, Ty, usize, Choices)>,
+    /// **Which branch of which `if` or `match` the walk is in**, outermost
+    /// first ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
+    ///
+    /// A sequence taken in the `then` of an `if` and read in its `else` was
+    /// taken on neither's way to the other, and `NK2702` ordered by statement
+    /// alone refused that correct program. Two places are on one path unless
+    /// they sit in different arms of one choice.
+    branch: Choices,
+    /// The next number to give a choice: one per `if` and per `match` walked.
+    next_choice: usize,
+    /// Every read of a name that held a sequence: the name, the byte its
+    /// statement starts at, and the branch it stood in (`NK2702`'s reads).
+    sequence_reads: Vec<(String, usize, Choices)>,
     /// The **name** of the receiver of the method call being walked, where it is
     /// a plain name ([ADR-105](../../docs/specification/adr/adr-105.md) D2).
     ///
@@ -2192,6 +2229,20 @@ struct Checker<'a> {
     /// a correct program - so those are collected separately.
     read_at: Vec<(String, usize)>,
     written_at: Vec<(String, usize)>,
+    /// **The loops and lambdas around the expression being walked**, innermost
+    /// last ([ADR-212](../../docs/specification/adr/adr-212.md) D4): where each
+    /// begins in `scope`, and what would let a sequence taken inside it be
+    /// taken again.
+    ///
+    /// A sequence declared outside a loop and taken inside it is taken on the
+    /// first turn and gone on the second, and a lambda may be run more than
+    /// once by whatever it is handed to. Both are one statement in the source,
+    /// which is why the per-statement order `walked` reads cannot see them.
+    repeats: Vec<Repeats>,
+    /// A read that does not take what it reads
+    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D4): an
+    /// assignment's target, and the operand of a `&`.
+    reading_only: bool,
     /// The `let`s in the body being walked whose value was an **empty list**
     /// and whose element type nothing has said yet
     /// ([ADR-135](../../docs/specification/adr/adr-135.md) D2), by the `let`'s
@@ -2410,6 +2461,88 @@ fn a_jump_leaves(block: &Block, loops: usize) -> bool {
 enum Reached<'a> {
     Field(&'a str),
     Method(&'a str),
+}
+
+/// A path through the choices of a body: which arm of which `if` or `match`
+/// ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
+type Choices = Vec<(usize, usize)>;
+
+/// Whether two places are in different arms of one choice, so that no run
+/// reaches both.
+fn apart(a: &Choices, b: &Choices) -> bool {
+    a.iter().any(|(choice, arm)| {
+        b.iter()
+            .any(|(other, taken)| other == choice && taken != arm)
+    })
+}
+
+/// A body that may run more than once, around a sequence being taken
+/// ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
+struct Repeats {
+    /// Where the body's own names begin in `Checker::scope`: a name bound in a
+    /// frame before this is from outside it.
+    frame: usize,
+    /// `"loop"` or `"lambda"`, for the sentence.
+    what: &'static str,
+    /// The names the body assigns, any of which it may give a new sequence
+    /// before the next turn takes it - a loop only.
+    revived: BTreeSet<String>,
+    /// Whether a `break` or a `return` is anywhere in the body, which may end
+    /// the loop on the turn that took it - a loop only. Over-approximated, in
+    /// the direction that refuses less.
+    leaves: bool,
+}
+
+impl Repeats {
+    fn a_loop(parsed: &Parsed, frame: usize, body: &Block) -> Repeats {
+        let mut revived = BTreeSet::new();
+        let mut leaves = false;
+        what_a_loop_does(parsed, body, &mut revived, &mut leaves);
+        Repeats {
+            frame,
+            what: "loop",
+            revived,
+            leaves,
+        }
+    }
+
+    fn a_lambda(frame: usize) -> Repeats {
+        Repeats {
+            frame,
+            what: "lambda",
+            revived: BTreeSet::new(),
+            leaves: false,
+        }
+    }
+
+    /// Whether taking `name` here could have left nothing for the next turn.
+    fn takes_again(&self, name: &str) -> bool {
+        !(self.leaves || self.revived.contains(name))
+    }
+}
+
+/// The names a loop's body assigns, and whether anything in it leaves.
+fn what_a_loop_does(
+    parsed: &Parsed,
+    block: &Block,
+    revived: &mut BTreeSet<String>,
+    leaves: &mut bool,
+) {
+    for stmt in &block.stmts {
+        match &stmt.node {
+            Stmt::Break | Stmt::Return(_) => *leaves = true,
+            Stmt::Assign {
+                target: Expr::Variable(name),
+                ..
+            } => {
+                revived.insert(parsed.text(*name).to_string());
+            }
+            _ => {}
+        }
+        crate::contracts::sync::visit_stmt_blocks(&stmt.node, &mut |inner| {
+            what_a_loop_does(parsed, inner, revived, leaves)
+        });
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -4672,9 +4805,10 @@ impl<'a> Checker<'a> {
         // entry writes its receiver `(Seq[$T], …)` and not `&Seq[$T]`, so the
         // signature is what says so rather than a list of method names. A
         // container's methods take a view and are untouched.
-        if matches!(&on, Ty::Seq { .. }) && walks_by_value(contract) {
+        if matches!(&on, Ty::Seq { shape, .. } if !shape.replays) && walks_by_value(contract) {
             if let Some(name) = self.receiver_name.clone() {
-                self.walked.push((name, on.clone(), span.end));
+                self.walked
+                    .push((name, on.clone(), span.end, self.branch.clone()));
             }
         }
         // ADR-023 D8: the failure leaves at the call, and the emitter
@@ -4769,6 +4903,8 @@ impl<'a> Checker<'a> {
             span,
         );
         self.a_set_that_reads_what_it_writes(&on, entry, &found, span);
+        self.a_sequence_that_cannot_do_this(&on, method, contract, &found, span);
+        self.counts_in_usize(&key, method, span);
         // **The source's own name and not the ledger's**, because what
         // `arguments` records is read back by the emitter off the line as it is
         // written: a `&` the compiler owes the witness is looked up under
@@ -4786,7 +4922,111 @@ impl<'a> Checker<'a> {
         // do, and one written call is one rule (ADR-066).
         self.a_bound_the_argument_does_not_meet(&key, &bound, span);
         let result = ty::substitute(&result, &bound);
+        let result = shape_through(contract, &on, &found, result);
         self.stamped_through(contract, &found, result)
+    }
+
+    /// **`NK2703`: a sequence asked for something it is not**
+    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D2).
+    ///
+    /// `rev` writes its receiver `Seq[$T] ends`, and in a receiver's position
+    /// the word is a demand: `io::lines().rev()` is refused here, in the
+    /// program's words, where it used to be refused by `rustc` in the language
+    /// below's (`the trait bound `Lines: DoubleEndedIterator` is not
+    /// satisfied`, about a file nobody wrote).
+    fn a_sequence_that_cannot_do_this(
+        &mut self,
+        on: &Ty,
+        method: Ident,
+        contract: &FnContract,
+        found: &[Ty],
+        span: &Span,
+    ) {
+        let Some(signature) = &contract.signature else {
+            return;
+        };
+        let receiver = signature
+            .params
+            .first()
+            .filter(|(name, _)| name == "self")
+            .map(|(_, pattern)| (pattern, on));
+        let arguments = signature
+            .arguments()
+            .iter()
+            .zip(found)
+            .map(|((_, pattern), actual)| (pattern, actual));
+        let written = self.parsed.text(method).to_string();
+        for (pattern, actual) in receiver.into_iter().chain(arguments) {
+            let (
+                Ty::Seq { shape: wanted, .. },
+                Ty::Seq {
+                    shape: has, item, ..
+                },
+            ) = (pattern, actual)
+            else {
+                continue;
+            };
+            let missing = has.missing(wanted);
+            if missing.is_empty() {
+                continue;
+            }
+            // In the program's words and not the ledger's: `ends` and `sized`
+            // are not words a program can write (ADR-105 D4), so a message that
+            // named them would name something its reader cannot type
+            // (Part III C.1).
+            let (needs, lacks, way) = match missing[0] {
+                ty::ENDS => (
+                    "walks a sequence from the back",
+                    "this one can only be walked from the front",
+                    "collect it into a list first, and walk the list from the back: \
+                     `….collect()` and then `list.iter().rev()`",
+                ),
+                ty::SIZED => (
+                    "needs to know how long the sequence is",
+                    "this one does not know until it has been walked",
+                    "collect it into a list first: `….collect()`, whose length is known",
+                ),
+                _ => (
+                    "walks the sequence more than once",
+                    "this one is used up by the first walk",
+                    "collect it into a list first",
+                ),
+            };
+            let item = match &**item {
+                Ty::Unknown => "a sequence".to_string(),
+                item => format!("a sequence of `{item}`"),
+            };
+            self.checked.findings.push(Finding {
+                code: "NK2703",
+                severity: Severity::Error,
+                span: span.clone(),
+                message: format!("`{written}` {needs}, and {lacks}"),
+                notes: vec![format!(
+                    "this is {item}, and what produces it says what it can do: a \
+                         range, a list's `iter()`, `chars()` and `drain()` can be walked \
+                         from either end; a map's `keys()` and `io::lines()` only from \
+                         the front, and a `filter` does not know its length (ADR-212 D1)"
+                )],
+                help: Some(way.to_string()),
+            });
+            return;
+        }
+    }
+
+    /// **A count the language below takes in `usize`**
+    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D5), recorded for
+    /// the emitter by the **entry** the call resolved to - so a method of the
+    /// program's own that happens to be called `take` is not converted.
+    fn counts_in_usize(&mut self, key: &str, method: Ident, span: &Span) {
+        for (entry, at) in COUNTS {
+            if *entry == key {
+                self.checked.count_args.insert((
+                    span.start,
+                    self.parsed.text(method).to_string(),
+                    *at,
+                ));
+            }
+        }
     }
 
     /// **`NK1164`: the type a call picked does not answer for the bound**
@@ -5573,6 +5813,11 @@ impl<'a> Checker<'a> {
                 // is the value type with that answer taken back off — without
                 // this, the write would be handed a `Some(v)` for a map whose
                 // values are plain.
+                // The target is **written**, not taken: `s = xs.iter()` gives a
+                // walked sequence a new one (ADR-212 D4). What is inside an
+                // index is still read, and is walked by its own arm.
+                let outer =
+                    std::mem::replace(&mut self.reading_only, matches!(target, Expr::Variable(_)));
                 let into = match target {
                     Expr::Index { .. } => match self.expr(target, span) {
                         Ty::Nullable(inner) => *inner,
@@ -5580,6 +5825,7 @@ impl<'a> Checker<'a> {
                     },
                     _ => self.expr(target, span),
                 };
+                self.reading_only = outer;
                 let found = self.expr(value, span);
                 // **A write to shared mutable state goes through a door**
                 // ([ADR-099](../../../docs/specification/adr/adr-099.md)).
@@ -5603,6 +5849,8 @@ impl<'a> Checker<'a> {
             Stmt::While { cond, body } => {
                 let cond_ty = self.expr(cond, span);
                 self.expect_bool(&cond_ty, span, "a `while` repeats while a `bool` holds");
+                self.repeats
+                    .push(Repeats::a_loop(self.parsed, self.scope.len(), body));
                 self.scope.push(Vec::new());
                 // **The body and not the condition.** A `break` written in the
                 // condition is bound to this very loop in the language below,
@@ -5613,6 +5861,7 @@ impl<'a> Checker<'a> {
                 self.block(body);
                 self.loops -= 1;
                 self.scope.pop();
+                self.repeats.pop();
                 Ty::Tuple(Vec::new())
             }
 
@@ -5631,13 +5880,20 @@ impl<'a> Checker<'a> {
                 // is why the record is keyed on the type being a `Seq`.
                 self.a_sequence_is_walked(iter, &over, span);
                 let element = element_of(&over, bindings.len());
+                // **A name that holds a sequence is handed over, not lent**
+                // (ADR-212 D4): the emitter writes no `.iter()` for it, and the
+                // binding is each element itself.
+                let owned = crate::emit::is_a_place(iter) && matches!(over, Ty::Seq { .. });
+                if owned {
+                    self.checked.owned_loops.insert(span.start);
+                }
                 // **A `for` over a place lends** (ADR-094 D4), which the
                 // emitter writes as `.iter()` — so the binding is a *view* of
                 // each element. Recorded on the binding because the one thing
                 // that has to know is a **cast** over it, and Rust's `as` does
                 // not see through a reference. The predicate is the emitter's
                 // own, so the two cannot answer differently.
-                let lent = crate::emit::is_a_place(iter);
+                let lent = crate::emit::is_a_place(iter) && !owned;
                 let frame: Vec<Local> = bindings
                     .iter()
                     .map(|b| Local {
@@ -5648,11 +5904,14 @@ impl<'a> Checker<'a> {
                 for local in &frame {
                     self.nameable(&local.name.clone(), span, "a `for` binding");
                 }
+                self.repeats
+                    .push(Repeats::a_loop(self.parsed, self.scope.len(), body));
                 self.scope.push(frame);
                 self.loops += 1;
                 self.block(body);
                 self.loops -= 1;
                 self.scope.pop();
+                self.repeats.pop();
                 Ty::Tuple(Vec::new())
             }
 
@@ -5751,7 +6010,17 @@ impl<'a> Checker<'a> {
                     self.empty_lists.remove(&at);
                 }
                 match self.lookup(name) {
-                    Some(ty) => ty,
+                    Some(ty) => {
+                        if matches!(ty, Ty::Seq { .. }) {
+                            self.sequence_reads.push((
+                                name.to_string(),
+                                span.start,
+                                self.branch.clone(),
+                            ));
+                        }
+                        self.a_sequence_is_taken(name, &ty, span);
+                        ty
+                    }
                     None => {
                         // **The specific message wins.** A free `a`, `b` or `c`
                         // is the mistake a reader of the old specification
@@ -5919,10 +6188,16 @@ impl<'a> Checker<'a> {
                 if cond_ty.is_seen() {
                     self.stamped_condition = Some(span.start);
                 }
+                let choice = self.next_choice;
+                self.next_choice += 1;
+                self.branch.push((choice, 0));
                 let then = self.block(then_branch);
+                self.branch.pop();
                 let branches = match else_branch {
                     Some(otherwise) => {
+                        self.branch.push((choice, 1));
                         let other = self.block(otherwise);
+                        self.branch.pop();
                         // Only when both arms agree is there something to say
                         // - or when they meet at text (ADR-207 D2).
                         if then == other {
@@ -5949,7 +6224,9 @@ impl<'a> Checker<'a> {
                 let mut result: Option<Ty> = None;
                 let mut agree = true;
                 let mut answered: Vec<(Option<&Expr>, Ty)> = Vec::new();
-                for arm in arms {
+                let choice = self.next_choice;
+                self.next_choice += 1;
+                for (taken, arm) in arms.iter().enumerate() {
                     // **Every alternative of an or-pattern binds the same
                     // names** ([ADR-137](../../docs/specification/adr/adr-137.md)
                     // D1), asked before the body is walked so that the body's
@@ -5964,6 +6241,7 @@ impl<'a> Checker<'a> {
                     self.a_pattern_naming_a_member_a_type_does_not_have(&arm.pattern, span);
                     let frame = self.pattern_bindings(&arm.pattern);
                     self.scope.push(frame);
+                    self.branch.push((choice, taken));
                     // **The guard is walked inside the arm's scope** (D2): it
                     // reads the names the pattern bound, and a condition is a
                     // `bool` here exactly as anywhere else.
@@ -5972,6 +6250,7 @@ impl<'a> Checker<'a> {
                         self.expect_bool(&found, span, "a `match` arm's guard is a condition");
                     }
                     let ty = self.expr(&arm.body, span);
+                    self.branch.pop();
                     self.scope.pop();
                     // **An arm that jumps is not one of the types that have to
                     // agree** ([ADR-138](../../docs/specification/adr/adr-138.md)
@@ -6761,16 +7040,23 @@ impl<'a> Checker<'a> {
                 for local in &frame {
                     self.nameable(&local.name.clone(), span, "a lambda's argument");
                 }
+                self.repeats.push(Repeats::a_lambda(self.scope.len()));
                 self.scope.push(frame);
                 // Part I 3.3: a lambda is a closure below, and a jump does not
                 // leave one.
                 self.past_a_boundary("lambda", |me| me.block(body));
                 self.scope.pop();
+                self.repeats.pop();
                 Ty::Unknown
             }
 
             Expr::Unary { op, expr } => {
+                // `&s` looks at a sequence without taking it (ADR-212 D4). Only
+                // a name directly under the `&`: `&f(s)` still hands `s` over.
+                let looks = matches!(op, UnaryOp::Ref) && matches!(&**expr, Expr::Variable(_));
+                let outer = std::mem::replace(&mut self.reading_only, looks);
                 let inner = self.expr(expr, span);
+                self.reading_only = outer;
                 match op {
                     UnaryOp::Neg => inner,
                     // `!` is a `bool`'s, and the language below spells a
@@ -6988,10 +7274,36 @@ impl<'a> Checker<'a> {
                     _ => Ty::Unknown,
                 }
             }
+            // **A range is a sequence that replays**
+            // ([ADR-212](../../docs/specification/adr/adr-212.md) D3): its
+            // elements are produced as they are asked for, it can be walked
+            // from either end, its length is known, and walking it walks a copy
+            // - it is two numbers, and a value. Before, it had no type at all,
+            // so `let r = 0..<3` and a `for` over `r` went to `rustc` and came
+            // back as *no method named `iter`*, about a file nobody wrote.
+            //
+            // The item is whichever end says one; a literal says none
+            // (Part I 2.4), so `0..<3` is a range of `?` and `0..<n` one of
+            // what `n` is.
             Expr::Range { start, end, .. } => {
-                self.expr(start, span);
-                self.expr(end, span);
-                Ty::Unknown
+                let from = self.expr(start, span);
+                let to = self.expr(end, span);
+                let item = match from.is_unknown() {
+                    true => to,
+                    false => from,
+                };
+                Ty::Seq {
+                    item: Box::new(item),
+                    is_sync: true,
+                    pauses: false,
+                    throws: false,
+                    parallel: false,
+                    shape: ty::Shape {
+                        ends: true,
+                        sized: true,
+                        replays: true,
+                    },
+                }
             }
 
             Expr::TryCatch { expr, handler } => {
@@ -9051,14 +9363,96 @@ impl<'a> Checker<'a> {
     /// same reason: `map.keys().collect()` walks a temporary, and a temporary has
     /// no second use to refuse.
     fn a_sequence_is_walked(&mut self, iter: &Expr, over: &Ty, span: &Span) {
-        if !matches!(over, Ty::Seq { .. }) {
+        if !matches!(over, Ty::Seq { shape, .. } if !shape.replays) {
             return;
         }
         let Expr::Variable(name) = iter else {
             return;
         };
         let name = self.parsed.text(*name).to_string();
-        self.walked.push((name, over.clone(), span.end));
+        self.walked
+            .push((name, over.clone(), span.end, self.branch.clone()));
+    }
+
+    /// **A name that holds a sequence, read where the read takes it**
+    /// ([ADR-212](../../docs/specification/adr/adr-212.md) D4).
+    ///
+    /// Every read of one takes it, because a sequence has nothing that looks
+    /// at it without walking it: a `let` that names it again moves it, an
+    /// argument hands it over, a `return` hands it out, and every one of its
+    /// methods walks it. Before this only a `for` and a method call counted, so
+    /// `let t = lines` followed by `lines.count()` went to `rustc` as *use of
+    /// moved value* about a file nobody wrote. The two that do not take are an
+    /// assignment's target and a `&`, which `reading_only` marks.
+    ///
+    /// **A range replays** (D3) and is never taken.
+    ///
+    /// And one the per-statement order cannot see: a name from **outside** a
+    /// loop or a lambda taken **inside** it is taken again on the next turn or
+    /// the next call. Refused where it is taken, unless the loop may leave on
+    /// that turn or gives the name a new sequence first.
+    fn a_sequence_is_taken(&mut self, name: &str, ty: &Ty, span: &Span) {
+        if self.reading_only || !matches!(ty, Ty::Seq { shape, .. } if !shape.replays) {
+            return;
+        }
+        self.walked
+            .push((name.to_string(), ty.clone(), span.end, self.branch.clone()));
+        let Some(bound) = self
+            .scope
+            .iter()
+            .rposition(|frame| frame.iter().any(|local| local.name == name))
+        else {
+            return;
+        };
+        let Some(around) = self
+            .repeats
+            .iter()
+            .rev()
+            .take_while(|r| r.frame > bound)
+            .find(|r| r.takes_again(name))
+        else {
+            return;
+        };
+        let item = match ty {
+            Ty::Seq { item, .. } => item.text(),
+            _ => "?".to_string(),
+        };
+        let (again, help) = match around.what {
+            "loop" => (
+                "the next turn of the loop takes it again, and it is gone",
+                format!(
+                    "collect it before the loop and walk the collection: \
+                     `let {name} = {name}.collect()`"
+                ),
+            ),
+            _ => (
+                "a lambda may be run more than once by what it is handed to, \
+                 and the second run finds it gone",
+                format!(
+                    "collect it before the lambda and walk the collection inside: \
+                     `let {name} = {name}.collect()`"
+                ),
+            ),
+        };
+        self.checked.findings.push(Finding {
+            code: "NK2702",
+            severity: Severity::Error,
+            span: span.clone(),
+            message: format!(
+                "`{name}` is a sequence, taken inside a {} it was declared outside of",
+                around.what
+            ),
+            notes: vec![
+                format!(
+                    "a sequence of `{item}` produces its elements as they are asked \
+                     for, so walking it consumes it - and {again}"
+                ),
+                "a `Vec` is not this: a container has its elements already and is \
+                 walked by view, as often as you like"
+                    .to_string(),
+            ],
+            help: Some(help),
+        });
     }
 
     /// **`NK2702`: a sequence walked a second time**
@@ -9075,16 +9469,20 @@ impl<'a> Checker<'a> {
     /// again is a correct program.
     fn a_sequence_was_walked_twice(&mut self) {
         let walked = std::mem::take(&mut self.walked);
-        let read = &self.read_at;
+        let read = std::mem::take(&mut self.sequence_reads);
         let written = &self.written_at;
         let mut said: BTreeSet<usize> = BTreeSet::new();
         let mut findings = Vec::new();
 
-        for (name, ty, at) in walked {
-            let Some(&(_, used)) = read
+        for (name, ty, at, taken_in) in walked {
+            // The first read after the walk **on a path that passes both**:
+            // one in the other arm of an `if` is not after it (ADR-212 D4).
+            let Some(&(_, used, _)) = read
                 .iter()
-                .filter(|(seen, when)| seen == &name && *when >= at)
-                .min_by_key(|(_, when)| *when)
+                .filter(|(seen, when, path)| {
+                    seen == &name && *when >= at && !apart(&taken_in, path)
+                })
+                .min_by_key(|(_, when, _)| *when)
             else {
                 continue;
             };
@@ -13105,9 +13503,9 @@ impl<'a> Checker<'a> {
                     },
                     Some(Ty::Fn {
                         params: given,
+                        result,
                         is_sync,
                         throws,
-                        ..
                     }),
                 ) => {
                     // **A lambda handed to a parameter whose type may pause is
@@ -13143,7 +13541,7 @@ impl<'a> Checker<'a> {
                             self.checked.run_lambdas.insert((span.start, at));
                         }
                     }
-                    self.lambda(
+                    let came_to = self.lambda(
                         params,
                         mutable,
                         body,
@@ -13153,7 +13551,23 @@ impl<'a> Checker<'a> {
                             may_fail: *throws,
                         },
                         span,
-                    )
+                    );
+                    // **The lambda as the type it was handed to, with what its
+                    // body comes to where that type does not say** (ADR-212
+                    // D5): `fn($T) -> $U` binds `$U` from it, which is how a
+                    // `map` knows its elements. Where the type does say, what it
+                    // says stands - this is an answer for a variable, not a
+                    // second opinion on a written result.
+                    let result = match result.as_deref() {
+                        Some(written) if !written.is_unknown() => Some(Box::new(written.clone())),
+                        _ => (!came_to.is_unknown()).then(|| Box::new(came_to)),
+                    };
+                    Ty::Fn {
+                        params: given.clone(),
+                        result,
+                        is_sync: *is_sync,
+                        throws: *throws,
+                    }
                 }
                 _ => {
                     self.a_field_of_a_borrowed_subject(arg, span, "passed");
@@ -13194,27 +13608,32 @@ impl<'a> Checker<'a> {
             })
             .collect();
 
+        self.repeats.push(Repeats::a_lambda(self.scope.len()));
         self.scope.push(frame);
         // The other door into a lambda's body, and it needs the same boundary
         // as the one in `expr`: which of the two a lambda arrives through is
         // whether the callee's signature typed its parameters, and that has
         // nothing to do with what a `break` in it may reach.
-        let seen = self.past_a_boundary("lambda", |me| {
+        let (tail, seen) = self.past_a_boundary("lambda", |me| {
             me.handed_over = Some(Handed {
                 pauses: false,
                 fails: false,
                 promised,
             });
-            me.block(body);
-            me.handed_over.take()
+            let tail = me.block(body);
+            (tail, me.handed_over.take())
         });
         self.scope.pop();
+        self.repeats.pop();
         if let Some(seen) = seen {
             self.a_handler_that_does_more_than_the_type_allows(promised, seen, span);
         }
-        // What a lambda hands back is not written down anywhere yet, and
-        // claiming it here would be inventing one (ADR-029 D1).
-        Ty::Unknown
+        // **What its body comes to** ([ADR-212](../../docs/specification/adr/adr-212.md)
+        // D5), which is not a claim about the lambda's type but a fact about a
+        // block this checker has just walked - the same one `spawn` reads for
+        // a task. ADR-029 D1 was about *writing* a lambda's result down, which
+        // nothing does; a `map` still has to know what its elements are.
+        tail
     }
 
     /// Walk something the language below makes **a function of its own**.
@@ -14453,6 +14872,75 @@ impl<'a> Checker<'a> {
 /// Read off the signature rather than off a list of names: every `Seq` entry
 /// writes `(Seq[$T], …)` and a container's writes `(&Vec[$T], …)`, so the file
 /// that describes the method is what says whether the walk keeps it.
+/// The ledger entries whose argument at a position is a count the language
+/// below takes in `usize` ([ADR-212](../../docs/specification/adr/adr-212.md)
+/// D5). The entry and not the method's name, which is what `emit::is_count`
+/// has to go by.
+const COUNTS: &[(&str, usize)] = &[
+    ("Seq::take", 0),
+    ("Seq::skip", 0),
+    ("Seq::step_by", 0),
+    ("Seq::nth", 0),
+    ("Vec::chunks", 0),
+    ("Vec::windows", 0),
+];
+
+/// **What a sequence entry's result is as a whole**
+/// ([ADR-212](../../docs/specification/adr/adr-212.md) D2): a word the entry
+/// writes on its result, where every sequence handed in has it too.
+///
+/// A `map` walked from the back is its input walked from the back, so `map`
+/// writes `ends sized` and a `filter` over `io::lines()` still cannot be. Where
+/// the entry says `ends_by_length`, walking the result from the back also needs
+/// every input's length - `take`, `zip`, `skip`, `step_by`.
+///
+/// **A result never replays** unless the entry says so: a range replays, and a
+/// `rev` of one is an ordinary sequence, walked once.
+fn shape_through(contract: &FnContract, receiver: &Ty, found: &[Ty], result: Ty) -> Ty {
+    let Ty::Seq {
+        item,
+        is_sync,
+        pauses,
+        throws,
+        parallel,
+        shape: written,
+    } = result
+    else {
+        return result;
+    };
+    let mut inputs: Vec<ty::Shape> = Vec::new();
+    if let Some(signature) = &contract.signature {
+        let shape_of = |actual: &Ty| match actual {
+            Ty::Seq { shape, .. } => *shape,
+            _ => ty::Shape::default(),
+        };
+        if let Some((name, Ty::Seq { .. })) = signature.params.first() {
+            if name == "self" {
+                inputs.push(shape_of(receiver));
+            }
+        }
+        for ((_, pattern), actual) in signature.arguments().iter().zip(found) {
+            if matches!(pattern, Ty::Seq { .. }) {
+                inputs.push(shape_of(actual));
+            }
+        }
+    }
+    let sized = inputs.iter().all(|s| s.sized);
+    let ends = inputs.iter().all(|s| s.ends) && (!contract.ends_by_length || sized);
+    Ty::Seq {
+        item,
+        is_sync,
+        pauses,
+        throws,
+        parallel,
+        shape: ty::Shape {
+            ends: written.ends && ends,
+            sized: written.sized && sized,
+            replays: written.replays,
+        },
+    }
+}
+
 fn walks_by_value(contract: &FnContract) -> bool {
     let Some(signature) = &contract.signature else {
         return false;

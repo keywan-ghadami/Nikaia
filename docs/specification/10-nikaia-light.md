@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.187 (Draft)
+**Version:** 0.0.188 (Draft)
 **Date:** 2026-09-25
 
 ---
@@ -805,6 +805,18 @@ including*, as it does in Kotlin and in Swift ([ADR-137](adr/adr-137.md) D4).
 > **Implementation status:** Implemented. `..<` parses and excludes its end,
 > `..` includes it, and `..=` is refused naming the form that replaces it
 > ([ADR-137](adr/adr-137.md) §5).
+
+**A range is a value, and walking it does not use it up**
+([ADR-212](adr/adr-212.md) D3). A range kept in a name is walked as often as a
+program likes, from either end, and in steps: after `let days = 0..<n`, both
+`for d in days` and `for d in days.step_by(7).rev()` walk it, the second every
+seventh day counted back from the last. A sequence something **produces** — `keys()`, `io::lines()`, `xs.iter().map(…)`
+— is walked once, and a second walk is refused (`NK2702`, Part III C.3). Whether one can be
+walked from its back end is known to the compiler: a range, a list's `iter()`,
+`chars()` and a `map` over any of them can; `io::lines()` cannot, and `rev()` on
+it is refused rather than left to the language below.
+
+> **Implementation status:** Implemented ([ADR-212](adr/adr-212.md) §7).
 
 A `for` over a list **lends** it: the elements are looked at, and the list is
 still there when the loop is over. Taking the elements away is written,

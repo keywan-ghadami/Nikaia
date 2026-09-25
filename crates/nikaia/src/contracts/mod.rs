@@ -368,6 +368,18 @@ pub struct FnContract {
     /// business but its own function's, and putting one here would churn the
     /// file on a rename.
     pub sharing: Vec<sharing::Class>,
+    /// **The result is walked from the back only where the length of what
+    /// went in is known** ([ADR-212](../../../../docs/specification/adr/adr-212.md)
+    /// D2).
+    ///
+    /// A sequence entry's result passes `ends` through from what it was handed,
+    /// and for most entries that is all: a `map` or a `filter` walked from the
+    /// back is its input walked from the back. A `take`, a `zip`, a `skip` and
+    /// a `step_by` have to know **where** the back is, which is the
+    /// length - the language below asks `ExactSizeIterator` of their input for
+    /// it. One column for that, because the signature's words say what a type
+    /// *is* and this says how two of them depend on each other.
+    pub ends_by_length: bool,
 }
 
 /// Whether a function **touches a lock**
@@ -1984,6 +1996,9 @@ impl Ledger {
                 // and not about how it was declared. Empty until then, which is
                 // the floor written out - the safe answer needs no line.
                 sharing: Vec::new(),
+                // A `.nika` function cannot hand back a sequence (ADR-105 D4),
+                // so there is no result for this column to be about.
+                ends_by_length: false,
                 // A source is where bytes enter the program from outside, and
                 // nothing a `.nika` file can write is one: `fs` and `io` are
                 // `std`, and `std` states its own (ADR-010 D2).
@@ -2233,6 +2248,9 @@ impl Ledger {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
+            }
+            if contract.ends_by_length {
+                out.push_str("ends_by_length = true\n");
             }
             if let Some(signature) = &contract.signature {
                 out.push_str(&format!("signature = \"{}\"\n", escape(&signature.text())));
@@ -2525,6 +2543,7 @@ impl Ledger {
                             entry.signature = Some(Signature::parse(&unquote(value, at())?)?)
                         }
                         "doc" => entry.doc = Some(unquote(value, at())?),
+                        "ends_by_length" => entry.ends_by_length = value == "true",
                         _ => return Err(anyhow!("line {}: unknown key `{key}` on a fn", at())),
                     }
                 }

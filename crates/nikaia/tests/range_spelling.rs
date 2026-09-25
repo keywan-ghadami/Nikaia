@@ -45,9 +45,11 @@ fn the_old_inclusive_spelling_is_refused_by_name() {
 /// that works in half the language.
 #[test]
 fn the_head_chain_reads_the_same_two() {
-    assert!(emit("fn main() { let r = 0..<5\n for i in r { } }").contains("0..5"));
+    // A range kept in a name is a value of its own (ADR-212 D3), `span` for
+    // `..<` and `through` for `..`; one written into the `for` is Rust's.
+    assert!(emit("fn main() { let r = 0..<5\n for i in r { } }").contains("range::span(0, 5)"));
     assert!(emit("fn main() { if 3 > 2 { for i in 0..<5 { } } }").contains("0..5"));
-    assert!(emit("fn main() { let r = 0..5\n for i in r { } }").contains("0..=5"));
+    assert!(emit("fn main() { let r = 0..5\n for i in r { } }").contains("range::through(0, 5)"));
 }
 
 /// **A slice reads them too**, which is D4's *everywhere*: `..` is inclusive in

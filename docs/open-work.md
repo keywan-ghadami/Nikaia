@@ -756,6 +756,11 @@ surface* — and a `for` over one binds its item. A program cannot write either
 
 The entries: `HashMap::keys`, `HashMap::values`, `String::chars`, `Vec::drain`,
 `HashMap::drain`, `io::lines`, and six consumers under the receiver's own word.
+[ADR-212](specification/adr/adr-212.md) added three words about the sequence as
+a whole (`ends`, `sized`, `replays`), a range as a sequence that replays, the
+rest of a pipeline (`rev`, `zip`, `take`, `skip`, `step_by`, a list's `iter`,
+`windows`, `chunks`) and `NK2702` at every place a sequence is taken; its §5
+lists what it found and left.
 
 *`io::lines` was the one that mattered.* It said `-> Lines`, a named type whose
 `iterates = "throws"` carried the failing step — which worked for the `for` and

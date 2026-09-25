@@ -1,7 +1,7 @@
 # Nikaia Examples
 
-Thirteen of the fourteen programs here compile, run, and are checked by `cargo test`. The
-fourteenth is written at specification level — it shows what Nikaia 0.0.7 is meant to look like,
+Fourteen of the fifteen programs here compile, run, and are checked by `cargo test`. The
+fifteenth is written at specification level — it shows what Nikaia 0.0.7 is meant to look like,
 and what it needs is listed under *Gaps* below.
 
 Two of them are a **pair**: `http/` is a package and `hello-http/` is a program that reaches it
@@ -20,6 +20,7 @@ down rather than described.
 | [`k-nucleotide.nika`](k-nucleotide.nika) | the CLBG benchmark: FASTA on standard input, counted | ✅ `crates/nikaia/tests/examples.rs` |
 | [`escaping.nika`](escaping.nika) | an HTML table: the template escapes, the type says what is markup | ✅ `crates/nikaia/tests/examples.rs` |
 | [`report.nika`](report.nika) | a stock file in, an HTML page **written to disk**: the first result that is a file | ✅ `crates/nikaia/tests/examples.rs` |
+| [`trend.nika`](trend.nika) | ten days of readings, looked at **from the end**: a pipeline turned round without a copy, and a range walked twice | ✅ `crates/nikaia/tests/examples.rs` |
 | [`tally.nika`](tally.nika) | a pipe read line by line in **constant memory**, and a loop that can fail | ✅ `crates/nikaia/tests/examples.rs` |
 | [`inventory/`](inventory/) | `report.nika` again, in **three files**: what a module boundary buys and costs | ✅ `crates/nikaia/tests/examples.rs` |
 | [`fortunes.nika`](fortunes.nika) | the TechEmpower benchmark: a SQL DSL and an HTML template DSL in one handler | ❌ needs G6 and G7 |
@@ -27,7 +28,7 @@ down rather than described.
 | [`hello-http/`](hello-http/) | a **server**, and a program that reaches `http` **by a path**: one address and one function that decides | ✅ `crates/nikaia/tests/project.rs`, over a real socket |
 | [`sqlite/`](sqlite/) | a real **C library**, end to end: a buffer, two handles with their `cleanup`, an out-parameter and text the library owns | ✅ `crates/nikaia/tests/foreign_pointers.rs`, skipped where the machine has no `libsqlite3` |
 
-Each of the eleven single programs is compiled and run **at both settings**, and their output
+Each of the twelve single programs is compiled and run **at both settings**, and their output
 must be identical — that is the claim the switches rest on, and a test is where it belongs
 rather than in a paragraph. The pair is built once, through its consumer, because what it is
 there to show is the dependency arm rather than a body of code. Each is the real file: the
@@ -68,6 +69,12 @@ They are deliberately different shapes.
   io::lines()` reads, a read can fail, nothing marks it, and the failure leaves the function —
   which is why `throws` is on the signature and why the compiler puts it there
   (`NK2701`).
+* **`trend.nika`** is the one that walks a pipeline **from its back end**
+  ([ADR-212](../docs/specification/adr/adr-212.md)). Every answer is the newest few of
+  something - averages over a window, day-over-day changes, every third day - and none of them
+  reverses a copy: `windows` hands out views, `map` computes one value at a time, and `rev`
+  walks the result backwards, which the compiler allows because it knows the list has a back
+  end and that `map` keeps it. The days are a range kept in a name and walked twice.
 * **`k-nucleotide.nika`** is the one that reads **standard input**, and the difference a pipe
   makes is the point of it. `1brc.nika` maps its file and copies nothing at all; here there are
   no pages to point at, because the bytes do not exist until they are read — so the program owns

@@ -626,7 +626,7 @@ doc = "What this key names, or nothing where the key is not there.\n\nA key is d
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashMap[$K, $V]) -> Seq[$K] sync"
+signature = "(ref collections::HashMap[$K, $V]) -> Seq[$K] sync sized"
 doc = "The keys, one at a time.\n\nA map has no order of its own, so a program that prints one says which order\nit means."
 
 [fn."collections::HashMap::len"]
@@ -647,7 +647,7 @@ doc = "A map with nothing in it. It is written `HashMap()`."
 pub = true
 sync = true
 touches = []
-signature = "(ref collections::HashMap[$K, $V]) -> Seq[$V] sync"
+signature = "(ref collections::HashMap[$K, $V]) -> Seq[$V] sync sized"
 doc = "The values, one at a time, in the order the keys come out in."
 
 # Runs the lambda it is given, so what it does is what the lambda does - which
@@ -721,7 +721,7 @@ pub = true
 sync = true
 touches = []
 returns = "borrows(self)"
-signature = "(ref String) -> Seq[char] sync"
+signature = "(ref String) -> Seq[char] sync ends"
 doc = "The characters, one at a time.\n\nThey are **characters** and not bytes: a character outside ASCII is more than\none byte, and this walks one of it rather than several."
 
 [fn."String::len"]
@@ -839,14 +839,14 @@ doc = "A list with nothing in it. It is written `Vec()`."
 pub = true
 sync = true
 touches = []
-signature = "(Vec[$T]) -> Seq[$T] sync"
+signature = "(Vec[$T]) -> Seq[$T] sync ends sized"
 doc = "The elements, one at a time, **taken out** of the list.\n\nWhat a `for` over this binds is owned rather than lent, so an element may be\nhanded to something that keeps it - and the list goes with them, because\nthat is what taking them out means."
 
 [fn."collections::HashMap::drain"]
 pub = true
 sync = true
 touches = []
-signature = "(collections::HashMap[$K, $V]) -> Seq[($K, $V)] sync"
+signature = "(collections::HashMap[$K, $V]) -> Seq[($K, $V)] sync sized"
 doc = "The pairs, one at a time, **taken out** of the map.\n\nWhat a `for` over this binds is owned rather than lent, so a key or a value\nmay be handed to something that keeps it - and the map goes with them,\nbecause that is what taking them out means."
 
 # --- What is produced step by step, and what walks it ------------------------
@@ -868,6 +868,16 @@ doc = "The pairs, one at a time, **taken out** of the map.\n\nWhat a `for` over 
 #
 # **Every entry here is found by its receiver being a `Seq`**, which is what
 # gives the 35 unanswered method calls of ADR-105 §1 somewhere to resolve.
+#
+# **And three words about the sequence as a whole**
+# ([ADR-212](../../docs/specification/adr/adr-212.md) D1): `ends` - it can be
+# walked from the back; `sized` - its length is known before it is walked;
+# `replays` - walking it does not use it up, which only a range does. In a
+# receiver's position they are a **demand** (`rev` writes `Seq[$T] ends`); on a
+# result they **pass through** (D2): the result has a word the entry writes
+# where every sequence handed in has it too. `ends_by_length` says the result is
+# walked from the back only where the length of what went in is known, which is
+# what the language below asks of a `take`, a `zip`, a `skip` and a `step_by`.
 
 [fn."Seq::collect"]
 pub = true
@@ -903,14 +913,15 @@ doc = "Everything the sequence produces, written one after another with this tex
 
 # `sync = "from(f)"` for the reason `list::ListExt::map` has it: the step is the
 # lambda, so the caller's own claim is what decides ([ADR-029](../../docs/specification/adr/adr-029.md)
-# D3). The **result's** words are left off for the same reason, one level down:
-# a step of this may pause exactly when the lambda may, and the type language
-# has no way to say *whatever the lambda says*.
+# D3). The **result's** step words are left off for the same reason, one level
+# down: a step of this may pause exactly when the lambda may, and the type
+# language has no way to say *whatever the lambda says*. What its elements
+# **are** it does say since ADR-212 D5: `$U` is what the lambda comes to.
 [fn."Seq::map"]
 pub = true
 sync = "from(f)"
 touches = []
-signature = "(Seq[$T], f: fn($T)) -> Seq[?]"
+signature = "(Seq[$T], f: fn($T) -> $U) -> Seq[$U] ends sized"
 doc = "Each element through a function.\n\nThe elements are produced as they are asked for, so nothing is walked until\nsomething walks the result. Whether a step pauses is the lambda's answer."
 
 [fn."Seq::filter"]
@@ -919,8 +930,79 @@ sync = "from(f)"
 touches = []
 # The element type survives a filter, which is the one place a `Seq` entry says
 # more than `?`.
-signature = "(Seq[$T], f: fn($T)) -> Seq[$T]"
+signature = "(Seq[$T], f: fn($T)) -> Seq[$T] ends"
 doc = "Only the elements the function says yes to.\n\nThe element type survives, so what comes out holds what went in. Whether a\nstep pauses is the lambda's answer."
+
+# --- The rest of a pipeline ([ADR-212](../../docs/specification/adr/adr-212.md) D5)
+#
+# None of these allocates: each is the language below's own adapter, walked one
+# element at a time, and a chain of them is one loop. `step_by`, `take`, `skip`
+# and `nth` take a count, which is an `i64` here and a `usize` below; the
+# checker names those arguments by entry and the emitter converts them.
+
+[fn."Seq::rev"]
+pub = true
+sync = true
+touches = []
+# `ends` on the receiver is the demand: `io::lines().rev()` is `NK2703`.
+signature = "(Seq[$T] ends) -> Seq[$T] ends sized"
+doc = "The same elements, from the last to the first.\n\nNothing is collected on the way: the sequence is walked from its back end,\nwhich is why it has to have one - a range, a list's `iter()`, `chars()`."
+
+[fn."Seq::zip"]
+pub = true
+sync = true
+touches = []
+ends_by_length = true
+signature = "(Seq[$T], other: Seq[$U]) -> Seq[($T, $U)] ends sized"
+doc = "Pairs, one element of each, until the shorter of the two ends."
+
+[fn."Seq::take"]
+pub = true
+sync = true
+touches = []
+ends_by_length = true
+signature = "(Seq[$T], n: i64) -> Seq[$T] ends sized"
+doc = "The first `n` elements, or all of them where there are fewer."
+
+[fn."Seq::skip"]
+pub = true
+sync = true
+touches = []
+ends_by_length = true
+signature = "(Seq[$T], n: i64) -> Seq[$T] ends sized"
+doc = "Everything after the first `n` elements."
+
+[fn."Seq::step_by"]
+pub = true
+sync = true
+touches = []
+ends_by_length = true
+signature = "(Seq[$T], step: i64) -> Seq[$T] ends sized"
+doc = "The first element, and then every `step`-th after it.\n\nA step of `0` aborts, since it would never move."
+
+[fn."Vec::iter"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref Vec[$T]) -> Seq[ref $T] sync ends sized"
+doc = "The elements, one at a time, **lent**: the list stays where it is.\n\nThis is where a pipeline over a list starts - `xs.iter().map(…)` - and it\ncan be walked from either end."
+
+[fn."Vec::chunks"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref Vec[$T], n: i64) -> Seq[ref Vec[$T]] sync ends sized"
+doc = "The list in runs of `n` elements, the last one shorter where it does not\ndivide evenly.\n\nEach run is a view of the list, not a copy."
+
+[fn."Vec::windows"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref Vec[$T], n: i64) -> Seq[ref Vec[$T]] sync ends sized"
+doc = "Every run of `n` elements in a row, each one starting one further on.\n\nEach run is a view of the list, not a copy."
 
 [fn."Vec::push"]
 pub = true

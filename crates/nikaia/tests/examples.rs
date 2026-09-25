@@ -249,6 +249,26 @@ CG 1.117
         wrote: None,
     },
     Example {
+        file: "trend.nika",
+        input: None,
+        stdin: None,
+        args: &[],
+        // ADR-212's program: every answer is a pipeline walked from its back
+        // end, and a range walked twice. Worked out by hand, not read off a run.
+        expected: "\
+moving average over 3 days, latest first:
+  25
+  23
+  21
+day over day, latest first:
+  24 -> 28: 4
+  25 -> 24: -1
+  22 -> 25: 3
+peak: day 9, 28
+every third day, from today back: 28 22 17 12",
+        wrote: None,
+    },
+    Example {
         file: "tally.nika",
         input: None,
         // A pipe, and the point of the example: the program never holds more
@@ -637,7 +657,7 @@ fn build(file: &str, how: Build) -> (PathBuf, PathBuf) {
 
     // **A package is a directory** (ADR-047 D1), so an example in a directory of
     // its own is a package and a loose one is not. `examples/` itself is a
-    // directory of *programs*: eleven files each declaring `main`, filed
+    // directory of *programs*: twelve files each declaring `main`, filed
     // together, which is exactly what the `--input` path outside a project makes
     // of them.
     let program = match file.contains('/') {

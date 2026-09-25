@@ -17,7 +17,7 @@
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
-  <img src="https://img.shields.io/badge/version-0.0.187-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.0.188-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/status-specification_+_bootstrap-orange.svg" alt="Status" />
   <img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License" />
   <a href="https://keywan-ghadami.github.io/Nikaia/"><img src="https://img.shields.io/badge/docs-github.io-blue.svg" alt="Documentation site" /></a>
@@ -392,7 +392,7 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-**Pre-alpha, as of 0.0.187.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
+**Pre-alpha, as of 0.0.188.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
 that counts *areas of scope* built, and the language area alone reads 98 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in
@@ -420,6 +420,7 @@ own words** with an `NK`-code and a help line, and the ones that are not still p
 | write tests | nothing to run them with | no `nikaia test` and no `assert` — Part III 14 is not built. Compare output instead |
 | format, get completion, generate docs | nothing | no `nikaia fmt`, no LSP, no `nikaia doc`. [`editors/vscode`](editors/) has syntax highlighting only |
 | put a **view** of text (a `ref String` parameter, a slice, a name bound to a literal) where a `String` is **kept** — a field, a `return` | refused, and the message says why and what copies nothing | a copy of text you already have is written, never inserted; a literal itself is fine anywhere, and a view handed to a function that only reads needs nothing |
+| write into a map keyed by an owned `String` (`m[name] = 1` on a `HashMap[String, …]`) | an error from `rustc`, not from Nikaia | not built yet ([ADR-212](docs/specification/adr/adr-212.md) §5); key the map by `ref String`, as every example does |
 | do I/O inside a lambda handed to `std` (`map`, `filter`, …) | refused — write a `for` loop | `std`'s entries take synchronous Rust closures; a lazy walk of a pausing sequence has no shape yet |
 | put your own modules in subdirectories (`src/a/b.nika`) | not found | modules are one level: a `.nika` file beside `main.nika` |
 | talk to a database | not possible | `std::db` and the SQL DSL are specified, not built — which is why `fortunes` doesn't run |

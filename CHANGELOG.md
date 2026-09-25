@@ -4,6 +4,47 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.188] — 2026-09-25
+
+**A sequence says what it is as a whole: a range replays, a pipeline walks
+from its back end, and every taking is seen** —
+[ADR-212](docs/specification/adr/adr-212.md). Outside feedback the owner
+decided: the repairs first, and reversing a pipeline without a `collect()`; the
+two-ended cursor left out on purpose.
+
+**The repairs.** Four programs a tester writes in the first hour went to
+`rustc`: a range kept in a name and walked (`let r = 0..<3`, `for i in r` —
+*no method named `iter`*), a named `keys()` or `drain()` in a `for` (the same),
+and a sequence taken by a `let`, inside a loop or inside a lambda and then used
+again (*use of moved value*). A range now has a type — a sequence that
+**replays** — and below it is `nikaia_std::range::Span`, a `Copy` value walked
+as a copy, so it can be walked twice, backwards and in steps. A `for` over a
+named sequence hands it over instead of writing `.iter()`. `NK2702` now sees
+every read that takes a sequence, and a take inside a loop or lambda of a
+sequence from outside it — unless the loop gives it a new one or may leave.
+And it learned the arms of an `if` and a `match`: taking in the `then` and
+reading in the `else` was refused before, a correct program.
+
+**Three words after `Seq[T]`**: `ends` (walkable from the back), `sized` (length
+known), `replays`. On a receiver they are a demand — `io::lines().rev()` is
+**`NK2703`**, in the program's words — and on a result they pass through, with
+`ends_by_length` for the adapters Rust walks backwards only when it knows the
+length (`take`, `zip`, `skip`, `step_by`). Two words and not one, because
+`chars().rev()` has no length and `filter(…).zip(…).rev()` needs one.
+
+**The pipeline**: `map` keeps its element type (the lambda's body binds `$U`),
+and `rev`, `zip`, `take`, `skip`, `step_by`, a list's `iter()`, `windows` and
+`chunks` are new — all the language below's own adapters, so a chain is one loop
+and nothing is collected. A count is an `i64` here and converted by the entry
+the call resolved to, so a program's own method called `take` is untouched.
+Rust's `Range<i64>` has no length, so `(0..n).step_by(2).rev()` would not have
+compiled below; `Span` has one for every integer type.
+
+**New example**: `examples/trend.nika`, three answers read from the end of a
+list and a range walked twice. **Found and left** (ADR-212 §5): writing into a
+map keyed by an owned `String`, `HashMap::insert`, `str::chars -> ?`, two takes
+of one sequence within one statement.
+
 ## [0.0.187] — 2026-09-25
 
 **What an error carries besides itself is one word** —

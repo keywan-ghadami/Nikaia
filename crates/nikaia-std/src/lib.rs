@@ -38,6 +38,7 @@ pub mod list;
 pub mod lock;
 pub mod net;
 pub mod num;
+pub mod range;
 pub mod rt;
 pub mod task;
 pub mod tether;

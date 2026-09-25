@@ -200,8 +200,71 @@ pub enum Ty {
         pauses: bool,
         throws: bool,
         parallel: bool,
+        /// What the sequence is **as a whole** rather than what one step does
+        /// ([ADR-212](../../../../docs/specification/adr/adr-212.md) D1): whether
+        /// it can be walked from the back, whether its length is known, and
+        /// whether walking it leaves it there.
+        shape: Shape,
     },
 }
+
+/// **What a sequence is as a whole**
+/// ([ADR-212](../../../../docs/specification/adr/adr-212.md) D1): three words
+/// after `Seq[T]`, beside the three about a step.
+///
+/// They are the language below's `DoubleEndedIterator`, `ExactSizeIterator` and
+/// `Copy`, said in this language's words so that the checker can answer what
+/// `rustc` would otherwise answer about a file nobody wrote: `io::lines().rev()`
+/// is refused here, in terms of the program, and not in the generated Rust.
+///
+/// * **`ends`** — it can be walked from the back as well as the front.
+///   `chars()`, `drain()` and a range can; `keys()` and `io::lines()` cannot.
+/// * **`sized`** — its length is known before it is walked. A range's is;
+///   a `filter`'s is not, because the lambda decides.
+/// * **`replays`** — walking it does not consume it, so `NK2702` does not
+///   apply. A range is a value, two numbers, and walking one walks a copy.
+///
+/// **Two words for the back and not one**, because the language below needs the
+/// length to walk some things from the back and not others: a `filter` is
+/// walked backwards without it, a `take` and a `zip` are not. One word would
+/// have refused `chars().rev()` or allowed `lines.take(3).rev()`.
+///
+/// **In a receiver's position they are a demand** — `rev` writes
+/// `(Seq[$T] ends)` — and **in a result's they pass through**: a result has a
+/// word where the entry writes it and every sequence handed in has it too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Shape {
+    pub ends: bool,
+    pub sized: bool,
+    pub replays: bool,
+}
+
+impl Shape {
+    /// Whether a sequence of this shape can go where `wanted` is demanded.
+    pub fn meets(&self, wanted: &Shape) -> bool {
+        self.missing(wanted).is_empty()
+    }
+
+    /// The words `wanted` demands and this shape does not have, in the order
+    /// they are written.
+    pub fn missing(&self, wanted: &Shape) -> Vec<&'static str> {
+        [
+            (wanted.ends && !self.ends, ENDS),
+            (wanted.sized && !self.sized, SIZED),
+            (wanted.replays && !self.replays, REPLAYS),
+        ]
+        .into_iter()
+        .filter_map(|(missing, word)| missing.then_some(word))
+        .collect()
+    }
+}
+
+/// [`Shape::ends`]'s word.
+pub const ENDS: &str = "ends";
+/// [`Shape::sized`]'s word.
+pub const SIZED: &str = "sized";
+/// [`Shape::replays`]'s word.
+pub const REPLAYS: &str = "replays";
 
 /// The stamp a lock puts on what it hands out
 /// ([ADR-111](../../../../docs/specification/adr/adr-111.md) D1).
@@ -537,6 +600,7 @@ impl Ty {
                     pauses: ap_,
                     throws: at,
                     parallel: apar,
+                    shape: ashape,
                 },
                 Ty::Seq {
                     item: b,
@@ -544,6 +608,7 @@ impl Ty {
                     pauses: bp_,
                     throws: bt,
                     parallel: bpar,
+                    shape: bshape,
                 },
                 // **`pauses` fits the same way `throws` does and the opposite
                 // way to `sync`** ([ADR-172](../../../../docs/specification/adr/adr-172.md)
@@ -558,6 +623,9 @@ impl Ty {
                     && (!*ap_ || *bp_)
                     && (!*at || *bt)
                     && (*apar || !*bpar)
+                    // A demand is met by a sequence that has the word
+                    // (ADR-212 D1), exactly as `sync` is.
+                    && ashape.meets(bshape)
             }
             // A variable that reaches a comparison was never bound, and an
             // unbound variable is the absence of a claim rather than a claim
@@ -696,7 +764,27 @@ impl Ty {
             let mut is_sync = false;
             let mut pauses = false;
             let mut throws = false;
+            let mut shape = Shape::default();
             loop {
+                // **The shape's three words** (ADR-212 D1), in any order among
+                // the step's.
+                let words = [
+                    (ENDS, &mut shape.ends),
+                    (SIZED, &mut shape.sized),
+                    (REPLAYS, &mut shape.replays),
+                ];
+                let mut took = false;
+                for (word, flag) in words {
+                    if let Some(shorter) = word_off(tail, word) {
+                        *flag = true;
+                        tail = shorter;
+                        took = true;
+                        break;
+                    }
+                }
+                if took {
+                    continue;
+                }
                 if let Some(shorter) = word_off(tail, "throws") {
                     throws = true;
                     tail = shorter;
@@ -735,6 +823,7 @@ impl Ty {
                 pauses,
                 throws,
                 parallel,
+                shape,
             };
         }
         let (view, rest) = match a_view_of(text) {
@@ -818,12 +907,14 @@ impl Ty {
                 pauses,
                 throws,
                 parallel,
+                shape,
             } => Ty::Seq {
                 item: Box::new(item.erase(parameters)),
                 is_sync: *is_sync,
                 pauses: *pauses,
                 throws: *throws,
                 parallel: *parallel,
+                shape: *shape,
             },
             // A library's variable is not a Nikaia function's generic, and
             // erasing one is not the other's business.
@@ -900,12 +991,14 @@ impl Ty {
                 pauses,
                 throws,
                 parallel,
+                shape,
             } => Ty::Seq {
                 item: Box::new(item.parameterise(parameters)),
                 is_sync: *is_sync,
                 pauses: *pauses,
                 throws: *throws,
                 parallel: *parallel,
+                shape: *shape,
             },
             Ty::Var { name, view } => Ty::Var {
                 name: name.clone(),
@@ -1151,6 +1244,7 @@ impl fmt::Display for Ty {
                 pauses,
                 throws,
                 parallel,
+                shape,
             } => {
                 let word = match parallel {
                     true => PAR,
@@ -1167,6 +1261,9 @@ impl fmt::Display for Ty {
                 }
                 if *throws {
                     f.write_str(" throws")?;
+                }
+                for word in Shape::default().missing(shape) {
+                    write!(f, " {word}")?;
                 }
                 Ok(())
             }
@@ -1459,6 +1556,29 @@ pub fn bind(pattern: &Ty, actual: &Ty, out: &mut std::collections::BTreeMap<Stri
         // with a `Seq` receiver and has to bind against the value that reached
         // it.
         (Ty::Seq { item: pattern, .. }, Ty::Seq { item: actual, .. }) => bind(pattern, actual, out),
+        // **A lambda binds through its parameters and what it comes to**
+        // ([ADR-212](../../../../docs/specification/adr/adr-212.md) D5):
+        // `Seq::map(Seq[$T], f: fn($T) -> $U) -> Seq[$U]` learns `$U` from the
+        // lambda it was handed, which is how a chain keeps its element type.
+        (
+            Ty::Fn {
+                params: pattern_params,
+                result: pattern_result,
+                ..
+            },
+            Ty::Fn {
+                params: actual_params,
+                result: actual_result,
+                ..
+            },
+        ) => {
+            for (pattern, actual) in pattern_params.iter().zip(actual_params) {
+                bind(pattern, actual, out);
+            }
+            if let (Some(pattern), Some(actual)) = (pattern_result, actual_result) {
+                bind(pattern, actual, out);
+            }
+        }
         // The view flag is deliberately not compared: `&HashMap[$K, $V]` must
         // bind against a `HashMap[…]` held by value and the other way round,
         // because a signature writes the receiver the way the method takes it
@@ -1671,12 +1791,14 @@ pub fn substitute(ty: &Ty, bound: &std::collections::BTreeMap<String, Ty>) -> Ty
             pauses,
             throws,
             parallel,
+            shape,
         } => Ty::Seq {
             item: Box::new(substitute(item, bound)),
             is_sync: *is_sync,
             pauses: *pauses,
             throws: *throws,
             parallel: *parallel,
+            shape: *shape,
         },
         Ty::Nullable(inner) => Ty::Nullable(Box::new(substitute(inner, bound))),
         Ty::Unknown => Ty::Unknown,
