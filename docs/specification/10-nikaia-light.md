@@ -1,7 +1,7 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.185 (Draft)
-**Date:** 2026-09-24
+**Version:** 0.0.187 (Draft)
+**Date:** 2026-09-25
 
 ---
 
@@ -2479,9 +2479,12 @@ on `error` is told the same as one that does not ([ADR-101](adr/adr-101.md)).
 was raised. The chain holds every error that joined on the way: a cleanup that
 failed while the stack was unwinding is attached to the original as a
 *secondary* error rather than replacing it (6.4), and so are the other failing
-branches of an `overlap` (8.1.2). The list is `error.secondary`, in the order
-the errors joined, each with its own site. A `catch` catches one error and
-chooses by its type ([ADR-115](adr/adr-115.md)). The site costs nothing at run
+branches of an `overlap` (8.1.2). The joined errors are kept in the order they
+joined, each with its own site, and a log, an uncaught failure and `nikaia
+explain` show them under the first. They are a diagnostic, not a value: a
+program does not read them, and `throw error` hands them on
+([ADR-210](adr/adr-210.md)). A `catch` catches one error and chooses by its type
+([ADR-115](adr/adr-115.md)). The site costs nothing at run
 time: the compiler wrote it into the binary as text.
 
 **A stack trace is not carried.** `NIKAIA_TRACE=1` asks for one; without it
@@ -2644,8 +2647,9 @@ first **in written order** wins, so the result is reproducible. The other
 failures are attached to the winner as its `secondary` list, in written order,
 and a log or `nikaia explain` shows them under it ([ADR-115](adr/adr-115.md)).
 Per-branch handling is a `catch` inside the branch. Combining failures is a
-`catch` on the block, where the handler has the winner and `error.secondary`. A
-branch cannot see another branch's failure, because branches meet on nothing.
+`catch` on the block, where the handler has the winner; re-thrown with `throw
+error`, the others go with it ([ADR-210](adr/adr-210.md)). A branch cannot see
+another branch's failure, because branches meet on nothing.
 
 **A branch is an expression.** Several steps in one branch are a block
 expression inside it. Two branches that would both be multi-line blocks of the

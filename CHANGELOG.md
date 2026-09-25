@@ -4,6 +4,67 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.187] — 2026-09-25
+
+**What an error carries besides itself is one word** —
+[ADR-211](docs/specification/adr/adr-211.md), the owner's objection to
+ADR-210 D3: every error paying for the special cases is not this language's
+idea of cost.
+
+It was worse than the list's 24 bytes. A function that can fail returns a
+`Result`, and a `Result` is as large as its failure half **whether it fails or
+not**: `Result<Int, Thrown<ConfigError>>` was 96 bytes where the bare error
+costs 16 — the site as a two-word `&str`, a 48-byte `Option<Backtrace>` almost
+no process fills, and the list only an `overlap` fills. ADR-210 D3's *the
+success path never sees an envelope* was wrong, and is marked so.
+
+Now the site, the trace and the list are **one tagged word**: odd, the site
+alone, which is nearly every error and allocates nothing; even, a cold box with
+the trace and the list, made only where a process traces or something joins.
+The word is never zero, so a `Result` finds its niche there whatever the
+author's type: for a field-less `enum`, a unit struct or one `Int` of payload,
+`Result<Int, Thrown<E>>` is **16 bytes — what the bare error costs**. `Site<E>`
+went from 88 bytes to 8, the boxed channel's envelope from 104 to 24. The sizes
+are asserted in tests; the `unsafe` that reads the word runs clean under Miri
+with strict provenance.
+
+**Changed below:** the emitter writes a `throw`'s site as `&"load"` (a
+reference to the text, promoted like any constant) where it wrote `"load"`.
+
+**Not done, and why (D3):** the boxed channel is still two allocations per
+`throw`. One would need the error inside a generic envelope, which a downcast
+cannot find again — so either a failure channel type of this library's own that
+every Rust-side `?` converts into, or a deprecated method as a marker. Both cost
+more than an allocation on the failure path.
+
+## [0.0.186] — 2026-09-25
+
+**The joined failures are a diagnostic, not a value** —
+[ADR-210](docs/specification/adr/adr-210.md), the owner's answer to
+`open-decisions.md`'s last question: **option 3**, against the page's
+recommendation of an opaque `Failures` type. Nothing is built, which is the
+decision.
+
+The secondary list exists because the language itself makes two failures
+happen at once — the branches of an `overlap`, or a cleanup failing while an
+error is already leaving — and a `throw` carries one; dropping the other would
+lose exactly what an operator needs in an outage. That is built and stays: the
+list travels with the failure, `throw error` keeps it, and the long form prints
+it. What is withdrawn is reading it **in code** (`throw LoadFailed(error,
+error.secondary)`, ADR-115 D4's example): nothing in the repository needed it,
+and a type introduced for one example is a construct whose only reader is the
+sentence that introduced it. If a program ever needs it, an opaque `Failures`
+can be added then without breaking anything.
+
+D3 writes down why every envelope carries the field though only two things fill
+it: a failure travels through `?` into a function that may join, and two
+envelope types would convert at every boundary; an empty list allocates nothing
+and only the failure path sees it.
+
+**Corrected on the way:** Part I 7.1 and 8.1.2 said a handler reads
+`error.secondary`. No such name was ever built. `open-decisions.md` is empty;
+`open-work.md` loses the bullet that pointed at the question.
+
 ## [0.0.185] — 2026-09-24
 
 **The tether is built: a buffer lives in the keep of whatever keeps its views,

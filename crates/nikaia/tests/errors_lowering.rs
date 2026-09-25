@@ -99,7 +99,7 @@ fn throw_leaves_the_function() {
         "#,
     );
     assert!(
-        rust.contains(r#"return Err(nikaia_std::error::raise(ConfigError::NotFound, "load"))"#),
+        rust.contains(r#"return Err(nikaia_std::error::raise(ConfigError::NotFound, &"load"))"#),
         "{rust}"
     );
 }
@@ -675,7 +675,7 @@ fn a_throw_carries_the_site_it_came_from() {
         "#,
     );
     assert!(
-        rust.contains(r#"nikaia_std::error::raise(E::X, "load")"#),
+        rust.contains(r#"nikaia_std::error::raise(E::X, &"load")"#),
         "the raise site should be in the call:\n{rust}"
     );
 }
@@ -696,7 +696,7 @@ fn a_throw_in_main_names_main_and_not_the_lowering() {
         "#,
     );
     assert!(
-        rust.contains(r#"nikaia_std::error::raise(E::X, "main")"#),
+        rust.contains(r#"nikaia_std::error::raise(E::X, &"main")"#),
         "the site is the name the author wrote:\n{rust}"
     );
     assert!(

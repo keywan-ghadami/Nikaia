@@ -20,6 +20,8 @@
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::error::Error;
 use std::fmt;
+use std::marker::PhantomData;
+use std::ptr::NonNull;
 use std::sync::OnceLock;
 
 /// Whether this process captures a trace when an error is raised.
@@ -34,27 +36,169 @@ fn tracing() -> bool {
     })
 }
 
+/// Where a `throw` was, as the compiler wrote it: **a reference to the text**
+/// rather than the text's own two words, so that it fits in one word beside a
+/// tag ([ADR-211](../../../docs/specification/adr/adr-211.md) D1). The emitter
+/// writes `&"load"`, which the language below promotes to a `'static` like any
+/// constant, so it still costs nothing at run time.
+pub type Origin = &'static &'static str;
+
+/// Everything an error carries besides itself, **in one word**
+/// ([ADR-211](../../../docs/specification/adr/adr-211.md) D1).
+///
+/// * **Odd**: the site and nothing else - the address of the [`Origin`] with
+///   its lowest bit set. That is what nearly every error is: nothing joined it,
+///   and nobody asked for a trace.
+/// * **Even**: the address of a [`Cold`] box holding the site, the trace and
+///   the failures that joined. It is allocated only where `NIKAIA_TRACE` asked
+///   for a trace or something joined, which are the two special cases, so only
+///   they pay for it.
+///
+/// Both are addresses of something at least two bytes aligned, so the low bit
+/// is free; and neither is zero, so a `Result` or an `Option` around an
+/// envelope finds its niche **here**, whatever the author's error type looks
+/// like (D2).
+struct Tail<S> {
+    word: NonNull<()>,
+    _cold: PhantomData<Box<Cold<S>>>,
+}
+
+/// The part of the envelope only the special cases need
+/// ([ADR-211](../../../docs/specification/adr/adr-211.md) D1).
+struct Cold<S> {
+    origin: &'static str,
+    trace: Option<Backtrace>,
+    /// **The failures that joined this one**
+    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1), in the
+    /// order they joined.
+    ///
+    /// What fills it is an `overlap` whose later branches failed too (D2), or
+    /// a cleanup that failed while an error was already leaving: the block
+    /// waits for every branch, so when it ends every outcome is known and the
+    /// list is a **fact** rather than a race.
+    secondary: Vec<S>,
+}
+
+// SAFETY: a `Tail` owns at most one `Cold<S>` and otherwise points only at
+// `'static` text, so it may cross a thread or be shared exactly when that box
+// could be - which is what the `PhantomData` would have said, had the word been
+// the box.
+unsafe impl<S: Send> Send for Tail<S> {}
+unsafe impl<S: Sync> Sync for Tail<S> {}
+
+/// The tag: the word holds the site and nothing else.
+const SITE_ONLY: usize = 1;
+
+impl<S> Tail<S> {
+    /// The site alone, in the word itself. No allocation.
+    fn site(origin: Origin) -> Tail<S> {
+        let at = NonNull::from(origin).cast::<()>();
+        Tail {
+            word: at.map_addr(|a| a | SITE_ONLY),
+            _cold: PhantomData,
+        }
+    }
+
+    /// The cold part, boxed, with the box's address as the word.
+    fn cold(cold: Cold<S>) -> Tail<S> {
+        Tail {
+            word: NonNull::from(Box::leak(Box::new(cold))).cast::<()>(),
+            _cold: PhantomData,
+        }
+    }
+
+    /// What a `throw` attaches: the site, and a trace where this process was
+    /// asked for one.
+    fn raised(origin: Origin) -> Tail<S> {
+        match tracing() {
+            // `force_capture`, not `capture`: `capture` additionally requires
+            // `RUST_BACKTRACE`, so `NIKAIA_TRACE=1` alone would capture nothing.
+            true => Tail::traced(origin, Backtrace::force_capture()),
+            false => Tail::site(origin),
+        }
+    }
+
+    fn traced(origin: Origin, trace: Backtrace) -> Tail<S> {
+        Tail::cold(Cold {
+            origin,
+            trace: Some(trace),
+            secondary: Vec::new(),
+        })
+    }
+
+    fn is_site_only(&self) -> bool {
+        self.word.addr().get() & SITE_ONLY != 0
+    }
+
+    fn as_cold(&self) -> Option<&Cold<S>> {
+        match self.is_site_only() {
+            true => None,
+            // SAFETY: an even word is the address `Tail::cold` took from the
+            // box this tail owns, and it is borrowed here through `&self`.
+            false => Some(unsafe { self.word.cast::<Cold<S>>().as_ref() }),
+        }
+    }
+
+    fn origin(&self) -> &'static str {
+        match self.as_cold() {
+            Some(cold) => cold.origin,
+            None => {
+                let at = self.word.as_ptr().map_addr(|a| a & !SITE_ONLY);
+                // SAFETY: an odd word is the address of an `Origin`'s target,
+                // a `&'static str` that lives for the whole program, with the
+                // tag set; clearing the tag gives that address back.
+                unsafe { *at.cast::<&'static str>() }
+            }
+        }
+    }
+
+    fn trace(&self) -> Option<&Backtrace> {
+        self.as_cold().and_then(|cold| cold.trace.as_ref())
+    }
+
+    fn secondary(&self) -> &[S] {
+        self.as_cold().map_or(&[], |cold| &cold.secondary)
+    }
+
+    /// The cold part, made on the spot if this is the first thing to need it
+    /// - which is what joining does.
+    fn cold_mut(&mut self) -> &mut Cold<S> {
+        if self.is_site_only() {
+            *self = Tail::cold(Cold {
+                origin: self.origin(),
+                trace: None,
+                secondary: Vec::new(),
+            });
+        }
+        // SAFETY: the word is even now, the address of the box this tail
+        // owns, and it is borrowed here through `&mut self`.
+        unsafe { self.word.cast::<Cold<S>>().as_mut() }
+    }
+}
+
+impl<S> Drop for Tail<S> {
+    fn drop(&mut self) {
+        if !self.is_site_only() {
+            // SAFETY: an even word came from `Box::leak` in `Tail::cold`, and
+            // this tail is the only thing that holds it.
+            drop(unsafe { Box::from_raw(self.word.cast::<Cold<S>>().as_ptr()) });
+        }
+    }
+}
+
 /// An error on its way out of the function that raised it.
 ///
 /// It is the author's error plus what the language attaches: the site, and a
 /// trace where one was asked for. `Display` is the author's message and nothing
 /// else, because that is what a `{error}` hole prints and what may be shown to
 /// a stranger (Kap 7.1, ADR-018).
+///
+/// **Three words**: the author's error behind its box, and the `Tail` - the
+/// site, and a pointer to the trace and what joined only where there is one
+/// ([ADR-211](../../../docs/specification/adr/adr-211.md) D3).
 pub struct Raised {
     inner: Box<dyn Error>,
-    /// `file:line` of the `throw`. Costs nothing at run time: the compiler knew
-    /// it and wrote it into the binary as text.
-    origin: &'static str,
-    trace: Option<Backtrace>,
-    /// **The failures that joined this one**
-    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1), in the order
-    /// they joined.
-    ///
-    /// Empty until something joins, which costs nothing on the path where
-    /// nothing fails. What fills it is an `overlap` whose later branches failed
-    /// too (D2): the block waits for every branch, so when it ends every
-    /// outcome is known and the list is a **fact** rather than a race.
-    secondary: Vec<Box<dyn Error>>,
+    tail: Tail<Box<dyn Error>>,
 }
 
 impl Raised {
@@ -65,19 +209,19 @@ impl Raised {
     /// `{error}` prints - the short form is the one you get without thinking,
     /// and it is the one that is safe in front of a stranger.
     pub fn full(&self) -> String {
-        let mut out = format!("{}\n  raised at {}", self.inner, self.origin);
+        let mut out = format!("{}\n  raised at {}", self.inner, self.tail.origin());
         let mut source = self.inner.source();
         while let Some(cause) = source {
             out.push_str(&format!("\n  caused by {cause}"));
             source = cause.source();
         }
-        match &self.trace {
+        match self.tail.trace() {
             Some(t) if t.status() == BacktraceStatus::Captured => {
                 out.push_str(&format!("\n{t}"));
             }
             _ => out.push_str("\n  (no trace; set NIKAIA_TRACE=1 to capture one)"),
         }
-        for later in &self.secondary {
+        for later in self.tail.secondary() {
             out.push_str(&indented(&later.full()));
         }
         out
@@ -85,7 +229,7 @@ impl Raised {
 
     /// Where the `throw` was, as the compiler wrote it.
     pub fn origin(&self) -> &'static str {
-        self.origin
+        self.tail.origin()
     }
 }
 
@@ -110,17 +254,13 @@ impl Error for Raised {
 
 /// What `throw` lowers to: put the value in the failure channel, with the site
 /// it came from.
-pub fn raise<E>(error: E, origin: &'static str) -> Box<dyn Error>
+pub fn raise<E>(error: E, origin: Origin) -> Box<dyn Error>
 where
     E: Error + 'static,
 {
     Box::new(Raised {
         inner: Box::new(error),
-        origin,
-        // `force_capture`, not `capture`: `capture` additionally requires
-        // `RUST_BACKTRACE`, so `NIKAIA_TRACE=1` alone would capture nothing.
-        trace: tracing().then(Backtrace::force_capture),
-        secondary: Vec::new(),
+        tail: Tail::raised(origin),
     })
 }
 
@@ -139,21 +279,21 @@ where
 /// shape that compiles — and the box keeps its own `full()` with the cause
 /// chain, which the named case does not need because an author's `enum` has no
 /// cause below it.
+///
+/// **One word more than the error itself**, and a `Result` around it no larger
+/// than that: the site, the trace and what joined are one `Tail`, whose word
+/// is never zero ([ADR-211](../../../docs/specification/adr/adr-211.md) D1, D2).
 pub struct Thrown<E> {
     inner: E,
-    origin: &'static str,
-    trace: Option<Backtrace>,
-    /// The failures that joined this one
-    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
-    ///
-    /// **Of this channel's own type**, which is what makes the list possible at
-    /// all: a joining block hands every branch the same channel
-    /// ([ADR-164](../../../docs/specification/adr/adr-164.md) D2), so the
-    /// failures that meet here are the same kind of thing as the one they meet.
-    /// Each keeps its own envelope, so each keeps the site
+    /// What joined it is **of this channel's own type**
+    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1), which is
+    /// what makes the list possible at all: a joining block hands every branch
+    /// the same channel ([ADR-164](../../../docs/specification/adr/adr-164.md)
+    /// D2), so the failures that meet here are the same kind of thing as the
+    /// one they meet. Each keeps its own envelope, so each keeps the site
     /// [ADR-023](../../../docs/specification/adr/adr-023.md) D6 gives it — and
     /// a secondary with secondaries of its own is D3's tree.
-    secondary: Vec<Thrown<E>>,
+    tail: Tail<Thrown<E>>,
 }
 
 impl<E> Thrown<E> {
@@ -166,19 +306,12 @@ impl<E> Thrown<E> {
     /// `throw error` (D3) — so it comes back beside the error rather than
     /// around it, and the handler holds both.
     pub fn split(self) -> (E, Site<E>) {
-        (
-            self.inner,
-            Site {
-                origin: self.origin,
-                trace: self.trace,
-                secondary: self.secondary,
-            },
-        )
+        (self.inner, Site { tail: self.tail })
     }
 
     /// Where the `throw` was, as the compiler wrote it.
     pub fn origin(&self) -> &'static str {
-        self.origin
+        self.tail.origin()
     }
 }
 
@@ -200,8 +333,9 @@ impl<E: fmt::Display> Thrown<E> {
     /// *process* was started, so repeating it under every joined failure says
     /// the same thing three times and buries the failures.
     fn long(&self, note_trace: bool) -> String {
-        let mut out = full_form_with(&self.inner, self.origin, self.trace.as_ref(), note_trace);
-        for later in &self.secondary {
+        let tail = &self.tail;
+        let mut out = full_form_with(&self.inner, tail.origin(), tail.trace(), note_trace);
+        for later in tail.secondary() {
             out.push_str(&indented(&later.long(false)));
         }
         out
@@ -230,15 +364,14 @@ fn indented(full: &str) -> String {
 /// It exists because a handler is handed the **error** and still has to be able
 /// to answer both of the questions the envelope answers. Carrying it beside the
 /// error is what lets `match error { … }` be the plain match the source wrote.
+///
+/// What joined the error is kept here too
+/// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1), for the same
+/// reason the site is: both of the things the envelope holds have to stay
+/// reachable from where it was opened. **One word**, the envelope's own
+/// ([ADR-211](../../../docs/specification/adr/adr-211.md) D1).
 pub struct Site<E> {
-    origin: &'static str,
-    trace: Option<Backtrace>,
-    /// What joined the error this site belongs to
-    /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1), kept beside
-    /// the error for the same reason the site is: a handler is handed the
-    /// **error**, and both of the things the envelope holds have to stay
-    /// reachable from where it was opened.
-    secondary: Vec<Thrown<E>>,
+    tail: Tail<Thrown<E>>,
 }
 
 impl<E> Site<E> {
@@ -251,7 +384,7 @@ impl<E> Site<E> {
     where
         E: fmt::Display,
     {
-        full_form(error, self.origin, self.trace.as_ref())
+        full_form(error, self.tail.origin(), self.tail.trace())
     }
 
     /// `throw error`: put the error back in the channel, in the envelope it
@@ -262,22 +395,20 @@ impl<E> Site<E> {
     /// look like it was ([ADR-023](../../../docs/specification/adr/adr-023.md)
     /// D6).
     pub fn refill(self, error: E) -> Thrown<E> {
+        // **And what joined it travels on with it**, in the same word. A
+        // handler that passes an error along passes what came with it; dropping
+        // the list here would make `throw error` the one place a failure
+        // quietly loses the others ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
         Thrown {
             inner: error,
-            origin: self.origin,
-            trace: self.trace,
-            // **And what joined it travels on with it.** A handler that passes
-            // an error along passes what came with it; dropping the list here
-            // would make `throw error` the one place a failure quietly loses
-            // the others ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
-            secondary: self.secondary,
+            tail: self.tail,
         }
     }
 
     /// The failures that joined this one, for a handler that reads them
     /// ([ADR-115](../../../docs/specification/adr/adr-115.md) D1).
     pub fn secondary(&self) -> &[Thrown<E>] {
-        &self.secondary
+        self.tail.secondary()
     }
 }
 
@@ -348,12 +479,10 @@ impl<E: Error> Error for Thrown<E> {
 /// carrying a view of the caller's buffer — `ConfigError::NotFound(path)`,
 /// Part I 7.1's own example — has a lifetime, and boxing it into a
 /// `Box<dyn Error>` asks it to outlive the program (`E0521`).
-pub fn throwing<E>(error: E, origin: &'static str) -> Thrown<E> {
+pub fn throwing<E>(error: E, origin: Origin) -> Thrown<E> {
     Thrown {
         inner: error,
-        origin,
-        trace: tracing().then(Backtrace::force_capture),
-        secondary: Vec::new(),
+        tail: Tail::raised(origin),
     }
 }
 
@@ -372,9 +501,7 @@ impl<E> From<E> for Thrown<E> {
     fn from(error: E) -> Thrown<E> {
         Thrown {
             inner: error,
-            origin: BELOW_SITE,
-            trace: None,
-            secondary: Vec::new(),
+            tail: Tail::site(&BELOW_SITE),
         }
     }
 }
@@ -397,7 +524,7 @@ pub trait Joined {
 
 impl<E> Joined for Thrown<E> {
     fn joined_by(&mut self, later: Thrown<E>) {
-        self.secondary.push(later);
+        self.tail.cold_mut().secondary.push(later);
     }
 }
 
@@ -409,7 +536,7 @@ impl<E> Joined for Thrown<E> {
 impl Joined for Box<dyn Error> {
     fn joined_by(&mut self, later: Box<dyn Error>) {
         if let Some(raised) = self.downcast_mut::<Raised>() {
-            raised.secondary.push(later);
+            raised.tail.cold_mut().secondary.push(later);
         }
     }
 }
@@ -480,13 +607,13 @@ mod tests {
 
     #[test]
     fn the_short_form_is_the_message_and_nothing_else() {
-        let e = raise(Boom, "conf.nika:12");
+        let e = raise(Boom, &"conf.nika:12");
         assert_eq!(e.to_string(), "boom");
     }
 
     #[test]
     fn the_full_form_names_the_site() {
-        let e = raise(Boom, "conf.nika:12");
+        let e = raise(Boom, &"conf.nika:12");
         let full = e.full();
         assert!(full.contains("boom"), "{full}");
         assert!(full.contains("raised at conf.nika:12"), "{full}");
@@ -496,7 +623,7 @@ mod tests {
     /// rather than leaving a reader wondering whether it lost one.
     #[test]
     fn without_the_switch_the_absence_is_stated() {
-        let e = raise(Boom, "conf.nika:12");
+        let e = raise(Boom, &"conf.nika:12");
         assert!(e.full().contains("NIKAIA_TRACE=1"), "{}", e.full());
     }
 
@@ -505,8 +632,8 @@ mod tests {
     /// order they joined.
     #[test]
     fn what_joined_is_printed_under_it() {
-        let mut first = throwing(Boom, "load.nika:3");
-        first.joined_by(throwing(Boom, "load.nika:9"));
+        let mut first = throwing(Boom, &"load.nika:3");
+        first.joined_by(throwing(Boom, &"load.nika:9"));
         let full = first.full();
 
         assert_eq!(full.matches("boom").count(), 2, "{full}");
@@ -524,8 +651,8 @@ mod tests {
     /// same thing three times and buries them.
     #[test]
     fn the_trace_note_is_not_repeated_under_each() {
-        let mut first = throwing(Boom, "load.nika:3");
-        first.joined_by(throwing(Boom, "load.nika:9"));
+        let mut first = throwing(Boom, &"load.nika:3");
+        first.joined_by(throwing(Boom, &"load.nika:9"));
         assert_eq!(first.full().matches("NIKAIA_TRACE").count(), 1);
     }
 
@@ -546,8 +673,8 @@ mod tests {
     /// failure quietly loses the others.
     #[test]
     fn passing_an_error_on_keeps_what_joined_it() {
-        let mut first = throwing(Boom, "load.nika:3");
-        first.joined_by(throwing(Boom, "load.nika:9"));
+        let mut first = throwing(Boom, &"load.nika:3");
+        first.joined_by(throwing(Boom, &"load.nika:9"));
         let (error, site) = first.split();
         assert_eq!(site.secondary().len(), 1);
         assert!(site.refill(error).full().contains("load.nika:9"));
@@ -559,5 +686,143 @@ mod tests {
     fn an_error_from_below_says_it_has_no_site() {
         let e: Box<dyn Error> = Box::new(Boom);
         assert!(e.full().contains("no site recorded"), "{}", e.full());
+    }
+
+    // --- The one-word tail (ADR-211) ----------------------------------------
+
+    use std::mem::size_of;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[allow(dead_code)]
+    enum Kind {
+        NotFound,
+        Denied,
+    }
+    struct Unit;
+    #[allow(dead_code)]
+    struct Code(u64);
+
+    /// **A `Result` around an envelope is no larger than one around the bare
+    /// error** (D2) for the error types a program declares: fieldless, unit,
+    /// and one word of payload. That is the success path, which every call
+    /// that can fail pays whether it fails or not.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn a_result_around_an_envelope_is_as_small_as_around_the_bare_error() {
+        assert_eq!(size_of::<Result<u64, Thrown<Kind>>>(), 16);
+        assert_eq!(size_of::<Result<u64, Thrown<Unit>>>(), 16);
+        assert_eq!(size_of::<Result<u64, Thrown<Code>>>(), 16);
+        assert_eq!(size_of::<Result<u64, Kind>>(), 16);
+        assert_eq!(size_of::<Result<(), Thrown<Kind>>>(), 16);
+        // One word beside the error, and a handler's half is that word.
+        assert_eq!(size_of::<Thrown<Unit>>(), size_of::<usize>());
+        assert_eq!(size_of::<Site<Kind>>(), size_of::<usize>());
+        assert_eq!(size_of::<Option<Site<Kind>>>(), size_of::<usize>());
+        // The boxed channel: its box as before, and the envelope inside it is
+        // three words (D3).
+        assert_eq!(size_of::<Result<u64, Box<dyn Error>>>(), 16);
+        assert_eq!(size_of::<Raised>(), 3 * size_of::<usize>());
+    }
+
+    /// Envelopes travel into tasks, so they cross threads where the error does.
+    #[test]
+    fn an_envelope_crosses_a_thread_where_its_error_does() {
+        fn send_and_sync<T: Send + Sync>() {}
+        send_and_sync::<Thrown<Kind>>();
+        send_and_sync::<Site<Kind>>();
+    }
+
+    /// **The common case allocates nothing**: a site and nothing else lives in
+    /// the word, tagged.
+    #[test]
+    fn a_site_alone_is_the_tagged_word() {
+        let tail: Tail<()> = Tail::site(&"load.nika:3");
+        assert!(tail.is_site_only());
+        assert!(tail.as_cold().is_none());
+        assert_eq!(tail.origin(), "load.nika:3");
+        assert!(tail.trace().is_none());
+        assert!(tail.secondary().is_empty());
+    }
+
+    /// **Joining is what moves an envelope to the cold box**, and the site
+    /// goes with it.
+    #[test]
+    fn joining_moves_the_site_into_the_cold_box() {
+        let mut first: Thrown<Boom> = Thrown {
+            inner: Boom,
+            tail: Tail::site(&"load.nika:3"),
+        };
+        assert!(first.tail.is_site_only());
+        first.joined_by(throwing(Boom, &"load.nika:9"));
+        assert!(!first.tail.is_site_only());
+        assert_eq!(first.origin(), "load.nika:3");
+        assert_eq!(first.tail.secondary().len(), 1);
+        assert_eq!(first.tail.secondary()[0].origin(), "load.nika:9");
+        first.joined_by(throwing(Boom, &"load.nika:12"));
+        assert_eq!(first.tail.secondary().len(), 2, "one box, not one per join");
+    }
+
+    /// **A trace lives in the cold box**, and the long form prints it instead
+    /// of the note.
+    #[test]
+    fn a_trace_lives_in_the_cold_box() {
+        let e = Thrown {
+            inner: Boom,
+            tail: Tail::traced(&"load.nika:3", Backtrace::force_capture()),
+        };
+        assert!(!e.tail.is_site_only());
+        assert_eq!(e.origin(), "load.nika:3");
+        let captured = e.tail.trace().map(|t| t.status()) == Some(BacktraceStatus::Captured);
+        assert_eq!(!e.full().contains("NIKAIA_TRACE"), captured, "{}", e.full());
+    }
+
+    /// `split` and `refill` hand the one word across, in both states.
+    #[test]
+    fn the_word_survives_split_and_refill_in_both_states() {
+        let plain = throwing(Boom, &"a.nika:1");
+        let (error, site) = plain.split();
+        assert_eq!(site.refill(error).origin(), "a.nika:1");
+
+        let mut joined = throwing(Boom, &"a.nika:1");
+        joined.joined_by(throwing(Boom, &"a.nika:2"));
+        let (error, site) = joined.split();
+        assert!(site.full_of(&error).contains("raised at a.nika:1"));
+        let back = site.refill(error);
+        assert_eq!(back.origin(), "a.nika:1");
+        assert!(back.full().contains("a.nika:2"), "{}", back.full());
+    }
+
+    /// The boxed channel joins into its own cold box the same way.
+    #[test]
+    fn the_boxed_channel_joins_into_its_cold_box() {
+        let mut first = raise(Boom, &"load.nika:3");
+        first.joined_by(raise(Boom, &"load.nika:9"));
+        let full = first.full();
+        assert!(full.contains("raised at load.nika:3"), "{full}");
+        assert!(full.contains("raised at load.nika:9"), "{full}");
+    }
+
+    /// **Everything a cold box holds is dropped with it**, in a tree three deep:
+    /// the tail's own `Drop` is the only thing that frees the box, so a leak or
+    /// a double drop would show here as a wrong count.
+    #[test]
+    fn a_tree_of_joined_failures_is_dropped_exactly_once() {
+        static DROPPED: AtomicUsize = AtomicUsize::new(0);
+        struct Counted;
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                DROPPED.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        {
+            let mut root = throwing(Counted, &"r");
+            let mut middle = throwing(Counted, &"m");
+            middle.joined_by(throwing(Counted, &"leaf"));
+            root.joined_by(middle);
+            root.joined_by(Counted.into());
+            let (error, site) = root.split();
+            let _again = site.refill(error);
+        }
+        assert_eq!(DROPPED.load(Ordering::SeqCst), 4);
     }
 }

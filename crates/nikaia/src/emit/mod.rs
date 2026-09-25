@@ -6635,7 +6635,7 @@ impl<'p> Emitter<'p> {
                         true => {
                             out.push("return Err(nikaia_std::error::throwing(");
                             self.expr(out, inner, depth, flow)?;
-                            out.push(&format!(", {:?}).into())", flow.origin));
+                            out.push(&format!(", &{:?}).into())", flow.origin));
                         }
                         false => {
                             out.push("return Err(");
@@ -6656,7 +6656,7 @@ impl<'p> Emitter<'p> {
                     None => out.push("return Err(nikaia_std::error::raise("),
                 }
                 self.expr(out, inner, depth, flow)?;
-                out.push(&format!(", {:?}))", flow.origin));
+                out.push(&format!(", &{:?}))", flow.origin));
             }
             // **Part I 8.2 and ADR-055 D5: a task.**
             //
