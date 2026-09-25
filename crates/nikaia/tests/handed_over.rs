@@ -140,7 +140,7 @@ fn a_view_written_as_an_owned_key_is_refused() {
         found[0]
             .help
             .as_deref()
-            .is_some_and(|h| h.contains("to_owned")),
+            .is_some_and(|h| h.contains(".clone()")),
         "{:?}",
         found[0].help
     );
@@ -294,7 +294,7 @@ fn what_is_not_given_away_is_not_refused() {
          \x20   xs.push(again)\n\
          \x20   again = \"e\"\n\
          \x20   println(again)\n\
-         \x20   serve(\"x\".to_owned(), n)\n\
+         \x20   serve(\"x\".clone(), n)\n\
          }\n",
     );
     assert_eq!(codes_of(&found), Vec::<&str>::new(), "{found:#?}");
@@ -328,7 +328,7 @@ fn what_is_not_refused_runs() {
          \x20   let mut again: String = \"d\"\n\
          \x20   xs.push(again)\n\
          \x20   again = \"e\"\n\
-         \x20   println(f\"{again} {xs.len()} {serve(\\\"x\\\".to_owned(), 1)}\")\n\
+         \x20   println(f\"{again} {xs.len()} {serve(\\\"x\\\".clone(), 1)}\")\n\
          }\n",
         "c\ne 1 2",
     );
@@ -567,5 +567,65 @@ fn a_copy_of_a_view_is_text_of_its_own() {
          \x20   println(f\"{c} {zs.len()} {ys.len()}\")\n\
          }\n",
         "x 2 2",
+    );
+}
+
+// --- ADR-216: one word for a copy ------------------------------------------------
+
+/// **`.to_owned()` is refused, naming `.clone()`**: the language below needs
+/// the second word because its `.clone()` of a reference copies the
+/// reference; this one has no reference to copy.
+#[test]
+fn a_copy_has_one_word() {
+    let found = findings(
+        "fn main() {\n\
+         \x20   let name: String = \"a\"\n\
+         \x20   let copy = name.to_owned()\n\
+         \x20   println(copy)\n\
+         }\n",
+    );
+    assert_eq!(codes_of(&found), ["NK1189"], "{found:#?}");
+    assert!(
+        found[0]
+            .help
+            .as_deref()
+            .is_some_and(|h| h.contains("name.clone()")),
+        "{:?}",
+        found[0].help
+    );
+    // `.to_string()` is the text form of a value, for every type, and stays.
+    assert_eq!(
+        codes_of(&findings(
+            "fn main() {\n\
+             \x20   let n = 3\n\
+             \x20   let a = n.to_string()\n\
+             \x20   let b = \"x\".to_string()\n\
+             \x20   println(f\"{a}{b}\")\n\
+             }\n"
+        )),
+        Vec::<&str>::new()
+    );
+}
+
+/// **A copy of text is text of its own and a copy of a slice is a list**, each
+/// written below as what makes one (ADR-216 D2).
+#[test]
+fn a_copy_is_owned_whatever_it_copied() {
+    runs(
+        "copies",
+        "fn first(xs: ref Array[i64]) -> Vec[i64] {\n\
+         \x20   return xs.clone()\n\
+         }\n\n\
+         fn shout(name: ref String) -> String {\n\
+         \x20   let copy = name.clone()\n\
+         \x20   return copy + \"!\"\n\
+         }\n\n\
+         fn main() {\n\
+         \x20   let xs = [1, 2, 3]\n\
+         \x20   let part = ref xs[0..<2]\n\
+         \x20   let owned = first(part)\n\
+         \x20   println(f\"{owned.len()} {shout(\\\"hey\\\")}\")\n\
+         }\n",
+        "2 hey!",
     );
 }

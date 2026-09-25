@@ -405,8 +405,20 @@ pub(crate) fn makes_a_buffer(
     match expr {
         // `text.to_owned()` and `n.to_string()`: owned text by the name, which
         // every entry of either name agrees on.
-        Expr::MethodCall { method, .. } => match parsed.text(*method) {
+        Expr::MethodCall {
+            method, receiver, ..
+        } => match parsed.text(*method) {
             "to_owned" | "to_string" => Buffer::Named("String".to_string()),
+            // A copy of a literal is text of its own (ADR-216 D2); a copy of
+            // a name is `keep`'s question, which knows the name's type.
+            "clone"
+                if matches!(
+                    receiver.as_ref(),
+                    Expr::LitStr { .. } | Expr::LitInterpolated(_)
+                ) =>
+            {
+                Buffer::Named("String".to_string())
+            }
             _ => Buffer::None,
         },
         Expr::Call { func, .. } => {

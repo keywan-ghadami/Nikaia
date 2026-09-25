@@ -279,7 +279,7 @@ fn finding(stored: &Stored) -> Finding {
              \x20          struct Held {{ {param}: {ty} }}\n\
              \x20          …\n\
              \x20          fn {function}(…, held: Held) {{ … held.{param} … }}\n\
-             \x20      or take a copy of the text with `.to_owned()`, which costs one allocation \
+             \x20      or take a copy of the text with `.clone()`, which costs one allocation \
              and says so (Part I, 6.6)"
         )),
     }

@@ -480,6 +480,25 @@ impl Walk<'_> {
         self.path.pop();
     }
 
+    /// **Whether a `clone` here is a copy of text**
+    /// ([ADR-216](../../../docs/specification/adr/adr-216.md) D2), which is
+    /// text of its own and points into nothing - where a copy of a list of
+    /// views still points where the views did. Read off what this walk can see
+    /// without types: a literal, or a name whose type was written as text.
+    /// Anything else is the list's answer, which is the one that keeps more.
+    fn copies_text(&self, receiver: &Expr) -> bool {
+        match receiver {
+            Expr::LitStr { .. } | Expr::LitInterpolated(_) => true,
+            Expr::Variable(name) => self
+                .local(self.parsed.text(*name))
+                .and_then(|local| local.ty.as_ref())
+                .is_some_and(|ty| {
+                    matches!(self.parsed.text(ty.name), "String" | "str") && ty.generics.is_empty()
+                }),
+            _ => false,
+        }
+    }
+
     fn local(&self, name: &str) -> Option<&Local> {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
     }
@@ -523,9 +542,20 @@ impl Walk<'_> {
                 self.spawns_in(value);
                 self.nested_blocks(value, at);
                 let made = match names.as_slice() {
-                    [_] => {
-                        super::tether::makes_a_buffer(self.parsed, value, self.ledger, self.library)
-                    }
+                    [_] => match value {
+                        // A copy of text is a buffer of its own (ADR-216 D2).
+                        Expr::MethodCall {
+                            receiver, method, ..
+                        } if self.parsed.text(*method) == "clone" && self.copies_text(receiver) => {
+                            Buffer::Named("String".to_string())
+                        }
+                        _ => super::tether::makes_a_buffer(
+                            self.parsed,
+                            value,
+                            self.ledger,
+                            self.library,
+                        ),
+                    },
                     _ => Buffer::None,
                 };
                 // A second name for the buffer is the buffer.
@@ -783,7 +813,8 @@ impl Walk<'_> {
                 if let Some(callee) = self.keeping_method(receiver, &name) {
                     out.extend(self.call_source(&callee));
                 }
-                if OWNED.contains(&name.as_str()) {
+                if OWNED.contains(&name.as_str()) || (name == "clone" && self.copies_text(receiver))
+                {
                     for arg in args {
                         let _ = self.origins(arg);
                     }
@@ -1185,7 +1216,7 @@ fn decide(
                 "is handed both to a task and out of this function",
                 "a task may outlive the caller that would keep the buffer, and the caller \
                  may outlive the task - there is no one owner for it",
-                "hand the task a copy with `.to_owned()`, or give the task only what it \
+                "hand the task a copy with `.clone()`, or give the task only what it \
                  needs and hand the rest back",
             ));
             continue;
@@ -1285,7 +1316,7 @@ fn walk_refusals(
             out.push(element_refusal(
                 keeper,
                 "it holds views inside a struct, and only text is held one view at a time",
-                "keep text (`ref String`) in it, or copy what it keeps with `.to_owned()`",
+                "keep text (`ref String`) in it, or copy what it keeps with `.clone()`",
                 plan,
                 walk,
             ));

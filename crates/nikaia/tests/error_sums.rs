@@ -147,7 +147,7 @@ fn a_librarys_member_is_matched_by_variant() {
              \x20       match error {{\n\
              \x20           ConfigError::Empty(p) => f\"empty: {{p}}\"\n\
              \x20           io::IoError::NotFound(p) => f\"missing: {{p}}\"\n\
-             \x20           else => \"other\".to_owned()\n\
+             \x20           else => \"other\".clone()\n\
              \x20       }}\n\
              \x20   }}\n\
              \x20   println(f\"{{text}}\")\n\
@@ -172,8 +172,8 @@ fn the_programs_own_member_is_matched_and_keeps_its_site() {
              \x20   let text = load(\"{}\") catch {{\n\
              \x20       println(f\"{{error.full()}}\")\n\
              \x20       match error {{\n\
-             \x20           ConfigError::Empty(p) => \"empty\".to_owned()\n\
-             \x20           else => \"other\".to_owned()\n\
+             \x20           ConfigError::Empty(p) => \"empty\".clone()\n\
+             \x20           else => \"other\".clone()\n\
              \x20       }}\n\
              \x20   }}\n\
              \x20   println(f\"{{text}}\")\n\
@@ -225,7 +225,7 @@ fn a_member_the_handler_ignores_falls_through() {
              \x20   let text = load(\"nope.txt\") catch {{\n\
              \x20       match error {{\n\
              \x20           ConfigError::Empty(p) => f\"empty: {{p}}\"\n\
-             \x20           else => \"fell through\".to_owned()\n\
+             \x20           else => \"fell through\".clone()\n\
              \x20       }}\n\
              \x20   }}\n\
              \x20   println(f\"{{text}}\")\n\

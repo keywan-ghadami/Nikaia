@@ -290,6 +290,6 @@ fn answer(
 // The sentence is the one `http1` threw, which already begins with its status:
 // the parser knows what it refused and this only has to pass it on.
 fn refuse(mut connection: net::Connection, status: i32, why: ref String) {
-    let answered = Response { status: status, content_type: "text/plain", body: why.to_string() }
+    let answered = Response { status: status, content_type: "text/plain", body: why.clone() }
     connection.write(render(answered)) catch { return }
 }

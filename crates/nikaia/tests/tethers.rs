@@ -3,7 +3,7 @@
 //!
 //! **The analysis alone.** Only one of the three states is a representation
 //! this compiler emits — Borrowed is the language below's own lifetime, Owned
-//! is `.to_owned()` written by the program, and **Tethered is not built**. So
+//! is `.clone()` written by the program, and **Tethered is not built**. So
 //! this walk changes no lowering: it writes a column, which is D7, and the
 //! column is what a later change reads when the representation exists.
 //!
@@ -104,7 +104,7 @@ fn a_body_that_owns_no_buffer_borrows() {
     assert_eq!(state(&own, "made", "<result>"), Some(State::Borrowed));
 }
 
-/// **`.to_owned()` makes a buffer too**, by the name rather than by a ledger
+/// **`.clone()` makes a buffer too**, by the name rather than by a ledger
 /// entry: all four entries of either name hand back owned text, which is the
 /// same kind of fact about the language below that `len` records.
 #[test]

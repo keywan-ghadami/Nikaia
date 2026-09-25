@@ -6694,6 +6694,36 @@ impl<'a> Checker<'a> {
                         );
                     }
                 }
+                self.a_copy_under_another_name(receiver, *method, args, span);
+                // **A copy of a slice is a list** (ADR-216 D2): `to_owned`
+                // below, where `.clone()` would copy the reference.
+                let a_run = match &on {
+                    // What a parameter declared `ref Array[T]` is (ADR-184 D3).
+                    Ty::Pointed {
+                        item, slice: true, ..
+                    } => Some((**item).clone()),
+                    Ty::Named {
+                        name,
+                        args: run,
+                        view: true,
+                    } if name == ty::ARRAY && run.len() == 1 => Some(run[0].clone()),
+                    _ => None,
+                };
+                if let (Some(item), "clone", true) =
+                    (&a_run, self.parsed.text(*method), args.is_empty())
+                {
+                    self.checked
+                        .owned_copies
+                        .insert((span.start, argument_shape(receiver)));
+                    self.receiver_name = outer_named;
+                    self.at_a_write_door = outer_door;
+                    self.inside_a_door = outer_inside;
+                    return Ty::Named {
+                        name: "Vec".to_string(),
+                        args: vec![item.clone()],
+                        view: false,
+                    };
+                }
                 self.last_resolved = None;
                 let value = self.call_on(on, *method, args, &written, span);
                 // **A copy of `std`'s is a copy whatever the receiver is**
@@ -7929,7 +7959,7 @@ impl<'a> Checker<'a> {
         let names_a_copy = matches!(
             written,
             Expr::MethodCall { method, .. }
-                if matches!(self.parsed.text(*method), "to_owned" | "to_string")
+                if matches!(self.parsed.text(*method), "clone" | "to_owned" | "to_string")
         );
         let owned = match names_a_copy {
             true => Ty::named(crate::contracts::ty::TEXT),
@@ -9092,7 +9122,7 @@ impl<'a> Checker<'a> {
                 ],
                 format!(
                     "declare `{name}: String`, and the caller hands its text over instead of \
-                     lending it - or write `{name}.to_owned()` to copy it here"
+                     lending it - or write `{name}.clone()` to copy it here"
                 ),
             ));
         }
@@ -9104,7 +9134,7 @@ impl<'a> Checker<'a> {
                 format!("{keeper}, so it needs text of its own"),
                 cost,
             ],
-            "write `.to_owned()` to copy it here".to_string(),
+            "write `.clone()` to copy it here".to_string(),
         ))
     }
 
@@ -9708,6 +9738,55 @@ impl<'a> Checker<'a> {
         self.checked
             .map_keys
             .insert((span.start, argument_shape(index)), form);
+    }
+
+    /// **`NK1189`: a copy under another name than `.clone()`**
+    /// ([ADR-216](../../docs/specification/adr/adr-216.md) D1).
+    ///
+    /// `.to_owned()` is the language below's name for a copy of a view -
+    /// needed there because `.clone()` of a reference copies the reference.
+    /// This language has no reference to copy: a copy of text is text of its
+    /// own, whatever the text was, and the compiler writes whichever call the
+    /// language below needs (ADR-215 D4). So there is one word, and the other
+    /// is refused naming it, as `..=` and `Type::new` were.
+    ///
+    /// **`.to_string()` is not this**, and stays: it is *the text form of a
+    /// value*, for every type, which for text happens to be a copy. Refused on
+    /// text alone, one expression would be right or wrong by its receiver's
+    /// type - `x.to_string()` in a body generic over `x` among them.
+    ///
+    /// Not where the program declares a method of that name itself.
+    fn a_copy_under_another_name(
+        &mut self,
+        receiver: &Expr,
+        method: Ident,
+        args: &[Expr],
+        span: &Span,
+    ) {
+        let written = self.parsed.text(method);
+        if !args.is_empty() || !self.own.candidates(written).is_empty() {
+            return;
+        }
+        if written != "to_owned" {
+            return;
+        }
+        let shown = match receiver {
+            Expr::Variable(name) => self.parsed.text(*name).to_string(),
+            _ => "…".to_string(),
+        };
+        self.checked.findings.push(Finding {
+            code: "NK1189",
+            severity: Severity::Error,
+            span: span.clone(),
+            message: format!("a copy is written `.clone()`, not `.{written}()`"),
+            notes: vec![
+                "Nikaia has one word for a copy, for text and for everything else: a copy \
+                 of text is text of its own, whatever it was copied from, and the compiler \
+                 writes what the language below needs for it (ADR-216)"
+                    .to_string(),
+            ],
+            help: Some(format!("write `{shown}.clone()`")),
+        });
     }
 
     /// **A value handed to something that keeps it**
@@ -13667,7 +13746,7 @@ impl<'a> Checker<'a> {
             help: Some(format!(
                 "take the annotation off: `let … = {name}` binds the view, and reading through \
                  one is the same reading. Where a copy is what was meant, write it - \
-                 `{name}.to_owned()` for a type that offers one"
+                 `{name}.clone()` for a type that offers one"
             )),
         });
     }
@@ -15937,7 +16016,7 @@ fn convert(found: &Ty, want: &Ty) -> String {
         // the program **has**, and a copy of that is written, never inserted
         // (ADR-107 D3).
         ("ref String", "String") => {
-            "write `.to_owned()` to make text of its own from this view - a copy is \
+            "write `.clone()` to make text of its own from this view - a copy is \
              written where it happens, never inserted (ADR-107 D3)"
                 .to_string()
         }

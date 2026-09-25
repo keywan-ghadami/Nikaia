@@ -796,7 +796,7 @@ something asks for it, and the demand is the line after.
 [ADR-107](specification/adr/adr-107.md). `String` is the one text type and
 its state — borrowed, tethered, owned — is the compiler's per use; `ref String` is
 the promise that a value is a borrowed view, held to at the line that would
-break it; a copy is `.to_owned()` or a refusal, never inserted. **The literal
+break it; a copy is `.clone()` or a refusal, never inserted. **The literal
 half is built** by [ADR-207](specification/adr/adr-207.md) at 0.0.183 — a literal
 is a `String` wherever one is wanted, constructed where it is kept and lent as
 it is where it is read — and with it `NK1106`'s help and the literal sites in

@@ -704,7 +704,7 @@ struct Dog { name: String }
 
 impl Speaks for Dog {
     fn say(ref self) -> String sync {
-        return "woof".to_owned()
+        return "woof".clone()
     }
 }
 
@@ -756,7 +756,7 @@ struct Dog { name: String }
 
 impl Speaks for Dog {
     fn say(ref self) -> String sync {
-        return "woof".to_owned()
+        return "woof".clone()
     }
 }
 
@@ -765,7 +765,7 @@ fn tell[T: Speaks](x: T) -> String sync {
 }
 
 fn main() {
-    let d = Dog { name: "rex".to_owned() }
+    let d = Dog { name: "rex".clone() }
     println(tell(d))
 }
 "#,
@@ -791,7 +791,7 @@ struct Dog { name: String }
 
 impl Speaks for Dog {
     fn say(ref self) -> String sync {
-        return "woof".to_owned()
+        return "woof".clone()
     }
 }
 
@@ -800,7 +800,7 @@ fn both[T: Speaks + Weighs](x: T) -> String sync {
 }
 
 fn main() {
-    let d = Dog { name: "rex".to_owned() }
+    let d = Dog { name: "rex".clone() }
     println(both(d))
 }
 "#,
@@ -837,7 +837,7 @@ struct Dog { name: String }
 
 impl Speaks for Dog {
     fn say(ref self) -> String sync {
-        return "woof".to_owned()
+        return "woof".clone()
     }
 }
 
@@ -856,7 +856,7 @@ fn passes_on[V: Weighs](z: V) -> String sync {
 }
 
 fn main() {
-    let d = Dog { name: "rex".to_owned() }
+    let d = Dog { name: "rex".clone() }
     println(passes_on(d))
 }
 "#,
@@ -890,7 +890,7 @@ struct Dog { name: String }
 
 impl Speaks for Dog {
     fn say(ref self) -> String sync {
-        return "woof".to_owned()
+        return "woof".clone()
     }
 }
 
@@ -903,7 +903,7 @@ fn passes_on[U: Speaks](y: U) -> String sync {
 }
 
 fn main() {
-    let d = Dog { name: "rex".to_owned() }
+    let d = Dog { name: "rex".clone() }
     println(passes_on(d))
 }
 "#,

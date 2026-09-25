@@ -200,7 +200,7 @@ fn load(path: String, mut into: collections::HashMap[ref String, ref String]) th
             let key = parts[0].trim()
             let value = parts[1].trim()
             if key == "include" {
-                load(value.to_owned(), into)
+                load(value.clone(), into)
             } else {
                 into.insert(key, value)
             }

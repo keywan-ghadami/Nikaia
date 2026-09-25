@@ -723,7 +723,7 @@ fn a_crate_a_description_and_a_refusal() {
          \x20   Held { inner: std::rc::Rc::new(name) }\n\
          }\n",
         "fn main() {\n\
-         \x20   let h = fremd::hold(\"here\".to_owned())\n\
+         \x20   let h = fremd::hold(\"here\".clone())\n\
          \x20   spawn fn { println(f\"{h}\") }\n\
          }\n",
     );

@@ -59,7 +59,7 @@ const HANDLED: &str = "use std::io\n\n\
                        }\n\
                        \n\
                        fn main() {\n\
-                       \x20   let text = reads() catch { \"nothing\".to_owned() }\n\
+                       \x20   let text = reads() catch { \"nothing\".clone() }\n\
                        \x20   println(text)\n\
                        }\n";
 
@@ -123,7 +123,7 @@ fn a_call_outside_a_handler_is_not_noted() {
          \x20   return reads()\n\
          }\n\
          \n\
-         fn main() { println(onwards() catch { \"\".to_owned() }) }\n",
+         fn main() { println(onwards() catch { \"\".clone() }) }\n",
         &[("reads", &["io::IoError"])],
     );
     assert!(
@@ -138,9 +138,9 @@ fn a_call_outside_a_handler_is_not_noted() {
 #[test]
 fn every_shape_of_handler_gets_the_same_note() {
     for handler in [
-        "catch { \"nothing\".to_owned() }",
+        "catch { \"nothing\".clone() }",
         "catch { f\"{error}\" }",
-        "catch { match error { else => \"other\".to_owned() } }",
+        "catch { match error { else => \"other\".clone() } }",
     ] {
         let source = format!(
             "use std::io\n\n\

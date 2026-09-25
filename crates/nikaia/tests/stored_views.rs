@@ -156,7 +156,7 @@ fn a_field_that_holds_no_view_is_not_a_destination() {
         struct Log { lines: Vec[String], n: i64 }
         impl Log {
             fn add(ref mut self, line: ref String) sync {
-                self.lines.push(line.to_owned())
+                self.lines.push(line.clone())
                 self.n += 1
             }
         }

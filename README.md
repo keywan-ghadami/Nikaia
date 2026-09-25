@@ -17,7 +17,7 @@
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
-  <img src="https://img.shields.io/badge/version-0.0.191-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.0.192-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/status-specification_+_bootstrap-orange.svg" alt="Status" />
   <img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License" />
   <a href="https://keywan-ghadami.github.io/Nikaia/"><img src="https://img.shields.io/badge/docs-github.io-blue.svg" alt="Documentation site" /></a>
@@ -392,7 +392,7 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-**Pre-alpha, as of 0.0.191.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
+**Pre-alpha, as of 0.0.192.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
 that counts *areas of scope* built, and the language area alone reads 98 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in
@@ -444,7 +444,7 @@ finished or not.
 | Area | Promise | Built | Open |
 | :--- | :--- | :--- | :--- |
 | **The tether** ([ADR-209](docs/specification/adr/adr-209.md)) | a view may outlive its buffer, with no annotation and no copy | ✅ all of it: the buffer lives in the caller's frame, in a handle a task carries, or one handle per view where a cache drops entries; `nikaia --tethers` shows which | a buffer handed both to a task *and* out of the function; a cache of *structs* holding views — both refused with an explanation |
-| **Text as one type** ([ADR-207](docs/specification/adr/adr-207.md), [208](docs/specification/adr/adr-208.md)) | text is `String`, and you never convert by hand | ✅ literals work wherever a `String` is wanted; a view handed to a function that only reads needs nothing | a *view* kept where a `String` is declared needs `.to_owned()` — whether it should become a tether instead is undecided |
+| **Text as one type** ([ADR-207](docs/specification/adr/adr-207.md), [208](docs/specification/adr/adr-208.md)) | text is `String`, and you never convert by hand | ✅ literals work wherever a `String` is wanted; a view handed to a function that only reads needs nothing | a *view* kept where a `String` is declared needs `.clone()` — whether it should become a tether instead is undecided |
 | **Functions have no colour** ([ADR-055](docs/specification/adr/adr-055.md)) | no `async`/`await`; any function may pause | ✅ inferred everywhere, including tasks and `overlap` | a lambda that pauses, handed to `std` (`map`, `filter`), and a lazy walk of a pausing sequence — refused, write a loop |
 | **Locks without deadlocks** ([ADR-057](docs/specification/adr/adr-057.md)) | `access_all` takes locks in one order; a lock is never held across a pause | ✅ the lock, all its doors, and `access_all` | the analysis that would refuse misuse answers *undecided* for 24 of 59 functions in the examples, so those refusals are not switched on |
 | **SQL checked at build time** ([ADR-143](docs/specification/adr/adr-143.md)) | a misspelled column is refused while the program is built | — | not started: `std::db`, the driver, and the query DSL |

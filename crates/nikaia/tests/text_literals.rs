@@ -136,7 +136,7 @@ fn a_view_where_a_string_is_kept_is_refused_with_the_way_out() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].code, "NK1106");
     let help = found[0].help.clone().unwrap_or_default();
-    assert!(help.contains(".to_owned()"), "{help}");
+    assert!(help.contains(".clone()"), "{help}");
 }
 
 /// A list that mixes a view in keeps the refusal it had: only literal text is
@@ -186,7 +186,7 @@ fn a_literal_beside_text_of_its_own_becomes_it() {
 
 /// **A view handed to a `String` the callee only reads is lent as it is**
 /// ([ADR-208](../../../docs/specification/adr/adr-208.md) D1). The parameter is
-/// a `&str` below, so `.to_owned()` there asked for a copy nothing would keep.
+/// a `&str` below, so `.clone()` there asked for a copy nothing would keep.
 #[test]
 fn a_view_handed_to_a_reader_needs_no_copy() {
     let source = "fn show(s: String) { println(s) }\n\
@@ -221,7 +221,7 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
     assert!(why.contains("`Person` keeps its `name`"), "{why}");
     assert!(why.contains("ADR-005"), "{why}");
     assert!(help.contains("declare `n: String`"), "{help}");
-    assert!(help.contains("n.to_owned()"), "{help}");
+    assert!(help.contains("n.clone()"), "{help}");
 
     // A name bound to a literal: the compiler would have built it, and says so.
     let (why, help) = notes(
@@ -241,5 +241,5 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
         why.contains("points into text something else owns"),
         "{why}"
     );
-    assert!(help.contains(".to_owned()"), "{help}");
+    assert!(help.contains(".clone()"), "{help}");
 }

@@ -203,7 +203,7 @@ fn a_view_of_a_parameter_is_left_alone() {
 #[test]
 fn a_buffer_that_is_not_handed_back_is_left_alone() {
     let source = "fn name(input: ref String) -> ref String {\n\
-                  \x20   let copy = input.to_owned()\n\
+                  \x20   let copy = input.clone()\n\
                   \x20   return input\n\
                   }\n\
                   fn main() { }\n";
@@ -215,7 +215,7 @@ fn a_buffer_that_is_not_handed_back_is_left_alone() {
 #[test]
 fn a_literal_is_left_alone() {
     let source = "fn name() -> ref String {\n\
-                  \x20   let unused = \"Grace\".to_owned()\n\
+                  \x20   let unused = \"Grace\".clone()\n\
                   \x20   return \"Ada\"\n\
                   }\n\
                   fn main() { }\n";

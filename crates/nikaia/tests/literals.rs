@@ -361,7 +361,7 @@ fn a_character_and_an_interpolation_are_asked_too() {
     assert!(refused("fn main() { let c = '\\q' }").is_some());
     assert!(refused("fn main() { println(f\"x\\qy\") }").is_some());
     // A `\"` inside a hole belongs to the **literal**, and it is in the set.
-    assert!(refused("fn main() { println(f\"{greet(\\\"a\\\")}\") }\nfn greet(s: ref String) -> String { return s.to_owned() }").is_none());
+    assert!(refused("fn main() { println(f\"{greet(\\\"a\\\")}\") }\nfn greet(s: ref String) -> String { return s.clone() }").is_none());
 }
 
 /// **A malformed `\x` or `\u{…}` is refused with the form it should have had**,

@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.192] — 2026-09-25
+
+**A copy has one word: `.clone()`** — [ADR-216](docs/specification/adr/adr-216.md),
+the owner's question whether `.to_owned()` still belongs to the language.
+
+That a copy is **written** stays — it is the language's promise that nothing
+large is copied behind the program's back. But it had three spellings and two
+sets of advice: Part I named `.to_owned()` for text, which no ledger entry
+described, while the ledger and `NK2105` said `.clone()`. The language below
+needs two words only because its `.clone()` of a reference copies the
+reference; this language has no reference to copy, and since 0.0.191 the
+compiler writes `to_owned` below itself where it is needed.
+
+So `.clone()` is the copy, of text and of everything else, and `.to_owned()` is
+**`NK1189`**, naming it. `.to_string()` stays: it is the text form of a value,
+for every type. A `clone` of a slice hands back a list (`to_owned` below), and
+the keep and tether analyses read a copy of text as a buffer of its own, as
+they read `to_owned`. Every help text, Part I, Part III and both READMEs say
+`.clone()`; the test programs that wrote `.to_owned()` were rewritten.
+
 ## [0.0.191] — 2026-09-25
 
 **What was left of ADR-212 §5** — [ADR-215](docs/specification/adr/adr-215.md),

@@ -406,7 +406,7 @@ fn a_failure_from_std_is_matched_by_variant() {
          \x20   let text = load(\"nope.txt\") catch {\n\
          \x20       match error {\n\
          \x20           io::IoError::NotFound(p) => f\"no file: {p}\"\n\
-         \x20           else => \"other\".to_owned()\n\
+         \x20           else => \"other\".clone()\n\
          \x20       }\n\
          \x20   }\n\
          \x20   println(f\"{text}\")\n\
@@ -430,7 +430,7 @@ fn the_long_form_says_there_is_no_site() {
          fn main() {\n\
          \x20   let text = load(\"nope.txt\") catch {\n\
          \x20       println(f\"{error.full()}\")\n\
-         \x20       \"fallback\".to_owned()\n\
+         \x20       \"fallback\".clone()\n\
          \x20   }\n\
          \x20   println(f\"{text}\")\n\
          }\n",

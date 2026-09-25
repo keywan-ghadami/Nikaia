@@ -853,7 +853,7 @@ fn a_packages_type_is_constructed_and_its_handler_chain_runs() {
                      pub fn new() -> Server { return Server { routes: 0 } }\n\
                  \n    \
                      pub fn route(ref self, path: ref String, handler: fn(Request) -> Response) -> Server {\n        \
-                         let answered = handler(Request { path: path.to_owned() })\n        \
+                         let answered = handler(Request { path: path.clone() })\n        \
                          println(f\"{path} {answered.status} {answered.body}\")\n        \
                          return Server { routes: self.routes + 1 }\n    \
                      }\n\
@@ -2168,7 +2168,7 @@ fn a_grammar_entry_in_tail_position_over_a_local_runs() {
          }\n\
          \n\
          fn both(text: ref String) -> i64 throws {\n\
-         \x20   let data = text.to_owned()\n\
+         \x20   let data = text.clone()\n\
          \x20   return Tiny::number(data)\n\
          }\n\
          \n\

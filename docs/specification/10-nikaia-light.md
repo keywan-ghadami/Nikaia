@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.191 (Draft)
+**Version:** 0.0.192 (Draft)
 **Date:** 2026-09-25
 
 ---
@@ -532,13 +532,17 @@ A literal is a **view** of text the program was compiled with (6.6,
 annotated `let`, a `return`, an argument the callee keeps — it is constructed
 there, as `[1, 2]` is a `Vec` where one is wanted; where the use only **reads**
 it, nothing is allocated. A **view** of text the program *has* is not a literal,
-and where it is kept `.to_owned()` makes the copy, written where it happens
-([ADR-107](adr/adr-107.md) D3).
+and where it is kept `.clone()` makes the copy, written where it happens
+([ADR-107](adr/adr-107.md) D3). **`.clone()` is the one word for a copy**, of
+text and of everything else ([ADR-216](adr/adr-216.md)): a copy of text is text
+of its own, whatever it was copied from. `.to_owned()` is refused naming it
+(`NK1189`); `.to_string()` is the text form of a value, which for text is a
+copy too.
 
 > **Implementation status:** Implemented for literals ([ADR-207](adr/adr-207.md)).
 > `String` and `ref String` are still two types in the checker: a *name* bound to a
 > literal is a `ref String`, and a view in a `String` slot is refused with
-> `NK1106`'s `.to_owned()` help ([ADR-107](adr/adr-107.md) §5).
+> `NK1106`'s `.clone()` help ([ADR-107](adr/adr-107.md) §5).
 
 **`T?` lowers to the backend's `Option<T>`**, the mapping Part III 15.2 writes
 the other way round, and `null` is a reserved word (2.1) that lowers to `None`
@@ -2119,7 +2123,7 @@ cheapest one that works, and the states are never written in the source:
 | :--- | :--- | :--- |
 | **Borrowed** | a plain reference into the buffer | nothing at all |
 | **Tethered** | a handle on the buffer plus a position | one shared handle per *container* — no copy, no allocation |
-| **Owned** | a `String` of its own | one allocation, **only** where the program wrote `.to_owned()` |
+| **Owned** | a `String` of its own | one allocation, **only** where the program wrote `.clone()` |
 
 **The buffer cannot die while anything still points into it.** The buffer is
 kept alive deterministically, by reference counting, with no garbage
@@ -2177,7 +2181,7 @@ exist in the language.
 **An escape whose buffer cannot be shared is refused.** Where a slice escapes
 and its buffer lives on the stack or came from a foreign library, no tether is
 possible. The compiler refuses the program and names the ways out,
-`.to_owned()` among them. The compiler never inserts that copy
+`.clone()` among them. The compiler never inserts that copy
 ([ADR-008](adr/adr-008.md)).
 
 *Design rationale:* an invisible copy in a loop over a billion rows is the kind
@@ -2217,7 +2221,7 @@ changes rather than the body.
 > **Implementation status:** Implemented ([ADR-209](adr/adr-209.md)). All three
 > states are built: **Borrowed** is the language below's own lifetime,
 > **Tethered** is a keep owned by the caller's frame, by a task's handle, or by
-> each view of a container that drops entries, and **Owned** is `.to_owned()`,
+> each view of a container that drops entries, and **Owned** is `.clone()`,
 > never inserted. What is still refused, and why each is a real boundary, is
 > ADR-209 §4: one buffer handed both to a task and out of the function, and a
 > container of *structs* holding views that drops entries inside a loop.
@@ -2234,7 +2238,7 @@ changes rather than the body.
 **A tether keeps the whole buffer alive**, not just the part pointed at.
 Keeping one short name out of a 13 GB memory-mapped file pins all 13 GB.
 `nikaia --tethers` names every buffer kept this way and what keeps it; where
-that is not what was meant, `.to_owned()` keeps the name and lets the buffer go.
+that is not what was meant, `.clone()` keeps the name and lets the buffer go.
 
 ### 6.7. The Borrow Contract Ledger
 
