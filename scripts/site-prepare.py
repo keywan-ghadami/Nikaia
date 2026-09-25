@@ -6,7 +6,7 @@ braces off from Liquid and before Jekyll builds. Nothing here changes a file in
 the repository, and nothing here restates documentation: every page it writes
 either quotes a program that exists or is a list of links to pages that exist.
 
-Four things:
+Five things:
 
 1. **A page per example program.** `examples/*.nika` are published as files, and
    a browser asking for one gets a download rather than a page — no layout, no
@@ -26,6 +26,11 @@ Four things:
    rule that a `docs/README.md` is a candidate for the *root* index, and drops
    it when a root `README.md` already won that slot — so `/docs/` was a 404 and
    the note index was published as raw Markdown.
+
+5. **`/llms.txt`, the menu again, for language models** (llmstxt.org): the
+   site's name and description from `_config.yml`, then every page the menu
+   lists, under the menu's own sections, with its full address. Written from
+   the same list as the menu, so the two cannot disagree.
 
 Usage:
     scripts/site-prepare.py [checkout-root]
@@ -204,6 +209,43 @@ def menu(root):
     return sections
 
 
+def config_value(root, key):
+    """A top-level scalar from `_config.yml`, folded (`>-`) or not."""
+    lines = (root / "_config.yml").read_text(encoding="utf-8").splitlines()
+    for i, line in enumerate(lines):
+        found = re.match(rf"^{key}:\s*(.*?)\s*$", line)
+        if not found:
+            continue
+        if found.group(1) not in (">", ">-", "|", "|-"):
+            return found.group(1)
+        folded = []
+        for more in lines[i + 1 :]:
+            if not more.startswith(" "):
+                break
+            folded.append(more.strip())
+        return " ".join(folded)
+    return None
+
+
+def link_text(title):
+    """A title as Markdown link text: `Array[T, N]` and a lone `[` would
+    otherwise end or break the link."""
+    return title.replace("[", "\\[").replace("]", "\\]")
+
+
+def llms_txt(root, sections):
+    base = (config_value(root, "url") or "").rstrip("/")
+    out = [f"# {config_value(root, 'title')}", "", f"> {config_value(root, 'description')}", ""]
+    out.append(
+        "Every page below is published from a Markdown file in "
+        "https://github.com/keywan-ghadami/Nikaia, at the same path."
+    )
+    for section in sections:
+        out += ["", f"## {section['title']}", ""]
+        out += [f"- [{link_text(p['title'])}]({base}{p['url']})" for p in section["pages"]]
+    return "\n".join(out) + "\n"
+
+
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 
@@ -213,6 +255,7 @@ def main():
 
     sections = menu(root)
     write(root / "_data" / "nav.json", json.dumps(sections, indent=2) + "\n")
+    write(root / "llms.txt", llms_txt(root, sections))
 
     print(f"{len(written)} example pages")
     for section in sections:
