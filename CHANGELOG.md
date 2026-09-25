@@ -4,6 +4,34 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.186] — 2026-09-25
+
+**The joined failures are a diagnostic, not a value** —
+[ADR-210](docs/specification/adr/adr-210.md), the owner's answer to
+`open-decisions.md`'s last question: **option 3**, against the page's
+recommendation of an opaque `Failures` type. Nothing is built, which is the
+decision.
+
+The secondary list exists because the language itself makes two failures
+happen at once — the branches of an `overlap`, or a cleanup failing while an
+error is already leaving — and a `throw` carries one; dropping the other would
+lose exactly what an operator needs in an outage. That is built and stays: the
+list travels with the failure, `throw error` keeps it, and the long form prints
+it. What is withdrawn is reading it **in code** (`throw LoadFailed(error,
+error.secondary)`, ADR-115 D4's example): nothing in the repository needed it,
+and a type introduced for one example is a construct whose only reader is the
+sentence that introduced it. If a program ever needs it, an opaque `Failures`
+can be added then without breaking anything.
+
+D3 writes down why every envelope carries the field though only two things fill
+it: a failure travels through `?` into a function that may join, and two
+envelope types would convert at every boundary; an empty list allocates nothing
+and only the failure path sees it.
+
+**Corrected on the way:** Part I 7.1 and 8.1.2 said a handler reads
+`error.secondary`. No such name was ever built. `open-decisions.md` is empty;
+`open-work.md` loses the bullet that pointed at the question.
+
 ## [0.0.185] — 2026-09-24
 
 **The tether is built: a buffer lives in the keep of whatever keeps its views,

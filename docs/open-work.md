@@ -911,15 +911,6 @@ envelope — was answered **A**: a body that joins puts one on.
   not: a cleanup that fails while a branch is already failing should join
   **that branch's** error, and today it is attached below in the language
   below's own way with nothing a program can read.
-* **D4's `error.secondary` as a value a program reads.**
-  `throw LoadFailed(error, error.secondary)` is that record's own written
-  example. The list is what a log and an operator see today; handing it to a
-  constructor needs a Nikaia type for *a list of errors*, which nothing writes
-  down yet — so this is a question about the type language before it is work,
-  and ***it is asked***: *does the language have a type for a list of errors?*
-  is on [`open-decisions.md`](open-decisions.md) in that page's shape. This
-  bullet named it for two versions and wrote it nowhere, which is the head of
-  this file's own rule met from the wrong side.
 * **Whether the list survives a hop to a caller with a bare channel of its
   own.** [ADR-170](specification/adr/adr-170.md) D1 covers the body the block
   is written in and says so: the block, its `catch` and the function around

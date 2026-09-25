@@ -17,7 +17,7 @@
     <a href="https://gemini.google.com/gem/1T8viw7ZHA0TwDZDhr6h1mgRBVnw3aTNP?usp=sharing">Gemini explains Nikaia</a>
   </p>
 
-  <img src="https://img.shields.io/badge/version-0.0.185-blue.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.0.186-blue.svg" alt="Version" />
   <img src="https://img.shields.io/badge/status-specification_+_bootstrap-orange.svg" alt="Status" />
   <img src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" alt="License" />
   <a href="https://keywan-ghadami.github.io/Nikaia/"><img src="https://img.shields.io/badge/docs-github.io-blue.svg" alt="Documentation site" /></a>
@@ -392,7 +392,7 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-**Pre-alpha, as of 0.0.185.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
+**Pre-alpha, as of 0.0.186.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
 that counts *areas of scope* built, and the language area alone reads 98 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in
@@ -453,8 +453,7 @@ finished or not.
 registry, the C library and everything built on it (wasm, Python, bare metal), HTTP/TLS/HTTP/2,
 `fmt`/`doc`/LSP, `nikaia test`, supervision, and filling out `std`.
 
-**One question is waiting on a decision** rather than on work: whether the language has a type
-for a list of errors ([`open-decisions.md`](docs/open-decisions.md)).
+**No question is waiting on a decision** right now ([`open-decisions.md`](docs/open-decisions.md)).
 
 ### So, as a tester
 
