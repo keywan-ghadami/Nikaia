@@ -5266,11 +5266,13 @@ impl<'p> Emitter<'p> {
                     };
                     let wrapper = self.tether_wrapper(&held);
                     out.push(&format!(
-                        "let {mutable}{} = {wrapper} {{ value: ",
+                        "let {mutable}{} = {wrapper} {{ value: nikaia_std::tether::Dangling::new(",
                         escaped(bound)
                     ));
                     self.expr(out, value, depth, flow)?;
-                    out.push(&format!(", _keep: std::sync::Arc::clone(&{KEEP_TASK}) }};"));
+                    out.push(&format!(
+                        "), _keep: std::sync::Arc::clone(&{KEEP_TASK}) }};"
+                    ));
                     return Ok(());
                 }
                 if let Some(keep) = put {
@@ -11084,9 +11086,11 @@ impl Emitter<'_> {
         let stretched = self.ty(ty, Lifetimes::STATIC);
         let shortened = self.ty(ty, Lifetimes::SHORTENED);
         let mut wrappers = self.wrappers.borrow_mut();
-        let position = wrappers
-            .iter()
-            .position(|w| w.contains(&format!("value: {stretched},")));
+        let position = wrappers.iter().position(|w| {
+            w.contains(&format!(
+                "value: nikaia_std::tether::Dangling<{stretched}>,"
+            ))
+        });
         let n = match position {
             Some(n) => n,
             None => {
@@ -11096,8 +11100,8 @@ impl Emitter<'_> {
                      (ADR-209 D3): its views are `'static` only while it is\n\
                      /// packed, and `get` hands them out for as long as it is borrowed.\n\
                      #[allow(non_camel_case_types)]\n\
-                     struct __Tethered{n} {{\n    value: {stretched},\n    _keep: std::sync::Arc<nikaia_std::tether::Keep>,\n}}\n\n\
-                     impl __Tethered{n} {{\n    fn get<'s>(&'s self) -> &'s {shortened} {{\n        &self.value\n    }}\n}}\n"
+                     struct __Tethered{n} {{\n    value: nikaia_std::tether::Dangling<{stretched}>,\n    _keep: std::sync::Arc<nikaia_std::tether::Keep>,\n}}\n\n\
+                     impl __Tethered{n} {{\n    fn get<'s>(&'s self) -> &'s {shortened} {{\n        self.value.get()\n    }}\n}}\n"
                 ));
                 n
             }

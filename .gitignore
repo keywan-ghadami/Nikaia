@@ -1,4 +1,6 @@
 /target
+# Each crate under crates/unsafe/ is its own workspace with its own build.
+crates/unsafe/*/target
 /vendor
 
 # Dependencies of the TextMate grammar's scope test (editors/test). The lockfile

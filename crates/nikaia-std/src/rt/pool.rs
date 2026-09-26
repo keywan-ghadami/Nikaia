@@ -29,7 +29,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::task::{Context, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, Waker};
 
 /// A task the pool owns. `Send`, which is the whole of what `yes` asks of a
 /// task that `no` does not.
@@ -100,35 +100,19 @@ impl Cell {
     }
 }
 
-/// A `Waker` over a [`Cell`], built by hand for [`super::exec`]'s reason: `std`
-/// has no safe constructor for one without the unstable `Wake` trait, and a
-/// `RawWaker` is four functions.
+/// A `Waker` over a [`Cell`]: `std`'s own, through [`std::task::Wake`], so
+/// the count on the `Arc` is `std`'s to keep.
 fn waker_for(cell: Arc<Cell>) -> Waker {
-    unsafe fn clone(data: *const ()) -> RawWaker {
-        let cell = unsafe { Arc::from_raw(data as *const Cell) };
-        let cloned = cell.clone();
-        // The original pointer stays owned by the waker it came from.
-        std::mem::forget(cell);
-        RawWaker::new(Arc::into_raw(cloned) as *const (), &VTABLE)
-    }
-    unsafe fn wake(data: *const ()) {
-        let cell = unsafe { Arc::from_raw(data as *const Cell) };
-        cell.wake();
-    }
-    unsafe fn wake_by_ref(data: *const ()) {
-        let cell = unsafe { Arc::from_raw(data as *const Cell) };
-        cell.wake();
-        std::mem::forget(cell);
-    }
-    unsafe fn drop_it(data: *const ()) {
-        drop(unsafe { Arc::from_raw(data as *const Cell) });
-    }
-    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop_it);
+    Waker::from(cell)
+}
 
-    let raw = RawWaker::new(Arc::into_raw(cell) as *const (), &VTABLE);
-    // SAFETY: the four functions above account for exactly one `Arc` each,
-    // which is the same contract `exec::waker_for` keeps.
-    unsafe { Waker::from_raw(raw) }
+impl std::task::Wake for Cell {
+    fn wake(self: Arc<Self>) {
+        Cell::wake(&self);
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
+        Cell::wake(self);
+    }
 }
 
 /// How long a worker that is not piloting waits on the bell before looking

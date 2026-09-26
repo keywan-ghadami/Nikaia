@@ -1,0 +1,14 @@
+[package]
+name = "tether"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "Views that outlive the scope that read their buffer: a keep for buffers, a text view with its own handle, and a struct of views held beside its buffer."
+publish = false
+
+[dependencies]
+
+# Its own workspace: its own lock file, its own checks, its own toolchain for
+# them (see README.md). Nikaia's workspace reaches it as a path dependency.
+[workspace]

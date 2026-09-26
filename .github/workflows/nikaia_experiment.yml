@@ -6,6 +6,25 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The crates that hold `unsafe`, one topic each (ADR-218). Each is its own
+  # workspace and is checked on its own: tests and lints on stable, and Miri on
+  # nightly - which checks the crates' tests and nothing the compiler builds,
+  # so ADR-001 D1's one toolchain for building stands.
+  unsafe_crates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install stable, and nightly with Miri
+        run: |
+          rustup show
+          rustup toolchain install nightly --component miri --profile minimal
+          cargo +nightly miri setup
+
+      - name: Check every crate under crates/unsafe
+        run: sh scripts/check-unsafe-crates.sh
+
   # The compiler, on the toolchain a clone of this repository builds with.
   #
   # There is one leg because there is one toolchain (ADR-001 D1): nothing in the

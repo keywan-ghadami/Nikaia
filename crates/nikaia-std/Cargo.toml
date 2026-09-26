@@ -18,6 +18,9 @@ reentrancy-check = []
 trace = ["winnow-grammar/trace"]
 
 [dependencies]
+# Views that outlive the scope that read their buffer (ADR-209); the `unsafe`
+# it takes lives there, with its own checks (ADR-218).
+tether = { path = "../unsafe/tether" }
 # `fs::map` maps the file (Part III, 17.1); this is the mapping.
 memmap2 = "0.9"
 # The parser backend every generated program runs on. Declared here, on the

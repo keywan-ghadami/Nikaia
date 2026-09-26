@@ -4,6 +4,28 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.198] — 2026-09-26
+
+**Every `unsafe` topic is a small crate of its own** —
+[ADR-218](docs/specification/adr/adr-218.md), the owner's decision.
+
+- `crates/unsafe/<name>`: one topic per crate, its own workspace and lock file,
+  a README listing every `unsafe` with its argument, and its own checks —
+  `scripts/check-unsafe-crates.sh` (fmt, tests and clippy on stable, **Miri**
+  under Stacked and Tree Borrows on nightly), run by a CI job of its own.
+  Building stays on stable.
+- **`tether`** is the first: `Keep`, `forever`, `Held`, `hold` moved out of
+  `nikaia-std` (which re-exports them), plus `Holding<V>` — a struct of views
+  beside its buffer with a safe constructor — and `Dangling<T>`.
+- **Miri found two cases of undefined behaviour** in code the compiler relied
+  on, both fixed: `Keep::put` moved a `Box` it had handed references into (now
+  an `Arc`), and `Held` and the emitter's `__Tethered` stored stretched views as
+  plain fields that promise validity across a call that may free their buffer
+  (now in `Dangling`).
+- The wakers are `std::task::Wake`: two hand-written `RawWaker` vtables gone.
+- `docs/open-decisions.md`: option 3 is `tether::Holding`, no dependency.
+  `docs/open-work.md` §2.46 orders the remaining topics.
+
 ## [0.0.197] — 2026-09-26
 
 **The open question about structs of views names its crate.** Option 3 on

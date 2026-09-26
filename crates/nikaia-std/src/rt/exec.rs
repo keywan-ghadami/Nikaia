@@ -26,7 +26,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, Poll, Waker};
 
 /// A task the executor owns: a future that has been started and whose result
 /// nobody is holding.
@@ -59,39 +59,19 @@ impl Alarm {
     }
 }
 
-/// A `Waker` over an [`Alarm`], built by hand.
-///
-/// `std` has no constructor for one without the unstable `Wake` trait, and a
-/// `RawWaker` is four functions - so it is written out rather than a dependency
-/// added for it ([ADR-002](../../../../docs/specification/adr/adr-002.md) D1
-/// keeps a dependency to what it is worth).
+/// A `Waker` over a [`Alarm`]: `std`'s own, through [`std::task::Wake`], so
+/// the count on the `Arc` is `std`'s to keep.
 fn waker_for(alarm: Arc<Alarm>) -> Waker {
-    unsafe fn clone(data: *const ()) -> RawWaker {
-        let alarm = unsafe { Arc::from_raw(data as *const Alarm) };
-        let cloned = alarm.clone();
-        // The original pointer stays owned by the waker it came from.
-        std::mem::forget(alarm);
-        RawWaker::new(Arc::into_raw(cloned) as *const (), &VTABLE)
-    }
-    unsafe fn wake(data: *const ()) {
-        let alarm = unsafe { Arc::from_raw(data as *const Alarm) };
-        alarm.ring();
-    }
-    unsafe fn wake_by_ref(data: *const ()) {
-        let alarm = unsafe { Arc::from_raw(data as *const Alarm) };
-        alarm.ring();
-        std::mem::forget(alarm);
-    }
-    unsafe fn drop_it(data: *const ()) {
-        drop(unsafe { Arc::from_raw(data as *const Alarm) });
-    }
-    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop_it);
+    Waker::from(alarm)
+}
 
-    let raw = RawWaker::new(Arc::into_raw(alarm) as *const (), &VTABLE);
-    // SAFETY: the vtable above is the contract - `clone` hands back another
-    // owned pointer, `wake` consumes one, `wake_by_ref` borrows, and `drop`
-    // releases. Every one of the four accounts for exactly one `Arc`.
-    unsafe { Waker::from_raw(raw) }
+impl std::task::Wake for Alarm {
+    fn wake(self: Arc<Self>) {
+        self.ring();
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.ring();
+    }
 }
 
 /// How long this thread waits on the bell before looking again, while the pool

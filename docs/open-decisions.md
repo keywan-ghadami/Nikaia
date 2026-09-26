@@ -51,24 +51,22 @@ it.
 2. **A per-view handle in every view field**: a struct used this way is lowered
    a second time with `Held` fields. Reads work through `Held`'s deref, but
    every method and construction site of the struct needs the second form too.
-3. **One handle per element**: the container holds each struct together with
-   the buffer it points into, and a read goes through a getter that hands out
-   the struct over a lifetime no longer than the read. Built on the crate
-   **`self_cell`** (1.3), so the emitted code holds no `unsafe`: no dependency
-   of its own, no proc macro, licensed Apache-2.0 (or GPL-2.0). An element is
-   `self_cell!(struct Element { owner: Arc<str>, #[covariant] dependent:
-   Record })`; the struct literal is emitted inside `Element::new(buffer,
-   |text| Record { name: text.trim(), … })` with the buffer's name bound to the
-   owner, and a read is `element.borrow_dependent()`. Measured: the program
-   above, lowered by hand this way, builds with `self_cell` as the only entry
-   in `Cargo.lock` besides itself and runs.
+3. **One handle per element**: the container holds each struct beside the
+   buffer it points into, and a read goes through a getter that hands the
+   struct out over a lifetime no longer than the read. Built as
+   **`tether::Holding`** (`crates/unsafe/tether`, [ADR-218](specification/adr/adr-218.md)):
+   no dependency, no allocation of its own, no `unsafe` in the emitted code; the
+   struct literal is emitted inside `Holding::new(buffer, |text| Record { name:
+   text.trim(), … })` with the buffer's name bound to the closure's, and a read
+   is `element.get()`. Checked by Miri under both aliasing models. Measured on
+   the program above: 26.6 ns per element, the same as a hand-written `unsafe`
+   version; `self_cell` does the same at ~30 ns, because it allocates per value.
 
-**Recommendation: 3**, with `self_cell`. One lowering of the struct, a buffer
-freed when its last element leaves (what D4 does for text), and no `unsafe` in
-what the compiler writes. `yoke` does the same and was not chosen: it brings
-`stable_deref_trait` and `zerofrom`, and without its `derive` feature (which
-adds `syn`, `quote`, `proc-macro2` and `synstructure`) its trait `Yokeable` is
-an `unsafe` one the emitted code would implement.
+**Recommendation: 3**, with `tether::Holding`. One lowering of the struct, a
+buffer freed when its last element leaves (what D4 does for text), and no
+`unsafe` in what the compiler writes. What is left to decide is only whether
+the language holds this shape rather than refusing it; the crate exists either
+way.
 
 **What it costs if wrong.**
 
@@ -76,8 +74,7 @@ an `unsafe` one the emitted code would implement.
   language whose promise is that a copy is written and never needed for safety.
 * **2:** each such struct's code is emitted twice, and a method written for one
   form must be written for the other.
-* **3:** one dependency in the emitted code, and a struct whose lifetime is not
-  covariant cannot be held this way (`#[covariant]` is checked by `self_cell`
-  and refused by `rustc`). Every struct of views this language declares holds
-  only `&str` fields and is covariant. A read path the emitter forgets is a
-  `rustc` error, not unsoundness.
+* **3:** a struct whose lifetime is not covariant cannot be held this way
+  (`Views` makes `rustc` refuse it). Every struct of views this language
+  declares holds only `&str` fields and is covariant. A read path the emitter
+  forgets is a `rustc` error, not unsoundness.

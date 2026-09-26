@@ -416,6 +416,7 @@ dependencies = [
  "memmap2",
  "polling",
  "rayon",
+ "tether",
  "winnow 0.7.15",
  "winnow-grammar",
 ]
@@ -678,6 +679,10 @@ dependencies = [
  "rustix 1.1.4",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "tether"
+version = "0.1.0"
 
 [[package]]
 name = "toml"
