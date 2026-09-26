@@ -1,183 +1,62 @@
 # Open work — what is found, what is decided and unbuilt, what is stale
 
-The running list. Three kinds of entry, kept apart because they cost different
-things to be wrong about:
+The running list of what is still open, in three kinds:
 
 * **Defects** — the compiler accepts a program it should refuse, produces a
   different program than the source says, or hands the user something in the
   backend's words. A defect outranks everything below it.
 * **Decided and unbuilt** — an ADR says what happens and the compiler does not
-  do it yet. Each one names its record; the record is the specification of the
-  work, and this file only says where it stands.
+  do it yet. Each entry names its record; the record specifies the work, and
+  this file says where it stands.
 * **Upkeep** — a specification sentence or a notes page that a later decision
-  made false. `docs/README.md` §1 makes a stale **Status** note a defect in its
-  own right, because a reader cannot tell a plan from a promise.
+  made false.
 
-**A closed entry leaves its number behind.** Deleting the entry is right — what
-it was and what closed it is in the CHANGELOG — and **renumbering the rest is
-not**: this file is cited by number from records and from
-[`open-decisions.md`](open-decisions.md), and a shift of two turns every one of
-those into a sentence pointing at somebody else's entry. That is the failure
-the paragraph below is about, met from the other side. So a gap in the numbers
-is a closed entry, and it is cheaper to read than a citation that lies.
+Rules for entries:
 
-**A closed entry is deleted, not kept.** What it was and what closed it is in
-the CHANGELOG, which is the record; this file is the list of what is still
-open, and an entry that has been answered only makes it longer to read. The same
-holds for the part of an entry that has been answered while the rest stands.
+* **A closed entry is deleted**, and so is the answered part of an open one.
+  What it was and what closed it is in the CHANGELOG. The numbers of the rest
+  do not change; a gap in the numbers is a closed entry.
+* **An entry is cited by its subject**, not by its number alone.
+* **Every entry carries its evidence**, or is marked as a suspicion.
+* **A question that needs the owner goes to
+  [`open-decisions.md`](open-decisions.md)**, in the shape that page asks for.
+  An entry that names such a question links to it there.
 
-**Cite an entry by its subject and not by its number.** The numbers renumber
-whenever something closes - measured the hard way, by a round that closed three
-entries and left nine citations in the specification, the records and the tests
-pointing at whichever entry had moved into the slot. What an entry *is* stays
-put; where it sits does not.
-
-**Every entry carries its evidence or says that it has none.** An item with a
-reproduction is a fact; an item without one is a suspicion, and it is marked as
-such rather than inheriting the authority of the list around it. Questions that
-need the owner rather than work are in
-[`open-decisions.md`](open-decisions.md).
-
-This file is a notes page: nothing here is normative, and nothing may depend on
-it to know what a program means.
-
-**The moment an item is blocked by a question**, the question goes where
-questions go: one that needs the **owner** rather than other work has to be
-listed in [`open-decisions.md`](open-decisions.md), in the shape that page asks
-for — what is blocked, the options, a recommendation, and what either direction
-costs if it is wrong. What stays here is what a record already decided and the
-compiler does not do yet.
-
-**Citing a question is not asking it**, and that is a failure this file has had
-twice — found at 0.0.150 by following its own links. Two entries said *that is
-**X** on [`open-decisions.md`](open-decisions.md)* about questions that page has
-never held in its whole history, one of them at the **head of §2's order**. It
-reads like the rule above was followed and it is the rule above skipped: naming
-a question in the entry it blocks is the cheap half, and putting it where it can
-be answered is the half that costs an afternoon. An entry that names a question
-elsewhere is not finished until the link resolves.
+This file is a notes page: nothing here is normative.
 
 ---
 
 ## 1. Defects
 
-Two lessons this section has paid for, kept because they are rules and not
-records:
+Entries here are found by **running** something: the specification's programs
+(`crates/nikaia/tests/specification.rs` takes every `nika` block as far as it
+goes and hands the ones that lower to `rustc`), the corpus at both settings of
+`user_parallelism`, a multi-file project. An empty section says what has been
+run, not that the compiler is correct.
 
-* **A defect that needs a decision is not a defect that needs patience.** It
-  needs the decision put on [`open-decisions.md`](open-decisions.md), which is
-  where the one that held up a false `NK1129` sat until it was taken.
-* **A question that can be answered by running the corpus is not a reason to
-  leave a defect open.** Measuring one took an afternoon and refused nothing,
-  after the question had held its defect open since the record that named it.
-
-**How the entries here are found**, which is a method rather than a habit:
-by running the programs the specification prints. `crates/nikaia/tests/specification.rs`
-takes every `nika` block in the three pages as far as it goes and hands the ones
-that lower to `rustc`, against two recorded baselines. Of 134 blocks, 59 are
-programs this compiler takes and 39 of those compile below.
-
-**This section is empty.** §1.10 closed at 0.0.181, §1.14 at 0.0.180, §1.12 at
-0.0.177, §1.13 at 0.0.176, §1.11 at 0.0.173 and §1.9 at 0.0.172 — each the package
-after the one that found it, and the last three **the same day**. Every one of the
-six was **revealed by a fix** rather than made by one, which is the shape this
-section's method produces: a thing becomes writable, so the next question about it
-becomes askable.
-
-**And empty is a statement about what has been run**, which is the paragraph below
-and the reason it is worth reading twice here rather than once: the way to refill
-this section is to run something that has not been run. §1.7 closed at 0.0.168 — `use std::<anything>` is
-`NK1186` now, and the list it is answered from is what `std`'s ledger declares
-joined with what a page or a record names and the compiler has not built. §1.8
-closed at 0.0.161, the same package that opened it. §1.1 closed at 0.0.137, §1.2 at 0.0.132,
-§1.3 and §1.4 at 0.0.131, and §1.5 and §1.6 at 0.0.136. The closed numbers stay
-where they were, because this file is cited by number.
-
-**And every one of the last five was found the way the method above says**, by
-running something: §1.7 by writing `use std::rust` in a program to check a
-sentence this file was about to claim; §1.8 by building an experiment to see what
-a new column changed about it; §1.9 by writing the shape
-[ADR-106](specification/adr/adr-106.md) D1 had just made writable and building it
-from the other side; §1.10 by handing that now-writable function a type that
-implements nothing; §1.11 by writing a fixture for §1.9 and having it refused for
-something else. And a **sixth**, fixed in the same package as §1.8 and never
-given a number, by trying the same change twice and getting two answers: a hand
-edit to a `contracts/<crate>.contracts` did not reach the build cache's key, and
-failed **open** while it did not.
-
-**Every entry this section has ever held was found by *running* something** —
-the specification's own programs, the corpus at both settings, a two-file
-project, a change made twice — and never by reading the code. So an **empty §1
-is a statement about what has been run**, and not about what is correct; the way
-to lengthen it is the method above.
+**This section is empty.**
 
 ## 2. Decided and unbuilt
 
-Two things hold across this whole section, and they are here rather than argued
-again inside each entry.
+Two rules for ordering this section:
 
-**Checked and unrunnable is the state that rots fastest.** A check with no program
-to be tested against is correctness that quietly stops being true — nothing fails
-when it drifts, because nothing exercises it. An entry here that says *"the check
-runs and the construct does not"* is more urgent than its size suggests.
+* **Checked and unrunnable rots fastest.** A check no program exercises stops
+  being true without anything failing, so an entry that says *the check runs and
+  the construct does not* is more urgent than its size suggests.
+* **A refusal is free before programs exist** and breaking afterwards.
 
-**A refusal is free before programs exist and breaking afterwards.** Anything in
-this section that adds a refusal — a diagnostic, a narrowed rule — costs nothing
-today, because no program can be written that it would reject. The same refusal
-added after programs exist breaks them. That asymmetry belongs to the work, not to
-the order somebody happens to pick.
+The order:
 
-**And the order lives here**, because this is the list that knows what each item
-costs. It used to live twice — this file and the roadmap's own "next steps" — and
-the second copy is the one that went stale, still asking for `if/else` and structs
-long after both worked. Two lists of one thing is one list and one liability.
-
-**And the order is the thing this file most easily gets wrong**, because it is
-the part that goes stale without any entry changing: what sat first here sat
-first because of what stood in front of it, and both of those were built out
-from under it. It used to open with *the refusals around tasks*, pointing at an
-entry called *a task that may not cross a thread* — which **did not exist**, and
-whose work has since been done from the other end. Read against the code before
-it is followed.
-
-So, in order, and each says below why it sits where it does:
-
-1. **A server to bind to, and the `postgres` block.** Its own project rather
-   than a step of this one, and **first now** rather than third: it is what
-   several entries here are waiting for. A `std` entry whose lambda may
-   genuinely pause is a route handler (§2.1); a `par_iter` with an entry to
-   demand `sync` of is a program that calls one (*`par_iter` has no entry*); a
-   pausing sequence's lazy walk is the same shape (§2.2). Each of those says
-   *it waits on a program rather than on work*, and this is the program.
-2. **The rules around the lock.** The type, its constructor, its single spelling
-   and all four doors are built, and the transfer has its door
-   ([ADR-065](specification/adr/adr-065.md)), so nothing here needs deciding:
-   what is left is **D7's stored lambda** and nothing else — and the corpus says
-   a refusal reading the `locks` column today would refuse correct programs, so
-   what it needs first is entries for what those functions call.
-3. **Supervision.** Last because nothing else waits on it.
-
-**And what left the head of this list, measured rather than assumed.** The
-refusals around tasks ([ADR-055](specification/adr/adr-055.md) §2 D6) were
-first, and `NK2501` fires end to end now: a Rust crate with an `Rc` field,
-`nikaia describe` writing `crosses = false` from that field
-([ADR-123](specification/adr/adr-123.md) D2), the description merged into the
-ledger the analyses read ([ADR-104](specification/adr/adr-104.md) D1), and a
-`spawn` refused in **this compiler's** words on the `.nika` line —
-`crates/nikaia/tests/describing.rs` runs that chain from a program. What is left
-was the case this compiler could not **ask** about, where `rustc`'s own `Send`
-bound refused against the right `.nika` line through
-[ADR-005](specification/adr/adr-005.md) D7's translation: the position was kept
-and the words were `rustc`'s. **It asks now**
-([ADR-193](specification/adr/adr-193.md), built through 0.0.163): a described
-call whose `threads` says `true` is `NK2502` in this language's vocabulary, and
-both crossing experiments in the tree are refused here rather than below.
-
-**The tether that stood out of this sequence is built**
-([ADR-209](specification/adr/adr-209.md), 0.0.185): a buffer whose views outlive
-its scope lives in the keep of whatever keeps them — a frame, a task's handle,
-or each view of a container that drops entries — and nothing is written for it.
-Its entry is gone; what *text is one type* waited on it for is said there.
+1. **A server to bind to, and the `postgres` block.** Several entries wait on
+   it: a `std` entry whose lambda may genuinely pause is a route handler (§2.1);
+   a `par_iter` with an entry to demand `sync` of is a program that calls one;
+   a pausing sequence's lazy walk is the same shape (§2.2).
+2. **The rules around the lock.** The type, its constructor, its spelling, all
+   four doors and the transfer are built
+   ([ADR-065](specification/adr/adr-065.md)); what is left is **D7's stored
+   lambda**, and a refusal reading the `locks` column would refuse correct
+   programs until the functions they call have entries.
+3. **Supervision.** Nothing else waits on it.
 
 ### 2.1. A lambda that pauses is refused where `std` takes it
 
@@ -476,15 +355,12 @@ left here is an order rather than a design:
    `std::text` already does — so the Nikaia parser is what a Nikaia program
    *and* a Rust one call, and there is nothing between them to design.
 
-*What an application writes needs no language change*, measured at 0.0.152 —
-and what it turned out to write is **not** the chain that measurement ran.
-`NK1142` refused a function type in a field until 0.0.195, so nothing could *keep* a handler per
-path and a `.route(…)` chain had nowhere to put what it was handed
-([§2.14](#214-a-parameter-may-be-a-function-and-a-kept-one-has-no-lowering) is
-the entry that owes it). So the MVP's shape is **one handler and not a route
-table** — `http::listen(at) fn(request) { … }`, with the handler deciding — which
-is [ADR-194](specification/adr/adr-194.md) D4's rule kept by another route: the
-program says what is exposed, and nothing is derived from `pub`.
+*The MVP's shape is one handler*: `http::listen(at) fn(request) { … }`, with the
+handler deciding, which keeps [ADR-194](specification/adr/adr-194.md) D4's rule
+— the program says what is exposed, and nothing is derived from `pub`. A
+`.route(…)` chain can be written now that a function value can be kept in a
+field ([ADR-217](specification/adr/adr-217.md) D2); adding one is the package's
+work.
 
 *Two lowerings were wrong about a function-typed parameter*, both found by being
 the first program to write one for real, and both fixed at 0.0.166. A parameter
@@ -603,36 +479,6 @@ there to derive from ([ADR-103](specification/adr/adr-103.md)), or *a foreign
 crate is described before it is called*, where there is nothing to derive it
 *from* ([ADR-104](specification/adr/adr-104.md)). Either makes D6 writable and
 testable in the same change, and the test above is what says the day has come.
-
-### 2.14. A parameter may be a function, and a kept one has no lowering
-
-[ADR-102](specification/adr/adr-102.md) D5, and the only part of that record
-left. Steps 1 to 3 are built: the type parses and round-trips through the
-ledger, D2's reading is in the fit (`NK2206` for a lambda that pauses where the
-type says `sync`, `NK2606` for one that fails where it declares none), a **run**
-parameter lowers to a closure argument `&impl Fn(A) -> R`, and the run-or-kept
-answer feeds the `sync` column — a run parameter gives its function
-`sync = "from(f)"` and a kept one is answered from the type.
-
-*The `&` on that shape arrived at 0.0.166*, and it arrived from a defect: a run
-parameter is **immediate** (Part I 5.4 C), so it borrows, and the lowering used
-to move it. Nothing noticed while no program handed a handler **on** — and the
-first one that did, `examples/http/`'s server passing its handler to an `answer`
-inside its accept loop, got *use of moved value* from `rustc` about a file nobody
-wrote.
-
-*D5's lowering of a **kept** handler is built since 0.0.195*
-([ADR-217](specification/adr/adr-217.md) D2): a function type in a field, a
-result, a `let` or a kept parameter is `nikaia_std::func::Kept`, one shared
-closure, and `NK1142` is retired. **A route table can be written now.**
-
-*What it cost until then was concrete.* A
-**route table** is a field holding a handler per path, so `NK1142` is why the
-HTTP MVP is **one handler and not a `.route(…)` chain**
-([§2.6](#26-the-http-server-is-built-and-what-waits-on-it-is-the-parsing-moved-into-nikaia)).
-The shape the language reaches instead is one function that decides, which keeps
-[ADR-194](specification/adr/adr-194.md) D4's rule — the program says what is
-exposed — by another route; a chain is what this entry buys.
 
 ### 2.15. A package is found by version through Cargo, under `nikaia_<name>`
 
@@ -977,13 +823,9 @@ which held for as long as no program handed a handler on — and `&F` is a funct
 too, so the call writes one `&` and nothing else changes.
 
 *What is left is step 4*, `fortunes.nika` as the corpus program. `examples/http/`
-is written and **declares no `route`**: `NK1142` refused a function type in a
-field until 0.0.195, so a chain could not keep what it was handed, and the MVP's shape is one
-handler ([§2.6](#26-the-http-server-is-built-and-what-waits-on-it-is-the-parsing-moved-into-nikaia)).
-So this line's *needs the package rewritten rather than the compiler changed* was
-wrong about which half is blocking: the package is written, and what `route`
-waits on is [§2.14](#214-a-parameter-may-be-a-function-and-a-kept-one-has-no-lowering)'s
-kept lowering, which is the compiler.
+declares no `route` yet; the kept lowering it needs is built
+([ADR-217](specification/adr/adr-217.md) D2), so a `.route(…)` chain is the
+package's to add ([§2.6](#26-the-http-server-is-built-and-what-waits-on-it-is-the-parsing-moved-into-nikaia)).
 
 ### 2.32. A library for other languages
 
@@ -1295,10 +1137,7 @@ with two ways to say one thing.
 
 ## 3. Upkeep
 
-A stale **Status** note is a defect in its own right
-([`README.md`](README.md) §1), because a reader cannot tell a plan from a
-promise - so this section being **empty** is a state to try to keep rather than
-a milestone.
+A page that says something a later decision made false.
 
 ### 3.1. A whole-workspace test run fails the project tests, and the cause is now Cargo's package cache rather than the wrapper's stdin
 
@@ -1401,7 +1240,7 @@ way a project is built, and not a loop over every file.
   change against Nikaia, what the patch does, and what was tried and must not be
   redone. A guide rather than a list; what was open in it is an entry above.
 * [`spec-promises.md`](spec-promises.md) — every construct the specification
-  names, probed against the compiler. The evidence behind the **Status** notes, and
-  the right place to look before adding an entry to §3 here.
+  names, probed against the compiler — the place to look before adding an entry
+  to §3 here.
 * [`error-corpus.md`](error-corpus.md) — twenty-six broken programs and what the
   compiler says about each.

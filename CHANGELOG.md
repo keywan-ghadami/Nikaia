@@ -4,6 +4,18 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.196] — 2026-09-26
+
+**The open lists say what is open** — the owner's request.
+
+`docs/open-work.md` loses the history of why it is laid out as it is: the
+header, and the openings of §1 to §3, are the rules and the current order and
+nothing else. §2.14 (the kept lowering of a function value) closed with 0.0.195
+and is deleted. The question ADR-217 left — whether a container of structs
+holding views that drops entries in a loop should be held rather than refused
+(`NK2304`) — is on `docs/open-decisions.md`, with three options and a
+recommendation.
+
 ## [0.0.195] — 2026-09-26
 
 **What the specification stated and the compiler did not build** —
