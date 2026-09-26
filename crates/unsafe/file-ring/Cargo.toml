@@ -2,7 +2,7 @@
 name = "file-ring"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.88"
 license = "Apache-2.0"
 description = "Files read and written by the kernel through io_uring with owned buffers, and an eventfd bell that wakes a thread parked on the ring. Linux only."
 publish = false

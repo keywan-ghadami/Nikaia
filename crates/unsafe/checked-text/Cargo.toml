@@ -2,7 +2,7 @@
 name = "checked-text"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.88"
 license = "Apache-2.0"
 description = "Bytes checked as UTF-8 once - in parallel chunks for large inputs - and handed out as text without checking again; optionally a mapped file."
 publish = false

@@ -5,9 +5,10 @@
 # unstable feature either. This file is the single source of truth for the
 # channel, and the channel is never repeated anywhere else.
 #
-# The *version floor* is a different fact and does not live here: Rust 1.75 is
-# what the emitted code needs, and the emitter writes it as `rust-version` into
-# every generated Cargo.toml (ADR-109 D4).
+# The *version floor* is a different fact and does not live here: Rust 1.88 is
+# the oldest this works with, measured by running the test suite on it
+# (ADR-219). The emitter's `RUST_FLOOR` holds it, writes it as `rust-version`
+# into every generated Cargo.toml, and `scripts/check-floor.sh` tests on it.
 [toolchain]
 channel = "stable"
 # rustfmt/clippy are needed by scripts/pre-commit.sh and CI.

@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.200] — 2026-09-26
+
+**The oldest Rust Nikaia works with is measured: 1.88** —
+[ADR-219](docs/specification/adr/adr-219.md), the owner's request.
+
+The README and Part III promised 1.75 (ADR-109 D4). Building and testing with
+each version found four things that need more: `NonNull::map_addr` (1.84, in
+`std`), `impl AsyncFn` and `async` closures (1.85, in the **emitted code**),
+`std::io::pipe` (1.87, in `std`'s tests) and the compiler's dependency `home`
+(1.88). The whole suite and all six `crates/unsafe/` crates pass on 1.88.0.
+
+`rust-version = "1.88"` is in every manifest, `RUST_FLOOR` (which every
+generated `Cargo.toml` carries and the build checks) says 1.88, and so do the
+README, Part III 13 and `rust-toolchain.toml`'s comment.
+`scripts/check-floor.sh` installs exactly that toolchain and runs the suite on
+it, and CI runs it as a job of its own, so the number cannot go stale again.
+
 ## [0.0.199] — 2026-09-26
 
 **`nikaia-std` holds no `unsafe`** — [ADR-218](docs/specification/adr/adr-218.md)

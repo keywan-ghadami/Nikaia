@@ -308,7 +308,8 @@ that only works single-threaded.
 Linux on x86_64 is the one machine this works on today. macOS and Windows are untested.
 
 **1. A Rust toolchain.** Stable, nothing else — `rustup` reads the channel from
-`rust-toolchain.toml` and installs it on first use. The emitted code needs Rust 1.75 or newer.
+`rust-toolchain.toml` and installs it on first use. **Rust 1.88 or newer** is required:
+the compiler, `std` and the programs it generates are tested on 1.88.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -393,7 +394,7 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-**Pre-alpha, as of 0.0.199.** The [roadmap](docs/project_status_and_roadmap.md) shows 74 % —
+**Pre-alpha, as of 0.0.200.** The [roadmap](docs/project_status_and_roadmap.md) shows 74 % —
 that counts *areas of scope* built, and the language area alone reads 100 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in

@@ -2,6 +2,9 @@
 name = "orchestrator"
 version = "0.1.0"
 edition = "2021"
+# The oldest Rust this builds and is tested on (ADR-219); the emitter's
+# `RUST_FLOOR` says the same.
+rust-version = "1.88"
 
 [dependencies]
 anyhow = { workspace = true }

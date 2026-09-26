@@ -1688,23 +1688,28 @@ struct Declared<'a> {
     channel: &'a str,
 }
 
-/// **The oldest Rust the emitted code compiles under**
-/// ([ADR-109](../../docs/specification/adr/adr-109.md) D4).
+/// **The oldest Rust a Nikaia installation works with**
+/// ([ADR-219](../../docs/specification/adr/adr-219.md)).
 ///
-/// 1.75 is where `-> impl Trait` in a trait's method became stable, which is
-/// the form D3 writes for a method that may pause. Every generated
-/// `Cargo.toml` carries it, and the build compares `rustc --version` against
-/// it before handing anything to `cargo` — because Cargo's own *package
-/// requires rustc 1.75 or newer* is a message about a generated file, which
-/// [Part III C.1](../../docs/specification/30-nikaia-tooling.md) forbids.
+/// **Measured, not derived**: the whole test suite - the compiler, `std`, and
+/// every program the tests emit and compile - passes on this version, and CI
+/// runs it there. It is the highest of what each part needs: the emitted code
+/// writes `impl AsyncFn` and `async` closures (1.85), `std` uses
+/// `NonNull::map_addr` (1.84) and its tests `io::pipe` (1.87), and the
+/// compiler's dependencies ask for 1.88.
+///
+/// Every generated `Cargo.toml` carries it, and the build compares
+/// `rustc --version` against it before handing anything to `cargo` - because
+/// Cargo's own *package requires rustc 1.88 or newer* is a message about a
+/// generated file, which [Part III C.1](../../docs/specification/30-nikaia-tooling.md)
+/// forbids.
 ///
 /// **It is a different fact from the channel.** `rust-toolchain.toml` names
 /// that and stays the only place that does
-/// ([ADR-001](../../docs/specification/adr/adr-001.md) D1); this is a version
-/// the lowering needs, so it lives here. It rises only by a record — a later
-/// feature of the language below that some lowering asks for — and never
-/// silently.
-pub const RUST_FLOOR: &str = "1.75";
+/// ([ADR-001](../../docs/specification/adr/adr-001.md) D1). It rises by a
+/// record and a measurement, never silently: `scripts/check-floor.sh` reads it
+/// from here and runs the suite on it.
+pub const RUST_FLOOR: &str = "1.88";
 
 /// What surrounds the statements being emitted.
 #[derive(Debug, Clone, Copy)]

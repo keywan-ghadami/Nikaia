@@ -2,7 +2,7 @@
 name = "c-text"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.88"
 license = "Apache-2.0"
 description = "Text a C library owns: an address with a zero byte after it, declared as the result of an extern function and copied out as a String."
 publish = false

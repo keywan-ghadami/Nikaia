@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.199 (Draft)
+**Version:** 0.0.200 (Draft)
 **Date:** 2026-09-26
 
 ---
@@ -9,7 +9,7 @@
 
 Nikaia provides one command-line interface, `nikaia`. It builds and runs a project, manages its dependencies, formats its source and runs its tests.
 
-**Prerequisites.** A Nikaia installation requires a **stable** Rust toolchain and nothing else. The compiler emits stable Rust and hands it to `cargo`. It uses no unstable compiler feature and no `-Z` flag. The emitted Rust requires Rust **1.75 or newer**. The compiler writes that number as `rust-version` into every generated `Cargo.toml` and compares it with `rustc --version` before `cargo` runs. An older toolchain is refused before the backend runs.
+**Prerequisites.** A Nikaia installation requires a **stable** Rust toolchain and nothing else. The compiler emits stable Rust and hands it to `cargo`. It uses no unstable compiler feature and no `-Z` flag. A Nikaia installation, `std` and the emitted Rust require Rust **1.88 or newer**. The compiler writes that number as `rust-version` into every generated `Cargo.toml` and compares it with `rustc --version` before `cargo` runs. An older toolchain is refused before the backend runs.
 
 ### 13.1. Project Structure
 `nikaia new my_project` generates the following structure:

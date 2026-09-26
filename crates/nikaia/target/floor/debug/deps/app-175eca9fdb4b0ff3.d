@@ -1,0 +1,8 @@
+/home/user/Nikaia/crates/nikaia/target/floor/debug/deps/app-175eca9fdb4b0ff3.d: /home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/app/target/nikaia/gen/app/app.rs /home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/app/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/lib/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/app/target/nikaia/gen/switches
+
+/home/user/Nikaia/crates/nikaia/target/floor/debug/deps/app-175eca9fdb4b0ff3: /home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/app/target/nikaia/gen/app/app.rs /home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/app/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/lib/src/main.nika /home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/app/target/nikaia/gen/switches
+
+/home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/app/target/nikaia/gen/app/app.rs:
+/home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/app/src/main.nika:
+/home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/lib/src/main.nika:
+/home/user/Nikaia/target/floor/release/nikaia-scratch/25612-18d8ce4a5318a773/package-trait-call-17/app/target/nikaia/gen/switches:

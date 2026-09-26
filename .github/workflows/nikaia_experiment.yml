@@ -6,6 +6,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The oldest Rust Nikaia claims (ADR-219), with the whole suite run on it:
+  # the compiler, `std`, and every program the tests emit. The channel for
+  # building stays `rust-toolchain.toml`'s (ADR-001 D1); this checks the claim.
+  rust_floor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run the suite on the floor
+        run: sh scripts/check-floor.sh
+
   # The crates that hold `unsafe`, one topic each (ADR-218). Each is its own
   # workspace and is checked on its own: tests and lints on stable, and Miri on
   # nightly - which checks the crates' tests and nothing the compiler builds,

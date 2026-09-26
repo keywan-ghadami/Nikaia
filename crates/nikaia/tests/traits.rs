@@ -662,10 +662,10 @@ fn the_send_bound_follows_the_setting() {
 /// ([ADR-109](../../../docs/specification/adr/adr-109.md) D4), from one
 /// constant in the emitter.
 ///
-/// 1.75 is where `-> impl Trait` in a trait's method became stable, which is
-/// the form D3 writes. The build compares `rustc --version` against it before
-/// handing anything to Cargo, because Cargo's own *package requires rustc 1.75
-/// or newer* names a package the author never wrote — [Part III
+/// The floor is measured ([ADR-219](../../../docs/specification/adr/adr-219.md)).
+/// The build compares `rustc --version` against it before handing anything to
+/// Cargo, because Cargo's own *package requires rustc 1.88 or newer* names a
+/// package the author never wrote — [Part III
 /// C.1](../../../docs/specification/30-nikaia-tooling.md)'s class.
 ///
 /// **A version this cannot read is not a refusal**: a `rustc --version` that
@@ -673,7 +673,7 @@ fn the_send_bound_follows_the_setting() {
 /// on a reading failure would refuse a correct toolchain (C.4).
 #[test]
 fn the_rust_floor_is_one_constant_and_this_toolchain_clears_it() {
-    assert_eq!(nikaia::emit::RUST_FLOOR, "1.75");
+    assert_eq!(nikaia::emit::RUST_FLOOR, "1.88");
     assert!(
         orchestrator::project::toolchain_is_new_enough(nikaia::emit::RUST_FLOOR).is_ok(),
         "the toolchain the tests run on clears the floor the emitter writes"

@@ -2,7 +2,7 @@
 name = "ref-or-box"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.84"
+rust-version = "1.88"
 license = "Apache-2.0"
 description = "One word that holds either a reference to static data or an owned box, with a niche for Option."
 publish = false

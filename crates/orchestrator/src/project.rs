@@ -298,7 +298,7 @@ pub struct Cargo {
 /// **Refuse an old toolchain in this compiler's words**
 /// ([ADR-109](../../../docs/specification/adr/adr-109.md) D4).
 ///
-/// Cargo's own answer is *package `x` requires rustc 1.75 or newer*, naming a
+/// Cargo's own answer is *package `x` requires rustc 1.88 or newer*, naming a
 /// package the author never wrote — [Part III
 /// C.1](../../../docs/specification/30-nikaia-tooling.md)'s class. So the
 /// comparison happens before Cargo is handed anything.
