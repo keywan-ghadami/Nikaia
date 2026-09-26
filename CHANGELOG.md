@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.205] — 2026-09-26
+
+**What the first green-by-design run of 0.0.204 found**, on a runner with fewer
+cores than the machine it was written on.
+
+- **A file operation in flight was submitted a second time** (`file-ring`).
+  `drive` - what a synchronous read or write runs to its end - submitted
+  *every* unfinished slot, including a future's that already had a submission
+  with the kernel. A write's bytes reached the file twice
+  (`many_threads_reading_and_writing_at_once_each_get_their_own_answer` read
+  `"2:72\n2:72\n"`), and a read would have had the kernel write the same bytes
+  twice at once, which the crate's own soundness comment rules out. A slot with
+  a submission in flight is never submitted again, and `drive` runs only its
+  caller's slots; `a_write_in_flight_is_not_submitted_again` fails on the old
+  code and passes on the new.
+- **`a_worker_operation_wakes_the_park_on_either_path` passed only beside other
+  tests.** `park_for` answers `false` both for *nothing to wait for* (at once)
+  and for *the bound ran out* (after it), and the test read the value alone: run
+  on its own it failed every time, back to at least 0.0.199. It now asks what it
+  claims - that the park waited.
+
 ## [0.0.204] — 2026-09-26
 
 **CI is green again, and runs what a change needs, once.** It had been red

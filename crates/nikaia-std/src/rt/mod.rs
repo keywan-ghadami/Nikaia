@@ -1109,9 +1109,19 @@ mod tests {
         // this park is entered with the operation in flight on either path, and
         // what is asserted is that the hook did **not** claim there was nothing
         // to wait for.
+        //
+        // **`false` is two answers, so the time is what tells them apart.**
+        // *Nothing to wait for* is the early return and comes back at once;
+        // *the bound ran out and nothing moved* comes back after the 50 ms -
+        // which is what a park with a two-second wait in flight should do. The
+        // test used to read `true` only, which it got when some other test's
+        // operation happened to finish inside the window: alone, it failed
+        // every time, and beside others it failed on a slower runner.
+        let started = std::time::Instant::now();
         let moved = io::park_for(io::generation(), Some(std::time::Duration::from_millis(50)));
+        let waited = started.elapsed() >= std::time::Duration::from_millis(40);
         assert!(
-            moved,
+            moved || waited,
             "the park said there was nothing to wait for while a worker \
              operation was in flight on the {} path; ADR-121 D1's eventfd is \
              what makes a worker's reply something the ring park can wait for",

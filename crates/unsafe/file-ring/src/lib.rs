@@ -256,7 +256,11 @@ impl Ring {
             slots.push(self.begin(path, Kind::Read, Vec::new()));
         }
 
-        self.drive();
+        let mine: Vec<usize> = slots
+            .iter()
+            .filter_map(|s| s.as_ref().ok().copied())
+            .collect();
+        self.drive(&mine);
 
         slots
             .into_iter()
@@ -281,7 +285,7 @@ impl Ring {
     ) -> io::Result<()> {
         self.reconcile();
         let slot = self.open_for_write(path, bytes, append, create)?;
-        self.drive();
+        self.drive(&[slot]);
         self.finish(slot).map(|_| ())
     }
 
@@ -581,8 +585,11 @@ impl Ring {
     ///
     /// Returns whether anything was submitted.
     fn submit_one(&mut self, slot: usize) -> bool {
+        // **Never a second submission beside one still in flight**: it would
+        // cover the same `at..len` of the same buffer - a read the kernel
+        // writes twice at once, a write whose bytes reach the file twice.
         let job = match self.jobs.get_mut(slot).and_then(Option::as_mut) {
-            Some(job) if job.outcome.is_none() => job,
+            Some(job) if job.outcome.is_none() && job.outstanding == 0 => job,
             _ => return false,
         };
 
@@ -642,19 +649,28 @@ impl Ring {
         true
     }
 
-    /// Run every unfinished slot to its end, keeping all of them in flight.
-    fn drive(&mut self) {
+    /// Run `mine` to their end, keeping all of them in flight.
+    ///
+    /// **Only `mine`.** A slot another caller holds - a future's read, begun
+    /// and not yet polled - has a submission in flight already and is taken
+    /// further by its own [`Ring::poll_slot`]; submitting it here as well was
+    /// a second submission over the same bytes, and a write reached its file
+    /// twice (`fs::tests::many_threads_reading_and_writing_at_once_each_get_their_own_answer`).
+    fn drive(&mut self, mine: &[usize]) {
         loop {
-            let mut submitted = 0;
-            for slot in 0..self.jobs.len() {
-                if self.submit_one(slot) {
-                    submitted += 1;
-                }
+            for slot in mine {
+                self.submit_one(*slot);
             }
-            if submitted == 0 {
+            let waiting = mine.iter().any(|slot| {
+                self.jobs
+                    .get(*slot)
+                    .and_then(Option::as_ref)
+                    .is_some_and(|job| job.outcome.is_none() || job.outstanding > 0)
+            });
+            if !waiting {
                 return;
             }
-            if let Err(e) = self.ring.submit_and_wait(submitted) {
+            if let Err(e) = self.ring.submit_and_wait(1) {
                 // Nothing was completed, so nothing may be freed. Every
                 // outstanding count stays as it is and `reconcile` will find
                 // them; the jobs are failed so their callers stop waiting.
@@ -898,7 +914,42 @@ mod tests {
         // And the outstanding one is only released once its completion has
         // been accounted for.
         ring.reconcile();
-        ring.drive();
+        ring.drive(&[slot, other]);
         assert!(ring.jobs[slot].is_none() || ring.jobs[slot].as_ref().unwrap().outstanding == 0);
+    }
+
+    /// **A slot in flight is not submitted a second time.** A future's
+    /// write, begun and not yet polled, was submitted again by the next
+    /// synchronous operation's `drive`, and its bytes reached the file twice.
+    #[test]
+    fn a_write_in_flight_is_not_submitted_again() {
+        let Some(mut ring) = ring() else { return };
+        let path = scratch("in-flight");
+        let _ = std::fs::remove_file(&path);
+
+        let slot = ring
+            .begin_write(&path, b"once\n".to_vec(), false, true)
+            .expect("begun");
+        assert_eq!(ring.jobs[slot].as_ref().expect("held").outstanding, 1);
+        assert!(
+            !ring.submit_one(slot),
+            "a second submission over the same bytes while the first is in flight"
+        );
+        // And what runs to its end beside it leaves it alone.
+        ring.write(
+            &scratch("in-flight-other"),
+            b"other\n".to_vec(),
+            false,
+            true,
+        )
+        .expect("another write");
+        let answer = loop {
+            if let Some(answer) = ring.poll_slot(slot) {
+                break answer;
+            }
+            ring.reconcile();
+        };
+        answer.expect("the first write");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "once\n");
     }
 }
