@@ -114,10 +114,12 @@ fn a_call_into_std_is_checked_against_the_shipped_ledger() {
 #[test]
 fn an_argument_of_the_wrong_type_is_reported() {
     // A **view** and not a literal: a literal handed to a `String` is one
-    // (ADR-207 D2), and a view of text the program has still needs its copy
-    // written.
-    let (code, message) = one("fn greet(who: String) -> String { return who }\n\
-         fn hello(w: ref String) -> String { return greet(w) }");
+    // (ADR-207 D2). And a **published** parameter text of its own also goes
+    // into, which stays text of its own (ADR-223 D2), so the view still needs
+    // its copy written.
+    let (code, message) = one("pub fn greet(who: String) -> String { return who }\n\
+         pub fn hello(w: ref String) -> String { return greet(w) }\n\
+         pub fn world() -> String { return greet(f\"world\") }");
     assert_eq!(code, "NK1102");
     assert_eq!(
         message,

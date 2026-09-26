@@ -1137,6 +1137,19 @@ impl Ty {
         // call here rather than one at every reader of a type, which is why the
         // map is on `Parsed` and not on a pass of its own.
         let name = parsed.unaliased(parsed.text(ty.name));
+        // **Text that is a view or its own per value is read as text of its
+        // own** ([ADR-223](../../../docs/specification/adr/adr-223.md) D3):
+        // below it is `EitherText`, which is lent as a `&str` and copied by
+        // `.clone()` exactly as a `String` is. What goes *into* one is the
+        // checker's to accept per position (`expected_either`,
+        // `field_either`).
+        if ty.either {
+            return Ty::Named {
+                name: TEXT.to_string(),
+                args: Vec::new(),
+                view: false,
+            };
+        }
         // **A view of `String` is a view of text**
         // ([ADR-184](../../../docs/specification/adr/adr-184.md) D2), the same
         // normalisation [`Ty::parse`] makes at the other door. Text is one type

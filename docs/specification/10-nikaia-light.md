@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.205 (Draft)
+**Version:** 0.0.206 (Draft)
 **Date:** 2026-09-26
 
 ---
@@ -219,10 +219,11 @@ Nikaia provides basic types to represent simple values.
       already there, or text of its own, is the compiler's decision per use
       (6.6). A literal is a view of the program's own text; where the use
       keeps it as a `String` it is constructed there, and where the use only
-      reads it nothing is allocated. A field or a result declared `String`
-      is text of its own where only text of its own is put there, a view
-      where only views are, and either, per value, where both are; a
-      published field or result is never the third.
+      reads it nothing is allocated. Wherever a program declares `String` -
+      a field, a result, a parameter, a `let`, the element of a list, the key
+      or value of a map - it is text of its own where only text of its own is
+      put there, a view where only views are, and either, per value, where
+      both are; a published field, parameter or result is never the third.
     * `ref String`: the same text with a promise attached: *this is a borrowed
       view, no copy and no handle*. The compiler holds the program to the
       promise. It is written where allocating would be a mistake.

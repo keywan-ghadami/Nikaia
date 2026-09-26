@@ -142,17 +142,20 @@ fn a_view_where_a_string_is_kept_is_refused_with_the_way_out() {
     assert!(help.contains(".clone()"), "{help}");
 }
 
-/// A list that mixes a view in keeps the refusal it had: only literal text is
-/// constructed, never a view copied.
+/// **A list a view goes into is a list of views** (ADR-223): the literal
+/// beside it is a view of static text, so nothing is constructed and nothing
+/// copied - the refusal this used to be is gone.
 #[test]
-fn a_list_with_a_view_in_it_is_not_constructed() {
-    let found = findings(
-        "fn names(n: ref String) -> Vec[String] {\n\
-             let all: Vec[String] = [\"a\", n]\n\
-             return all\n\
-         }\n",
-    );
-    assert!(!found.is_empty(), "a view in the list was accepted");
+fn a_list_with_a_view_in_it_is_a_list_of_views() {
+    let source = "fn names(n: ref String) -> Vec[String] {\n\
+                      let all: Vec[String] = [\"a\", n]\n\
+                      return all\n\
+                  }\n\
+                  fn main() { println(names(\"b\").len()) }\n";
+    assert!(findings(source).is_empty(), "{:?}", findings(source));
+    let rust = lowered(source);
+    assert!(!rust.contains("String::from"), "{rust}");
+    assert_eq!(ran("list-of-views", source).trim(), "2");
 }
 
 /// **A literal takes its neighbours' text**: in a list that already holds text
@@ -229,17 +232,9 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
     assert!(help.contains("declare `n: String`"), "{help}");
     assert!(help.contains("n.clone()"), "{help}");
 
-    // A name bound to a literal, handed to a function that keeps it: the
-    // compiler would have built it, and says so. (Kept in a field or handed
-    // back, the binding is declared `String` for it - ADR-222 D4.)
-    let (why, help) = notes(
-        "struct Person { name: String }\n\
-         fn make(n: String) -> Person { return Person { name: n } }\n\
-         fn main() { let s = \"Ada\"\n let p = make(s) }\n",
-    );
-    assert!(why.contains("bound to the literal \"Ada\""), "{why}");
-    assert!(why.contains("ADR-207"), "{why}");
-    assert!(help.contains("let s: String = \"Ada\""), "{help}");
+    // (A name bound to a literal is no longer a case of its own: wherever it
+    // is kept as text of its own, the binding is declared `String` for it -
+    // ADR-222 D4, ADR-223.)
 
     // Any other view: it points into something that stays.
     let (why, help) = notes(

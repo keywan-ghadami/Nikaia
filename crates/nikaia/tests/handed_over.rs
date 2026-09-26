@@ -122,27 +122,24 @@ fn a_map_keyed_by_numbers_holds_text() {
     );
 }
 
-/// **A view written as a key the map keeps is refused**, with ADR-208's
-/// sentence: the map needs text of its own and a copy is the program's to write.
+/// **A map whose keys are only ever views is a map keyed by views**
+/// ([ADR-223](../../../docs/specification/adr/adr-223.md) D1): the key
+/// written `String` is a view below, so nothing is copied - where this used to
+/// be refused with ADR-208's sentence asking for a `.clone()`.
 #[test]
-fn a_view_written_as_an_owned_key_is_refused() {
-    let found = findings(
+fn a_map_keyed_only_by_views_is_keyed_by_views() {
+    runs(
+        "view-keys",
         "use std::collections\n\n\
-         fn put(k: ref String) {\n\
+         fn count(text: ref String) -> i64 {\n\
          \x20   let mut m: collections::HashMap[String, i64] = collections::HashMap()\n\
-         \x20   m[k] = 1\n\
+         \x20   for w in text.split(\" \") {\n\
+         \x20       m[w] = (m[w] ?? 0) + 1\n\
+         \x20   }\n\
+         \x20   return m[\"a\"] ?? 0\n\
          }\n\
-         fn main() {}\n",
-    );
-    assert_eq!(codes_of(&found), ["NK1105"], "{found:#?}");
-    assert!(found[0].message.contains("key"), "{}", found[0].message);
-    assert!(
-        found[0]
-            .help
-            .as_deref()
-            .is_some_and(|h| h.contains(".clone()")),
-        "{:?}",
-        found[0].help
+         fn main() { println(count(\"a b a\")) }\n",
+        "2",
     );
 }
 

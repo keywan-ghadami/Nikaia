@@ -286,3 +286,95 @@ fn main() {
         "{found:#?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Every other place a program declares `String`
+// ([ADR-223](../../../docs/specification/adr/adr-223.md))
+// ---------------------------------------------------------------------------
+
+/// **A parameter, an annotated `let`, and the elements of a list and a map**
+/// are positions too. Every line here puts a view where the program declared
+/// `String`, none writes a copy, and nothing is copied.
+const EVERYWHERE: &str = r##"use std::fs
+use std::collections
+
+struct Person {
+    name: String,
+}
+
+fn keep(s: String) -> Person {
+    return Person { name: s }
+}
+
+fn words(text: ref String) -> Vec[String] {
+    let mut out: Vec[String] = Vec()
+    for w in text.split(" ") {
+        out.push(w)
+    }
+    return out
+}
+
+fn main() throws {
+    let text = fs::read_to_string("app.conf", fs::Root::Anywhere)
+    let first: String = text.trim()
+    let p = keep(first)
+    let mut names: Vec[String] = Vec()
+    let mut counts: collections::HashMap[String, i64] = collections::HashMap()
+    for line in text.lines() {
+        names.push(line.trim())
+        for w in line.split(" ") {
+            counts[w] = (counts[w] ?? 0) + 1
+        }
+    }
+    let ws = words("a b c")
+    println(f"{p.name.len()} {names.len()} {counts[\"=\"] ?? 0} {ws.len()} {ws[2]}")
+}
+"##;
+
+#[test]
+fn a_view_in_a_parameter_a_let_a_list_or_a_map_is_a_view() {
+    runs("everywhere", EVERYWHERE, "62 4 3 3 c");
+    let rust = lowered(EVERYWHERE, Build::default());
+    assert!(rust.contains("fn keep(s: &str)"), "{rust}");
+    assert!(rust.contains("-> Vec<&str>"), "{rust}");
+    assert!(!rust.contains("to_owned"), "{rust}");
+}
+
+/// **Both kinds into one parameter, one `let` and one list**: each value is
+/// handed over as it is - borrowed where it is a view, moved where it is text
+/// of its own.
+const MIXED_EVERYWHERE: &str = r##"use std::fs
+
+fn shout(s: String) -> String {
+    return f"{s}!"
+}
+
+fn main() throws {
+    let text = fs::read_to_string("extra.conf", fs::Root::Anywhere)
+    let mut last: String = f"nothing"
+    let mut all: Vec[String] = Vec()
+    for line in text.lines() {
+        last = line.trim()
+        all.push(line)
+        all.push(f"#{all.len()}")
+    }
+    let loud = shout(last)
+    let quiet = shout(f"x")
+    println(f"{loud} {quiet} {all.len()} {all[1]}")
+}
+"##;
+
+#[test]
+fn both_kinds_into_a_parameter_a_let_and_a_list_each_as_it_is() {
+    runs(
+        "mixed-everywhere",
+        MIXED_EVERYWHERE,
+        "host = override.org! x! 4 #1",
+    );
+    let rust = lowered(MIXED_EVERYWHERE, Build::default());
+    assert!(
+        rust.contains("Vec<nikaia_std::either_text::EitherText<'_>>"),
+        "{rust}"
+    );
+    assert!(rust.contains(".into()"), "{rust}");
+}

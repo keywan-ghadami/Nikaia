@@ -4,6 +4,24 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.206] — 2026-09-26
+
+**Every declared `String` is a position** —
+[ADR-223](docs/specification/adr/adr-223.md), the owner's *Nikaia does not build
+walls, it takes them down*.
+
+ADR-222's three tiers now cover a function's parameter, an annotated `let`, and
+the element of a list or a set and the key and value of a map, each decided by
+what the package puts there. A view handed to a function that keeps it, `let s:
+String = line.trim()`, a list of the trimmed lines of a file, and a map counting
+its words all compile and run with nothing copied. The last three used to pass
+the checker and fail in `rustc`. A mixed position gets each value as
+`value.into()`; the checker reads it as text of its own, so it is lent and
+copied as a `String` is. A published parameter is never both kinds. A value
+reaching a mixed position only through a string's hole leaves that position
+text of its own (its line cannot be rewritten), which keeps ADR-208's refusal
+for it.
+
 ## [0.0.205] — 2026-09-26
 
 **What the first green-by-design run of 0.0.204 found**, on a runner with fewer

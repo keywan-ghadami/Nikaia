@@ -642,12 +642,12 @@ its state — borrowed, tethered, owned — is the compiler's per use; a copy is
 ([ADR-222](specification/adr/adr-222.md)): a `String` field or result is text
 of its own, a view, or either per value, by what flows into it.
 
-*What is left:* the same for the two other positions that keep text — an
-argument a callee keeps, and an annotated `let` — where a view is still
-refused with ADR-208 D2's explanation (ADR-222 §3); a nullable `?String` field
-or result; and ADR-107 D5's foreign-boundary copy once crates are described.
-Evidence: `crates/nikaia/tests/text_literals.rs`, whose kept-argument case is
-still a refusal.
+**And for parameters, annotated `let`s and the elements of a list or a map**
+([ADR-223](specification/adr/adr-223.md)). *What is left:* a mixed position
+reached only through an `f"…"` hole (ADR-223 D2), a nullable `?String`, a
+container initialised whole with elements of both kinds (ADR-223 §3), and
+ADR-107 D5's foreign-boundary copy once crates are described. Evidence:
+`crates/nikaia/tests/text_tiers.rs`.
 
 ### 2.21. An `update` block says `mut`, may run more than once, and the compiler picks the lock
 

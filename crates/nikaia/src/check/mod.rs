@@ -9270,14 +9270,16 @@ impl<'a> Checker<'a> {
         what: &str,
         message: impl FnOnce(&str, &str) -> String,
     ) {
-        // **Text of its own into a position both kinds of text flow into** is
-        // moved in as it is (ADR-222 D3): that is what the position is for.
+        // **A view into a position both kinds of text flow into** is borrowed
+        // as it is (ADR-222 D3, ADR-223 D3): that is what the position is for.
+        // The position reads as text of its own, so a view is what needs
+        // letting through.
         let either = match what {
             "returns" => self.expected_either,
             "field" => std::mem::take(&mut self.field_either),
             _ => false,
         };
-        if either && *found == Ty::named("String") && *want == Ty::view("str") {
+        if either && *found == Ty::view("str") && *want == Ty::named("String") {
             return;
         }
         let before = self.checked.findings.len();
