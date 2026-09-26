@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Builds the documentation site into `_site/`, the same site `pages.yml`
-# publishes to GitHub Pages. This is the build command Cloudflare Workers
-# Builds runs for nikaia-lang.org (see `wrangler.jsonc`); it runs locally too.
+# Builds the documentation site into `_site/`. This is the build command
+# Cloudflare Workers Builds runs for nikaia-lang.org (see `wrangler.jsonc`);
+# it runs locally too.
 #
-# The steps are `pages.yml`'s, in its order, with one difference: they run on
-# a throwaway copy of the repository, never on the checkout itself. Fencing
-# the braces and writing the menu change files, and a local run must leave
-# the working tree as it found it.
+# Every step runs on a throwaway copy of the repository, never on the checkout
+# itself: fencing the braces and writing the menu change files, and a local
+# run must leave the working tree as it found it.
 #
 # Needs Ruby with Bundler, Python 3 and Node with npm.
 set -euo pipefail
@@ -22,8 +21,15 @@ tar -C "$ROOT" -cf - \
   --exclude=./.jekyll-cache --exclude=./.sass-cache \
   --exclude=./.wrangler . | tar -C "$WORK" -xf -
 
-# Literal braces, fenced off from Liquid. Why, and why the marker goes after
-# the opening heading: the step of the same name in `pages.yml`.
+# Literal braces, fenced off from Liquid. Nikaia writes a literal brace as
+# `{{`, so `{{` occurs in the specification, in decision records, the roadmap
+# notes and the changelog. Jekyll hands every Markdown file to Liquid first,
+# which reads `{{` as the start of a template variable: unguarded, some pages
+# fail the build outright and the rest lose the text between one brace pair
+# and the next, silently. Wrapping each file in `{% raw %}` tells Liquid to
+# leave it alone. The marker sits inside an HTML comment, so it is invisible
+# in the built page, and it goes *after* a file's opening heading, so that
+# jekyll-titles-from-headings still finds that heading at the very start.
 find "$WORK" -name '*.md' -print0 |
   while IFS= read -r -d '' f; do
     awk '

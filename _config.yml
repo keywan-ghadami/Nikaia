@@ -1,9 +1,10 @@
-# GitHub Pages configuration.
+# Jekyll configuration of the documentation site, which
+# `scripts/site-build.sh` builds and a Cloudflare Worker serves.
 #
 # This file publishes the documentation that already exists in this repository.
 # It copies nothing and restates nothing: every page on the site is one of the
 # Markdown files below, rendered where it lies. The plugins that make that work
-# are enabled by GitHub Pages by default and need no Gemfile:
+# are the ones GitHub Pages enables by default, and the build turns them on:
 #
 #   jekyll-readme-index          README.md becomes its directory's index page,
 #                                so `/` is this repository's README and
@@ -21,7 +22,7 @@ description: >-
 
 # Where the site lives: a Cloudflare Worker serves it at its own domain
 # (`wrangler.jsonc`, built by `scripts/site-build.sh`). Canonical links and
-# the sitemap name this host, including on the GitHub Pages copy.
+# the sitemap name this host.
 url: https://nikaia-lang.org
 baseurl: /
 

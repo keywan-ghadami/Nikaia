@@ -110,16 +110,16 @@
 
       {{ content }}
 
-      {% if site.github.private != true and site.github.license %}
       <div class="footer border-top border-gray-light mt-5 pt-3 text-right text-gray">
-        This site is open source. {% github_edit_link "Improve this page" %}.
+        {% if site.github.private != true and site.github.license %}This site is open source. {% github_edit_link "Improve this page" %}. · {% endif %}<a href="{{ "/impressum.html" | relative_url }}">Impressum</a> · <a href="{{ "/datenschutz.html" | relative_url }}">Datenschutz</a>
       </div>
-      {% endif %}
       </div>
     </div>
     <script src="{{ "/assets/js/theme.js?v=" | append: site.github.build_revision | relative_url }}" defer></script>
     <script src="{{ "/assets/js/nav.js?v=" | append: site.github.build_revision | relative_url }}" defer></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/anchor-js/4.1.0/anchor.min.js" integrity="sha256-lZaRhKri35AyJSypXXs4o6OPFTbTmUoltBbDCbdzegg=" crossorigin="anonymous"></script>
+    <!-- AnchorJS 4.1.0 (MIT), served from this site rather than a CDN: the page
+         loads nothing from another server. The hash is the one cdnjs published. -->
+    <script src="{{ "/assets/js/vendor/anchor.min.js" | relative_url }}" integrity="sha256-lZaRhKri35AyJSypXXs4o6OPFTbTmUoltBbDCbdzegg="></script>
     <script>anchors.add();</script>
   </body>
 </html>
