@@ -30,7 +30,7 @@ cargo run -p lockfloor-bench --release --bin lockfloor -- 20000000 9 4
 
 The script prints the machine and the load average before and after, because a
 table here cannot be read without them:
-[`docs/runtime-cost.md`](../../docs/runtime-cost.md) §6.3 measured absolutes on a
+[`docs/history/runtime-cost.md`](../../docs/history/runtime-cost.md) §6.3 measured absolutes on a
 box of this class moving 1.4–1.9× from one day to the next. **Every finding is a
 ratio, a flatness or a sign**, and the one row whose ratio did not survive a
 second run is named as such in `docs/mutex-floor.md` §4.2 rather than averaged.
@@ -43,7 +43,7 @@ inside the guard **poisons one and not the other**, that only one of the two may
 cross a thread, and what each one weighs (`RefCell<i32>` = 16 bytes,
 `Mutex<i32>` = 12, on this target).
 
-That set is the mirror image of the gate `docs/rc-or-arc.md` §2 put `Rc` and
+That set is the mirror image of the gate `docs/history/rc-or-arc.md` §2 put `Rc` and
 `Arc` through. There the answer was "nothing a program can observe", which is
 what let that choice be considered as an inference. Here the answer is the
 opposite, twice — which is why the lock is *written* and not inferred, and why

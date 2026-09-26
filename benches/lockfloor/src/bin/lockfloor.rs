@@ -5,7 +5,7 @@
 //! **Mutex**". Whether the floor could be a `Mutex` at both settings is open,
 //! and it has two halves — a cost, and a difference a program can see. This
 //! binary measures the first and asserts the second, which is the shape
-//! [`docs/rc-or-arc.md`](../../../../docs/rc-or-arc.md) used for `Rc` against
+//! [`docs/history/rc-or-arc.md`](../../../../docs/history/rc-or-arc.md) used for `Rc` against
 //! `Arc`.
 //!
 //! Five shapes, each a **pair** whose two halves differ in one thing, so the
@@ -30,7 +30,7 @@
 //!
 //! Every repeat is printed, because a single number without its spread is not
 //! a measurement, and
-//! [`docs/runtime-cost.md`](../../../../docs/runtime-cost.md) §6.3 is why only
+//! [`docs/history/runtime-cost.md`](../../../../docs/history/runtime-cost.md) §6.3 is why only
 //! the ratios and the signs here are load-bearing: absolutes on a box of this
 //! class moved 1.4–1.9× from one day to the next.
 
@@ -63,7 +63,7 @@ fn stats(xs: &[f64]) -> (f64, f64, f64, f64) {
 /// `k` multiply-adds, which is a body that is not a lock.
 ///
 /// `seed` varies with the iteration in every caller: a loop-invariant argument
-/// is hoisted out and then nothing is being measured (`docs/rc-or-arc.md` §8
+/// is hoisted out and then nothing is being measured (`docs/history/rc-or-arc.md` §8
 /// is the run where that happened).
 #[inline(never)]
 fn work(k: usize, seed: usize) -> usize {
@@ -318,7 +318,7 @@ fn main() {
 /// Whether `RefCell` and `Mutex` differ in anything a program can observe —
 /// the question the cost above is only worth asking if the answer is yes.
 ///
-/// `docs/rc-or-arc.md` §2 asked this of `Rc` against `Arc` and found nothing,
+/// `docs/history/rc-or-arc.md` §2 asked this of `Rc` against `Arc` and found nothing,
 /// which is what let that inference be considered at all. Here the answer is
 /// the opposite, and these are the assertions that say so rather than the
 /// argument that says so. Two of them are the ones Part II 12.2 names as its

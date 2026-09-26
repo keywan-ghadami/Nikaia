@@ -1596,7 +1596,7 @@ const ABORT_TABLE: &str = "__NIKAIA_SITES";
 /// where the function returns something it is rustc's `E0308` about a file
 /// nobody wrote, and where it returns nothing **nothing complains at all** and
 /// the function runs on past the point the source said to leave
-/// ([`docs/nightly-cost.md`](../../../docs/nightly-cost.md) §3.3).
+/// ([`docs/history/nightly-cost.md`](../../../docs/history/nightly-cost.md) §3.3).
 ///
 /// So the rewrite is allowed where this says [`Tail::Return`] and nowhere else.
 /// Everywhere else a `return` stays a `return`, which is always a legal Rust
@@ -4452,7 +4452,7 @@ impl<'p> Emitter<'p> {
         // The compiler knows every literal byte of this template, so it knows
         // what the result is at least as long as - and a `String` that starts
         // that size does not double its way there
-        // (`docs/staging-candidates.md` §3).
+        // (`docs/history/staging-candidates.md` §3).
         //
         // It is a *floor*, not a guess: the holes and the bodies of `<for>`
         // add to it and never subtract, so reserving it can never be too much
@@ -5618,7 +5618,7 @@ impl<'p> Emitter<'p> {
             // (ADR-011 D2): the language below spells both of these the same way
             // and gives them the same meaning, so the lowering is a
             // transcription - which is also what makes the construct cost
-            // nothing at run time (`docs/break-continue-cost.md` §2).
+            // nothing at run time (`docs/history/break-continue-cost.md` §2).
             //
             // **No `Tail` arm**, and the semicolon stands even where the
             // statement is a block's last: a block that ends in a jump diverges,

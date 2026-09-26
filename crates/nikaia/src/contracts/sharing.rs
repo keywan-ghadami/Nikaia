@@ -23,7 +23,7 @@
 // **That is why being wrong here costs speed in one direction and correctness in
 // the other**, and why the polarity is not negotiable. An atomic count where a
 // plain one would have done costs about 9 ns per clone-and-drop pair
-// (`docs/rc-or-arc.md` §3). A plain count on a value that crosses is a data
+// (`docs/history/rc-or-arc.md` §3). A plain count on a value that crosses is a data
 // race. So every case this cannot decide comes out [`Count::Atomic`], every such
 // case carries the reason, and the reasons are a **closed list** - see
 // [`Fallback`], which is the enumeration ADR-037 D8 answers "would an override
@@ -313,7 +313,7 @@ impl Decision {
 /// One allocation class of a function's caller-visible positions, as the ledger
 /// records it.
 ///
-/// This is the summary `docs/rc-or-arc.md` §5.1 names as the thing that
+/// This is the summary `docs/history/rc-or-arc.md` §5.1 names as the thing that
 /// composes: **which parameters and result are one class, and which count that
 /// class gets**. A caller reads it to know what it is handing over; a later
 /// build that can read a dependency's source reads it to continue the analysis
@@ -452,7 +452,7 @@ pub fn analyse_program(
             }
             // A `pub` field of a `pub` type is a place code this build never
             // reads can take the value out of, which is the library boundary
-            // one level in from a signature (`docs/rc-or-arc.md` §5.1).
+            // one level in from a signature (`docs/history/rc-or-arc.md` §5.1).
             Item::Struct {
                 name,
                 fields,
@@ -835,7 +835,7 @@ impl<'a> Analysis<'a> {
     /// **So there is no guard here, and none may be added.** The same applies to
     /// every other spelling of "only if we have seen it": a fail-closed analysis
     /// fails open through a guard added for tidiness, not through a missing
-    /// crossing (`docs/rc-or-arc.md` §8).
+    /// crossing (`docs/history/rc-or-arc.md` §8).
     fn force(&mut self, function: &str, value: &str, why: String, fallback: Option<Fallback>) {
         let key = slot(function, value);
         self.id(&key);
@@ -972,7 +972,7 @@ impl<'a> Analysis<'a> {
                     .or_else(|| aliased.as_ref().map(|(_, ty)| ty.clone()))
                     // `let k = Counter { … }` is a value of `Counter`, and a
                     // crossing of it reaches the `Shared` its field holds - the
-                    // second of the three cases `docs/rc-or-arc.md` §5 names.
+                    // second of the three cases `docs/history/rc-or-arc.md` §5 names.
                     .or_else(|| match value {
                         Expr::StructLit { name, .. } => Some(Ty::named(self.parsed.text(*name))),
                         // **A hull written by a call**
@@ -1231,7 +1231,7 @@ impl<'a> Analysis<'a> {
     /// `c.hits` is the `Counter.hits` slot, which is the same slot the function
     /// that built the `Counter` joined its handle to. Without this, reading a
     /// handle back out of a field produced a fresh class nothing forced - a
-    /// sibling of the guard `docs/rc-or-arc.md` §8 describes, and fail-open in
+    /// sibling of the guard `docs/history/rc-or-arc.md` §8 describes, and fail-open in
     /// the same direction.
     fn slot_of(
         &mut self,
@@ -1450,7 +1450,7 @@ impl<'a> Analysis<'a> {
     /// may cross with any of them. `send::names_used` is the same
     /// over-approximate walk `spawn` uses, and over-approximate is the safe
     /// direction here too. Leaving it at `Expr::Variable` was a sibling of
-    /// `docs/rc-or-arc.md` §8's guard: it read reasonably and it failed open.
+    /// `docs/history/rc-or-arc.md` §8's guard: it read reasonably and it failed open.
     ///
     /// **And the options after the `;` are arguments.** `f(x; opt: handle)` hands
     /// a handle over as surely as `f(x, handle)` does, and no contract covers
@@ -1486,7 +1486,7 @@ impl<'a> Analysis<'a> {
                 // exactly as a name would - without which the field's class was
                 // left unjoined and could disagree with the parameter's about
                 // which count it is, which is the fail-open direction
-                // `docs/rc-or-arc.md` §8 warns about.
+                // `docs/history/rc-or-arc.md` §8 warns about.
                 if let Some((key, params)) = &described
                     && let Some((param, param_ty)) = params.get(at)
                     && by_value_shared(param_ty)

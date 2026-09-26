@@ -3,11 +3,11 @@
 **Date:** September 12, 2026
 **Status:** history. Nothing here is normative and nothing depends on it to know
 what a program means. The decisions that stand are
-[ADR-001](specification/adr/adr-001.md) D1, [ADR-003](specification/adr/adr-003.md)
-D1 and D2, and [ADR-004](specification/adr/adr-004.md) D1; the release entry is
-[`../CHANGELOG.md`](../CHANGELOG.md).
+[ADR-001](../specification/adr/adr-001.md) D1, [ADR-003](../specification/adr/adr-003.md)
+D1 and D2, and [ADR-004](../specification/adr/adr-004.md) D1; the release entry is
+[`../CHANGELOG.md`](../../CHANGELOG.md).
 **The measurements are elsewhere and are unrevised:**
-[`nightly-cost.md`](nightly-cost.md), [`subprocess-cost.md`](subprocess-cost.md),
+[`nightly-cost.md`](nightly-cost.md), [`subprocess-cost.md`](../subprocess-cost.md),
 [`std-sysroot.md`](std-sysroot.md), [`technical_notes.md`](technical_notes.md).
 
 The specification and the ADRs are written as though none of this existed, which
@@ -59,10 +59,10 @@ notes named beside it. None was taken to justify the withdrawal.
 
 | what | number | where |
 | :--- | :--- | :--- |
-| what Bridge-IR could carry | **1 of 15** corpus programs | [`subprocess-cost.md`](subprocess-cost.md) §5 |
-| the printed-Rust round trip | **0.161 %** of a full compile (2.77 M of 1 719 M Ir) | [`subprocess-cost.md`](subprocess-cost.md) §4 |
-| starting the `rustc` process | **0.48 %** (8.3 M Ir), two thirds of it the rustup shim | [`subprocess-cost.md`](subprocess-cost.md) §3–§4 |
-| the two together — what the in-memory exit would buy | **0.64 %** | [`subprocess-cost.md`](subprocess-cost.md) §4 |
+| what Bridge-IR could carry | **1 of 15** corpus programs | [`subprocess-cost.md`](../subprocess-cost.md) §5 |
+| the printed-Rust round trip | **0.161 %** of a full compile (2.77 M of 1 719 M Ir) | [`subprocess-cost.md`](../subprocess-cost.md) §4 |
+| starting the `rustc` process | **0.48 %** (8.3 M Ir), two thirds of it the rustup shim | [`subprocess-cost.md`](../subprocess-cost.md) §3–§4 |
+| the two together — what the in-memory exit would buy | **0.64 %** | [`subprocess-cost.md`](../subprocess-cost.md) §4 |
 | `-Zpolonius=next` over the corpus | **0 verdicts changed** at **+7.11 %** of a build | [`nightly-cost.md`](nightly-cost.md) §3 |
 | the pinned toolchain against a stable one | 1 420 MiB / 24.7 s against 602 MiB / 12.3 s | [`nightly-cost.md`](nightly-cost.md) §4 |
 | what the nightly cost a *user* who only runs programs | **2 MiB** — and a non-relocatable binary | [`nightly-cost.md`](nightly-cost.md) §4 |
@@ -159,16 +159,16 @@ Kept because each cost somebody a day to find out.
 
 ## 5. What replaced it, in one sentence each
 
-* **The interface** is Rust source text ([ADR-003](specification/adr/adr-003.md)
+* **The interface** is Rust source text ([ADR-003](../specification/adr/adr-003.md)
   D1): a frontend emits bytes, and nothing else crosses the line.
 * **The lowering** is `crates/nikaia/src/emit`, one pass from the Nikaia AST to
-  Rust ([ADR-004](specification/adr/adr-004.md) D1) — which is what
+  Rust ([ADR-004](../specification/adr/adr-004.md) D1) — which is what
   `--backend rust` always was, and is now simply what the compiler does.
 * **The toolchain** is stable, named in `rust-toolchain.toml`, and there is one
-  CI leg ([ADR-001](specification/adr/adr-001.md) D1).
+  CI leg ([ADR-001](../specification/adr/adr-001.md) D1).
 * **The orchestrator** stayed, because it was never Bridge-IR's: it is
   `crates/orchestrator` now, and it owns the cache, the lockfile and the Cargo
-  wrapping ([ADR-003](specification/adr/adr-003.md) D2).
+  wrapping ([ADR-003](../specification/adr/adr-003.md) D2).
 * **Group B.2** is answered by desugaring in the frontend onto entry-style APIs
-  ([ADR-005](specification/adr/adr-005.md) D2), which is what the corpus already
+  ([ADR-005](../specification/adr/adr-005.md) D2), which is what the corpus already
   writes unprompted, and not by a nightly-only flag.

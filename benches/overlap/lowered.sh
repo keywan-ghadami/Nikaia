@@ -13,7 +13,7 @@
 # pair is performed in written order rather than for ~38 µs a pair. The
 # fallback's column is therefore the check that the decision is in the code.
 #
-# See README.md for the method and docs/runtime-cost.md §6 for the numbers.
+# See README.md for the method and docs/history/runtime-cost.md §6 for the numbers.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)

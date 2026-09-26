@@ -1,7 +1,7 @@
 # `sendfile` — what it costs to answer a request with a file
 
 [ADR-058](../../docs/specification/adr/adr-058.md)'s evidence.
-[`docs/zero-copy-send.md`](../../docs/zero-copy-send.md) is the write-up: the
+[`docs/history/zero-copy-send.md`](../../docs/history/zero-copy-send.md) is the write-up: the
 method, the numbers, what they settled and the two confounds they survive.
 
 ```sh

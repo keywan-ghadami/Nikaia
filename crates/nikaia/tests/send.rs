@@ -6,7 +6,7 @@
 //! un-compilable at [`yes`]".
 //! [ADR-037](../../../docs/specification/adr/adr-037.md) §3 and
 //! [ADR-038](../../../docs/specification/adr/adr-038.md) D7 both rely on it, and
-//! the experiment in `docs/foreign-runtime.md` is what found it missing.
+//! the experiment in `docs/history/foreign-runtime.md` is what found it missing.
 //!
 //! **Two halves, and the first decides whether the tool is worth running.** A
 //! check that refuses a correct program is worse than no check, so the corpus is
@@ -505,7 +505,7 @@ fn the_shared_half_of_part_ii_12_2s_counter_no_longer_refuses() {
 ///
 /// Hand-written rather than `std`'s, because nothing in `std` returns a value
 /// that may not cross a thread - which is the whole reason this check could be
-/// absent for so long without anything being unsound (`docs/foreign-runtime.md`
+/// absent for so long without anything being unsound (`docs/history/foreign-runtime.md`
 /// §3.2).
 ///
 /// **`probe::held` hands back `SharedMut[i64]` rather than `Shared[i64]`

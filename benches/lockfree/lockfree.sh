@@ -4,7 +4,7 @@
 #
 # The machine and the load are printed with the table, because absolutes on a
 # box of this class move 1.4-1.9x from one day to the next and only the ratios
-# travel (`docs/runtime-cost.md` §6.3).
+# travel (`docs/history/runtime-cost.md` §6.3).
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)

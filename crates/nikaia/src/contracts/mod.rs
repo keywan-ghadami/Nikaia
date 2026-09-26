@@ -354,7 +354,7 @@ pub struct FnContract {
     /// The **fifth** derived column, beside `sync`, `throws`, `touches` and
     /// `borrows`, and a column rather than a mechanism: the ledger already
     /// ships facts read off bodies (ADR-020 D1, D2), and this is one more of
-    /// them. `docs/rc-or-arc.md` §5.1 is where the shape comes from - the
+    /// them. `docs/history/rc-or-arc.md` §5.1 is where the shape comes from - the
     /// summary that **composes** is "which parameters and result are one class,
     /// and whether any of them crosses inside", and the union-find that decides
     /// a count computes it already.

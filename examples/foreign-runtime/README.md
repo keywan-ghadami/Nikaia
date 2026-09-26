@@ -6,7 +6,7 @@ names two rules that are supposed to keep that sound. This directory is the
 program that tests it: a Nikaia project depending on `hyper` and `tokio` through
 [ADR-002](../../docs/specification/adr/adr-002.md) D1's crates.io passthrough.
 
-**What it found is in [`docs/foreign-runtime.md`](../../docs/foreign-runtime.md).**
+**What it found is in [`docs/history/foreign-runtime.md`](../../docs/history/foreign-runtime.md).**
 That file is the laboratory notebook — the method, the machine, and the two
 false starts. This one says only what is here and how to run it.
 

@@ -59,7 +59,7 @@ struct Contrib {
 /// (ADR-028), the same map [`super::sync::infer`] is handed. Having one of the
 /// two read it and the other not is what recorded `throws = ["?"]` for a
 /// function whose only failing call was `a.add(v)` - a chain
-/// `docs/from-for-throws-and-touches.md` §3 walks link by link, and which
+/// `docs/history/from-for-throws-and-touches.md` §3 walks link by link, and which
 /// `sync` had been following all along.
 pub fn infer(
     ledger: &mut Ledger,

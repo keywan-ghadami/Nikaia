@@ -4,7 +4,7 @@
 //! names two rules that keep that sound. `examples/foreign-runtime/` is the
 //! program that tests them: a Nikaia project depending on a shim crate over
 //! `hyper` and `tokio`, through ADR-002 D1's crates.io passthrough. What the
-//! experiment found is written up in `docs/foreign-runtime.md`.
+//! experiment found is written up in `docs/history/foreign-runtime.md`.
 //!
 //! **One test here runs on every `cargo test`** - the one that needs neither
 //! Cargo nor the network, and which is the one that checks a guarantee rather
@@ -201,7 +201,7 @@ fn a_value_that_may_not_cross_a_thread_is_refused_against_the_nika_line() {
     assert!(
         !built.status.success(),
         "an `Rc` reached a foreign thread and the build succeeded. If this \
-         fires, read `docs/foreign-runtime.md` - it is either a real \
+         fires, read `docs/history/foreign-runtime.md` - it is either a real \
          unsoundness or something about the crossing has changed: {}",
         said(&built)
     );
@@ -241,7 +241,7 @@ fn a_value_that_may_not_cross_a_thread_is_refused_against_the_nika_line() {
 }
 
 /// The same crossing through a foreign API that lies about `Send` — **and it is
-/// refused too**, which `docs/foreign-runtime.md` §3.5 did not expect.
+/// refused too**, which `docs/history/foreign-runtime.md` §3.5 did not expect.
 ///
 /// That section says a structural `Send` check *would not have caught this one
 /// either: the value it would check is `Send`-by-declaration at the point

@@ -3,15 +3,15 @@
 **Date:** September 10, 2026
 **Status:** §2 and §3 are measured and built; §2's original answer was wrong and says so.
 **The item these findings belong to is closed** — tier-1 staging is withdrawn
-([ADR-178](specification/adr/adr-178.md)), because every candidate below is, and
+([ADR-178](../specification/adr/adr-178.md)), because every candidate below is, and
 three of them closed against this file's own prediction. What stays here are the
 **findings**, which are true whatever is decided about staging; what would reopen
 the item is §6's closing rule, raised to a record as that ADR's D2: a candidate
 with a **measured crossover**.
-**Related:** [ADR-178](specification/adr/adr-178.md) (the withdrawal, which cites
-this file as its evidence), [ADR-026](specification/adr/adr-026.md) §3 (the two tiers),
-[ADR-010](specification/adr/adr-010.md) (the shipped precedent),
-[upstream findings](upstream/winnow-grammar-findings.md)
+**Related:** [ADR-178](../specification/adr/adr-178.md) (the withdrawal, which cites
+this file as its evidence), [ADR-026](../specification/adr/adr-026.md) §3 (the two tiers),
+[ADR-010](../specification/adr/adr-010.md) (the shipped precedent),
+[upstream findings](../upstream/winnow-grammar-findings.md)
 
 ADR-026 §3 says Tier 1 — compiler-side staging — waits on nothing and is where the interesting
 applications live. This file is the survey that follows from it: where the opportunities actually
@@ -132,7 +132,7 @@ a git dependency on its *commit*, so editing a vendored checkout has no effect (
 `docs/upstream/winnow-grammar-findings.md`); testing needs a `[patch]` or a path override. The repo
 already has the channel for handing such a finding over — that file exists for exactly this.
 
-Before attempting it, read [ADR-026](specification/adr/adr-026.md) §3.1: it pre-registers the two ways
+Before attempting it, read [ADR-026](../specification/adr/adr-026.md) §3.1: it pre-registers the two ways
 this claim goes wrong ("table-free is not automatically faster"; "no branch mispredictions is
 backwards for the state machine itself") and states the defensible version — *the win is where the
 analysis removes states*.
@@ -195,7 +195,7 @@ Two findings, and neither would have survived being derived instead of measured.
 
 **A table of fat pointers is 4 KB to walk where a mask is a register.** All five characters are below
 64 — `"` 34, `&` 38, `'` 39, `<` 60, `>` 62 — so "is this one of the five" fits in a single `u64` and
-touches no memory at all. This is exactly the failure [ADR-026](specification/adr/adr-026.md) §3.1
+touches no memory at all. This is exactly the failure [ADR-026](../specification/adr/adr-026.md) §3.1
 pre-registers as *"table-free is not automatically faster"*, met from the other side: table-**ful**
 was slower, on the first candidate that tried it.
 
@@ -205,7 +205,7 @@ arithmetic and the bounds check on each slice outweigh what the copies save. Mea
 same mask, so the two halves are separated rather than credited to one another.
 
 > The advice not to take the *staging* route here stands and is unaffected.
-> [ADR-010](specification/adr/adr-010.md) D8 requires escaping at a hole to stay **unconditional**
+> [ADR-010](../specification/adr/adr-010.md) D8 requires escaping at a hole to stay **unconditional**
 > and ADR-017 D1 enforces it at `emit/mod.rs:988-996`; a position-specialised escape would read as
 > weakening that whatever it measured. Everything above happens inside `std`, and the emitter still
 > writes the same `Render::render` for every hole.
@@ -272,10 +272,10 @@ that replaces a branch is not automatically cheaper. So *can* the compiler pick?
 
 **Determinism settles the largest part of it, and rules out the obvious answer.** Autotuning — build
 both variants, time them, keep the winner — is what ATLAS and FFTW do, and it is unavailable here:
-[ADR-005](specification/adr/adr-005.md) D8 requires byte-identical output, enforced by CI
+[ADR-005](../specification/adr/adr-005.md) D8 requires byte-identical output, enforced by CI
 double-builds. A choice made from local timing or the host CPU produces two different programs on two
 machines. **The emitter may therefore decide only from what is inside its pure function: the source
-and the toolchain.** That is the same discipline [ADR-021](specification/adr/adr-021.md) D7 imposes on
+and the toolchain.** That is the same discipline [ADR-021](../specification/adr/adr-021.md) D7 imposes on
 the cache key, and it is the real answer to "what can the compiler know" — the same list, for the
 same reason.
 

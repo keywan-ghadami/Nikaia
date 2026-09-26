@@ -4,7 +4,7 @@
 #
 # The method, the machine and the spread are in `docs/mutex-floor.md`; this
 # script prints the machine and the load so a table can never be read without
-# them (`docs/runtime-cost.md` §6.3: absolutes on this box move by 1.4–1.9× from
+# them (`docs/history/runtime-cost.md` §6.3: absolutes on this box move by 1.4–1.9× from
 # one day to the next, and only the ratios travel).
 set -euo pipefail
 

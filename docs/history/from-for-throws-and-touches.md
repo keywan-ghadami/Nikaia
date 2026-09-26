@@ -3,14 +3,14 @@
 **Date:** September 12, 2026 — a laboratory record, and a snapshot of that day.
 
 > **Read as a snapshot.** The lambdas on this page are written in the form
-> [ADR-049](specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, with
+> [ADR-049](../specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, with
 > the argument read off the body — and **no sample here compiles as written**; the
 > current spelling names its arguments, `sort_by_key fn(x) { x }` (Part I, 5.3).
 > The analysis each section records is unaffected: what a lambda's arguments are
 > called changes nothing about when it runs or what it touches, which is what this
 > page is about. Transcribe the reasoning, not the code.
 
-[ADR-029](specification/adr/adr-029.md) D3 added a fourth `sync` state to the
+[ADR-029](../specification/adr/adr-029.md) D3 added a fourth `sync` state to the
 ledger, `sync = "from(f)"`, and rested it on one sentence:
 
 > A caller reads it as "this call adds no pausing of its own." That is sound for
@@ -19,8 +19,8 @@ ledger, `sync = "from(f)"`, and rested it on one sentence:
 > counted its calls. `from` adds nothing because there is nothing left to add.
 
 The question this page answers: does that argument also hold for `throws`
-([ADR-023](specification/adr/adr-023.md) D1) and for `touches`
-([ADR-033](specification/adr/adr-033.md) D2), so that "immediate function types
+([ADR-023](../specification/adr/adr-023.md) D1) and for `touches`
+([ADR-033](../specification/adr/adr-033.md) D2), so that "immediate function types
 for user code" is **one** inference rule rather than three?
 
 Nothing here is normative. The answer is one sentence per effect in ADR-029 D3;
@@ -160,14 +160,14 @@ type checker. The argument below does not depend on which it was.)*
 `throws` has a second, independent reason to gain nothing from a `from` key: a
 `throws = "from(f)"` read as "adds nothing" could only ever **remove** an error
 from a caller's set, never add one — and the direction that removes is the one
-[ADR-010](specification/adr/adr-010.md) D1 forbids. What the caller needs from a
+[ADR-010](../specification/adr/adr-010.md) D1 forbids. What the caller needs from a
 higher-order call is that the lambda's failures be **added**, and the walk
 already adds them. A `throws` column behaves exactly as `from` would want it to
 and has no key to add.
 
 ### The `and_modify` chain, and the precision it used to lose
 
-[ADR-031](specification/adr/adr-031.md)'s live example, with a failing `add`:
+[ADR-031](../specification/adr/adr-031.md)'s live example, with a failing `add`:
 
 ```nika
 enum ZuVoll { Voll }
@@ -321,9 +321,9 @@ lauf:
 
 ### Why this is a soundness question and not a speed one
 
-`touches` is fail-closed by [ADR-033](specification/adr/adr-033.md) D4 — an
+`touches` is fail-closed by [ADR-033](../specification/adr/adr-033.md) D4 — an
 unknown touch set is *everything* — and the reason is
-[ADR-010](specification/adr/adr-010.md) D1's: an analysis that fails open is a
+[ADR-010](../specification/adr/adr-010.md) D1's: an analysis that fails open is a
 vulnerability generator. `sync`'s `from` is a **permissive** reading, and that is
 affordable there because the permission it grants is paid for by a count that
 really happened somewhere else. Here there is no count, so the permission is
@@ -392,7 +392,7 @@ that is what this page is for.
   is `throws` lowered without a diagnostic and recorded `ruft` as unable to
   fail; the emitted Rust was `fn ruft() -> i64 { pruefe(0) }`, which `rustc`
   rejects. `NK2601` and `NK2701` are both about *implicit* calls
-  ([ADR-025](specification/adr/adr-025.md) D1), and the explicit case had no
+  ([ADR-025](../specification/adr/adr-025.md) D1), and the explicit case had no
   code. Nothing to do with lambdas — the same program without one behaved the
   same way — but it is the reason §3's programs all declare `throws`.
 
@@ -407,7 +407,7 @@ that is what this page is for.
 * **Two leftover mentions of the withdrawn path** outside the files
   `docs/README.md` allows them in: `docs/foreign-runtime.md` (line 42) called
   `rustc 1.94.0-nightly` "the toolchain this repository named", which it no
-  longer is, and [ADR-036](specification/adr/adr-036.md) §2 names the same
+  longer is, and [ADR-036](../specification/adr/adr-036.md) §2 names the same
   nightly as its measurement machine.
 
   The wording is fixed in the two notes and the **version is kept**: a note that
@@ -463,11 +463,11 @@ fn ruft() -> String { liest() }
 fn ruft() -> Result<String, Box<dyn std::error::Error>> { Ok(liest()) }
 ```
 
-which `rustc` rejects too. **[ADR-023](specification/adr/adr-023.md) D8's
+which `rustc` rejects too. **[ADR-023](../specification/adr/adr-023.md) D8's
 propagation was not lowered at all.** Every fallible call in `examples/` has a
 `catch` beside it — all eight programs that can fail do, and `tally.nika`'s one
 propagation is a *loop's* step, which had its own `?` from
-[ADR-025](specification/adr/adr-025.md) — so nothing in the corpus ever asked
+[ADR-025](../specification/adr/adr-025.md) — so nothing in the corpus ever asked
 for this one, and no test did either. A
 diagnostic whose `help:` produced that second failure would have moved
 Appendix C.1's violation one step later instead of removing it, so the `?` is
@@ -487,10 +487,10 @@ before `Ledger::render` is reached. The alternative — infer `throws` for a
 function that never wrote it, the way `sync` is inferred — was rejected on
 three counts:
 
-1. [ADR-023](specification/adr/adr-023.md) D1 derives the error **set** and
+1. [ADR-023](../specification/adr/adr-023.md) D1 derives the error **set** and
    leaves the declaration in the source: "in source, `throws` is bare". The
    keyword is not derived truth; what it can fail *with* is.
-2. [ADR-025](specification/adr/adr-025.md) D1 has already decided the case, in
+2. [ADR-025](../specification/adr/adr-025.md) D1 has already decided the case, in
    words: "the function **must** declare `throws`, and the compiler says which
    implicit call is the reason". Inferring it instead would be a different
    decision, and would need a record.

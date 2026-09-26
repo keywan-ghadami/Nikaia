@@ -29,7 +29,7 @@
 //!
 //! Every repeat is printed, because a single number without its spread is not a
 //! measurement (`benches/overlap/README.md`), and
-//! [`docs/runtime-cost.md`](../../../../docs/runtime-cost.md) §6.3 is why only
+//! [`docs/history/runtime-cost.md`](../../../../docs/history/runtime-cost.md) §6.3 is why only
 //! the ratios here are load-bearing.
 
 use std::cell::RefCell;
@@ -63,7 +63,7 @@ fn stats(xs: &[f64]) -> (f64, f64, f64, f64) {
 /// `seed` varies with the iteration in every caller, because a loop-invariant
 /// argument is hoisted out of the loop and then nothing is being measured - the
 /// first run of this file printed 0.000 ns for exactly that reason
-/// (`docs/rc-or-arc.md` §8).
+/// (`docs/history/rc-or-arc.md` §8).
 #[inline(never)]
 fn work(k: usize, seed: usize) -> usize {
     let mut acc = seed;
@@ -296,7 +296,7 @@ fn main() {
 /// so rather than the argument that says so.
 ///
 /// The one difference that is real and is **not** in this list is named in
-/// `docs/rc-or-arc.md` §2: the *thread a destructor runs on*. With an atomic
+/// `docs/history/rc-or-arc.md` §2: the *thread a destructor runs on*. With an atomic
 /// count the last handle may be dropped on another thread, so a cleanup runs
 /// there - which is observable, and which can only happen to a value that
 /// crosses, where the analysis has no freedom anyway.

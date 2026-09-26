@@ -6,7 +6,7 @@ a `rustc_ast::Crate` to `rustc_interface::run_compiler` instead of printing it �
 "can be added when the subprocess cost is worth removing". This file put the
 number on it. That exit, and the whole `rustc_ast` path it belonged to, has since
 been **withdrawn** (§6): the numbers below are unrevised, because they are part of
-why. `../CHANGELOG.md` and [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md)
+why. `../CHANGELOG.md` and [`withdrawn-one-way-down.md`](history/withdrawn-one-way-down.md)
 carry the account.
 **Related:** [ADR-004](specification/adr/adr-004.md) D1 (the one lowering, which
 emits text, and whose price §4 is), [ADR-003](specification/adr/adr-003.md) D1
@@ -28,7 +28,7 @@ Intel Xeon @ 2.10 GHz, 4 vCPU, 15 GB RAM, Linux 6.18.44 x86_64 — a **shared vi
 with no `cpufreq` governor exposed. `rustc 1.94.0-nightly (8d670b93d 2025-12-31)`, which is the
 `nightly-2026-01-01` this repository named when the block was run.
 
-`docs/staging-candidates.md` §2 sets this repository's standard: *wall-clock on a shared machine
+`docs/history/staging-candidates.md` §2 sets this repository's standard: *wall-clock on a shared machine
 is not a measurement; an instruction count is deterministic and diffable*. So the decision rests
 on §4's callgrind counts, and the wall-clock in §3 is there to say what those counts feel like.
 Where wall-clock is quoted it is a **median of 25 runs after 3 warm-ups**, with the median
