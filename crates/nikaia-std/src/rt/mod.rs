@@ -183,10 +183,10 @@ pub(crate) fn ring_the_bell() {
     // runtime exists - and a worker that somehow rings while the `OnceLock` is
     // still being filled has nothing parked on a ring to wake.
     #[cfg(target_os = "linux")]
-    if let Some(runtime) = RUNTIME.get() {
-        if let Some(bell) = &runtime.bell {
-            bell.ring();
-        }
+    if let Some(runtime) = RUNTIME.get()
+        && let Some(bell) = &runtime.bell
+    {
+        bell.ring();
     }
 }
 
@@ -431,7 +431,7 @@ impl Runtime {
 /// caller cannot tell - which is what makes a change of mechanism a `std`
 /// change.
 pub mod io {
-    use super::{handle, worker, Files, Interest, Path};
+    use super::{Files, Interest, Path, handle, worker};
     use std::io::{Error, Result};
 
     /// The invariant ADR-037 D2 rests on, checked rather than assumed.
@@ -1157,8 +1157,8 @@ mod tests {
 
     fn a_future_fed_from_a_worker_finishes_under_block_on_once() {
         use std::io::Write;
-        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
         let (reader, mut writer) = std::io::pipe().expect("a pipe");
         // **A task that is alive and waiting on another worker operation**, which
@@ -1482,21 +1482,25 @@ mod tests {
 
         // Nothing sent: not readable, and a timeout is `Ok(false)` rather than
         // a failure - a deadline has to be able to tell those apart.
-        assert!(!io::wait(
-            &here,
-            Interest::Readable,
-            Some(std::time::Duration::from_millis(20))
-        )
-        .expect("polled"));
+        assert!(
+            !io::wait(
+                &here,
+                Interest::Readable,
+                Some(std::time::Duration::from_millis(20))
+            )
+            .expect("polled")
+        );
 
         // A byte from the peer, and the same call says so.
         (&there).write_all(b"x").expect("the peer writes");
-        assert!(io::wait(
-            &here,
-            Interest::Readable,
-            Some(std::time::Duration::from_secs(5))
-        )
-        .expect("polled"));
+        assert!(
+            io::wait(
+                &here,
+                Interest::Readable,
+                Some(std::time::Duration::from_secs(5))
+            )
+            .expect("polled")
+        );
 
         // …and the transfer is the caller's, which is what "readiness" means:
         // the runtime said when, the program says what.

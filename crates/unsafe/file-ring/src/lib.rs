@@ -67,7 +67,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::Arc;
 
-use io_uring::{opcode, types, IoUring};
+use io_uring::{IoUring, opcode, types};
 
 /// How many submissions the ring holds. Two is the pair ADR-033 is about; this
 /// leaves room for a handful of jobs in flight without a resubmit.

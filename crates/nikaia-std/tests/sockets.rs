@@ -7,7 +7,7 @@
 //! test running after one that asked for something else would measure wrong.
 
 use nikaia_std::net;
-use nikaia_std::rt::{self, exec, UserCode};
+use nikaia_std::rt::{self, UserCode, exec};
 
 /// Everything here runs inside the runtime, because the readiness the socket
 /// awaits is the runtime's.
@@ -86,15 +86,15 @@ async fn futures_join<A, B>(
     let mut done_a = None;
     let mut done_b = None;
     std::future::poll_fn(move |cx| {
-        if done_a.is_none() {
-            if let Poll::Ready(value) = a.as_mut().poll(cx) {
-                done_a = Some(value);
-            }
+        if done_a.is_none()
+            && let Poll::Ready(value) = a.as_mut().poll(cx)
+        {
+            done_a = Some(value);
         }
-        if done_b.is_none() {
-            if let Poll::Ready(value) = b.as_mut().poll(cx) {
-                done_b = Some(value);
-            }
+        if done_b.is_none()
+            && let Poll::Ready(value) = b.as_mut().poll(cx)
+        {
+            done_b = Some(value);
         }
         match (done_a.is_some(), done_b.is_some()) {
             (true, true) => Poll::Ready((
@@ -122,7 +122,7 @@ async fn futures_join<A, B>(
 /// while it waits for something that has not happened.
 #[test]
 fn a_wait_that_never_answers_does_not_block_one_that_would() {
-    use nikaia_std::rt::{io as readiness, Interest};
+    use nikaia_std::rt::{Interest, io as readiness};
     use std::io::Write;
 
     let said = run(async {

@@ -32,7 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::{Block, Expr, Item, Stmt};
 use crate::parser::Parsed;
 
-use super::{Ledger, INPUT};
+use super::{INPUT, Ledger};
 
 /// Whether a callee **lends** the parameter at `at`, so that the compiler
 /// writes the reference and the caller does not
@@ -440,10 +440,11 @@ fn uses_of(
     // lent, and the declaration came out `&String` with the body handing the
     // loan back as a `String` - `rustc`'s *mismatched types* about a file
     // nobody wrote (Part III C.1), for the shortest program that keeps.
-    if ret_type.is_some() && !returns_a_view {
-        if let Some(Stmt::Expr(value)) = body.stmts.last().map(|s| &s.node) {
-            walk.hand_over(value);
-        }
+    if ret_type.is_some()
+        && !returns_a_view
+        && let Some(Stmt::Expr(value)) = body.stmts.last().map(|s| &s.node)
+    {
+        walk.hand_over(value);
     }
     Some((key, uses))
 }

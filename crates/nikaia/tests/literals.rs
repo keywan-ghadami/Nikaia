@@ -6,7 +6,7 @@
 //! without a newline attached to every piece.
 
 use nikaia::ast::{Expr, Item, MatchPattern, Stmt};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn emit(source: &str) -> String {

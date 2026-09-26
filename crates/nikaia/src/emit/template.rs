@@ -184,14 +184,14 @@ fn split_until(
     while *at < body.len() {
         let rest = &body[*at..];
 
-        if let Some(end) = end {
-            if rest.starts_with(end) {
-                *at += end.len();
-                if !text.is_empty() {
-                    segments.push(Segment::Text(text));
-                }
-                return Ok(segments);
+        if let Some(end) = end
+            && rest.starts_with(end)
+        {
+            *at += end.len();
+            if !text.is_empty() {
+                segments.push(Segment::Text(text));
             }
+            return Ok(segments);
         }
         if end.is_none() && rest.starts_with("</for>") {
             return Ok(segments);

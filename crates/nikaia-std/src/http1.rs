@@ -315,7 +315,7 @@ fn parse(text: &str, size: i64) -> Result<Head, IoError> {
                 _ => {
                     return Err(IoError::Other(
                         "400 a content-length that is not a count".into(),
-                    ))
+                    ));
                 }
             },
             "connection" => keep_alive = value.eq_ignore_ascii_case("keep-alive"),

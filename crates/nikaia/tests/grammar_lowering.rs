@@ -10,7 +10,7 @@
 //! compilation unit and brings its own imports.
 
 use nikaia::contracts::{Ledger, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 const FIXTURE: &str = include_str!("fixtures/measurements.nika");
@@ -506,8 +506,8 @@ const MEASUREMENTS: &str = "Hamburg;12.0\nAbha;-23.0\nSaint-Pierre;9.1\nHamburg;
 #[test]
 fn the_generated_parser_gives_the_same_answer_however_it_is_cut() {
     use measurements::{Measurements, Summary};
-    use winnow_grammar::rt::Parallelism;
     use winnow_grammar::ParseContext;
+    use winnow_grammar::rt::Parallelism;
 
     let expected = Summary {
         count: 4,
@@ -534,8 +534,8 @@ fn the_generated_parser_gives_the_same_answer_however_it_is_cut() {
 #[test]
 fn a_frame_that_does_not_parse_is_rejected_whatever_the_cut() {
     use measurements::Measurements;
-    use winnow_grammar::rt::Parallelism;
     use winnow_grammar::ParseContext;
+    use winnow_grammar::rt::Parallelism;
 
     let broken = "Hamburg;12.0\nAbha;not-a-temperature\n";
 
@@ -725,10 +725,12 @@ fn a_method_on_a_value_is_not_a_grammar_entry() {
     let parsed = parse_to_ast(source).expect("the source parses");
     let own = Ledger::infer(&parsed);
     let library = Ledger::parse(STD).expect("std's ledger");
-    assert!(nikaia::check::check(&parsed, &own, &library)
-        .findings
-        .iter()
-        .all(|f| f.code != "NK1147"));
+    assert!(
+        nikaia::check::check(&parsed, &own, &library)
+            .findings
+            .iter()
+            .all(|f| f.code != "NK1147")
+    );
 }
 
 /// **A rule that is not `pub` is not an entry** (D2), and the message says which

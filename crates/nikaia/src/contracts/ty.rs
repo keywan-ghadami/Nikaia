@@ -713,38 +713,38 @@ impl Ty {
         // is the whole spelling, so the parenthesis is matched rather than
         // found at the end, and what follows it is read backwards — the two
         // words first, because the result is whatever is left in front of them.
-        if let Some(rest) = text.strip_prefix("fn(") {
-            if let Some(close) = closing_paren(rest) {
-                let mut tail = rest[close + 1..].trim();
-                let mut is_sync = false;
-                let mut throws = false;
-                loop {
-                    if let Some(shorter) = word_off(tail, "throws") {
-                        throws = true;
-                        tail = shorter;
-                        continue;
-                    }
-                    if let Some(shorter) = word_off(tail, "sync") {
-                        is_sync = true;
-                        tail = shorter;
-                        continue;
-                    }
-                    break;
+        if let Some(rest) = text.strip_prefix("fn(")
+            && let Some(close) = closing_paren(rest)
+        {
+            let mut tail = rest[close + 1..].trim();
+            let mut is_sync = false;
+            let mut throws = false;
+            loop {
+                if let Some(shorter) = word_off(tail, "throws") {
+                    throws = true;
+                    tail = shorter;
+                    continue;
                 }
-                let result = tail
-                    .strip_prefix("->")
-                    .map(|r| Box::new(Ty::parse(r)))
-                    .filter(|_| !tail.is_empty());
-                return Ty::Fn {
-                    params: split_args(&rest[..close])
-                        .iter()
-                        .map(|p| Ty::parse(p))
-                        .collect(),
-                    result,
-                    is_sync,
-                    throws,
-                };
+                if let Some(shorter) = word_off(tail, "sync") {
+                    is_sync = true;
+                    tail = shorter;
+                    continue;
+                }
+                break;
             }
+            let result = tail
+                .strip_prefix("->")
+                .map(|r| Box::new(Ty::parse(r)))
+                .filter(|_| !tail.is_empty());
+            return Ty::Fn {
+                params: split_args(&rest[..close])
+                    .iter()
+                    .map(|p| Ty::parse(p))
+                    .collect(),
+                result,
+                is_sync,
+                throws,
+            };
         }
         // **`Seq[T] sync throws`, read the way a function type's tail is**
         // ([ADR-105](../../../../docs/specification/adr/adr-105.md) D1): the

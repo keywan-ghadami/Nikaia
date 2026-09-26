@@ -13,7 +13,7 @@
 //! functions that do not exist on the fixture below, and this is where that
 //! stops being true.
 
-use nikaia_std::tools::rust::{file, Item};
+use nikaia_std::tools::rust::{Item, file};
 
 /// A crate whose text contains items that are not items.
 ///

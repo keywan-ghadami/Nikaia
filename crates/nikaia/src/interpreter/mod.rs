@@ -28,12 +28,11 @@ impl Interpreter {
                 body,
                 ..
             } = &item.node
+                && self.text(name) == "main"
             {
-                if self.text(name) == "main" {
-                    println!("[Nikaia Kernel] Executing 'main'...");
-                    self.eval_block(body);
-                    return;
-                }
+                println!("[Nikaia Kernel] Executing 'main'...");
+                self.eval_block(body);
+                return;
             }
         }
         println!("[Nikaia Kernel] No main function found.");

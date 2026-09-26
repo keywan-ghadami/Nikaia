@@ -23,7 +23,7 @@ mod common;
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn findings(source: &str) -> Vec<check::Finding> {
@@ -449,12 +449,13 @@ fn the_ledger_says_the_result_borrows_the_subject() {
     );
     // **And only where the result is a view.** A method that hands back an owned
     // value points into nothing, so there is no position to name.
-    assert!(own
-        .functions
-        .get("Row::owned")
-        .expect("the copy is in the ledger")
-        .borrows
-        .is_empty());
+    assert!(
+        own.functions
+            .get("Row::owned")
+            .expect("the copy is in the ledger")
+            .borrows
+            .is_empty()
+    );
 }
 
 /// **The way out is offered only where it can be taken.**

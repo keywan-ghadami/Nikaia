@@ -269,7 +269,7 @@ fn run_has_ended(root: &str) -> bool {
 /// - `--crate-type`, `--emit`, `-O`, `--error-format`, `-o`.
 pub fn compile(source: &Path, args: &[&str]) -> Output {
     Command::new(rustc())
-        .args(["--edition", "2021"])
+        .args(["--edition", "2024"])
         .arg("-L")
         .arg(format!("dependency={}", deps_dir().display()))
         .args(externs())

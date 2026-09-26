@@ -101,7 +101,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::{Block, Expr, Item, Stmt};
 use crate::parser::Parsed;
 
-use super::{send, ty::Ty, Ledger};
+use super::{Ledger, send, ty::Ty};
 
 /// The type whose count this is about.
 const SHARED: &str = "Shared";
@@ -1487,17 +1487,15 @@ impl<'a> Analysis<'a> {
                 // left unjoined and could disagree with the parameter's about
                 // which count it is, which is the fail-open direction
                 // `docs/rc-or-arc.md` §8 warns about.
-                if let Some((key, params)) = &described {
-                    if let Some((param, param_ty)) = params.get(at) {
-                        if by_value_shared(param_ty) {
-                            if let Some(source) = self.slot_of(function, arg, scope) {
-                                let (key, param) = (key.clone(), param.clone());
-                                let (at, name) = split_slot(&source);
-                                self.duplicates(&at, &name, handed_to(&key, &param));
-                                self.join(&source, &slot(&key, &param));
-                            }
-                        }
-                    }
+                if let Some((key, params)) = &described
+                    && let Some((param, param_ty)) = params.get(at)
+                    && by_value_shared(param_ty)
+                    && let Some(source) = self.slot_of(function, arg, scope)
+                {
+                    let (key, param) = (key.clone(), param.clone());
+                    let (at, name) = split_slot(&source);
+                    self.duplicates(&at, &name, handed_to(&key, &param));
+                    self.join(&source, &slot(&key, &param));
                 }
                 self.expr(function, arg, scope);
                 continue;

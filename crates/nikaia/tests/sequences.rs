@@ -416,16 +416,18 @@ fn a_second_for_over_a_sequence_is_refused() {
     );
 
     // One walk is a correct program.
-    assert!(walked_twice(
-        "use std::io\n\nfn once() -> i64 throws {\n\
+    assert!(
+        walked_twice(
+            "use std::io\n\nfn once() -> i64 throws {\n\
          \x20   let lines = io::lines()\n\
          \x20   let mut n = 0\n\
          \x20   for line in lines { n += 1 }\n\
          \x20   return n\n\
          }\n\
          fn main() throws { println(f\"{once()}\") }",
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// **A method that takes it by value walks it too** (D2).
@@ -451,24 +453,27 @@ fn a_walking_method_consumes_the_sequence() {
 /// matters: a refusal that reached a `Vec` would refuse most programs there are.
 #[test]
 fn a_container_is_not_consumed_by_walking_it() {
-    assert!(walked_twice(
-        "fn twice(xs: Vec[i64]) -> i64 {\n\
+    assert!(
+        walked_twice(
+            "fn twice(xs: Vec[i64]) -> i64 {\n\
          \x20   let mut n = 0\n\
          \x20   for x in xs { n += x }\n\
          \x20   for x in xs { n += x }\n\
          \x20   return n\n\
          }\n\
          fn main() { println(\"ok\") }",
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// **An assignment revives the name**, which is `NK2101`'s own rule one word
 /// over: giving the name a value again is a correct program.
 #[test]
 fn a_name_given_another_sequence_may_be_walked_again() {
-    assert!(walked_twice(
-        "use std::io\n\nfn revived() -> i64 throws {\n\
+    assert!(
+        walked_twice(
+            "use std::io\n\nfn revived() -> i64 throws {\n\
          \x20   let mut lines = io::lines()\n\
          \x20   let mut n = 0\n\
          \x20   for line in lines { n += 1 }\n\
@@ -477,8 +482,9 @@ fn a_name_given_another_sequence_may_be_walked_again() {
          \x20   return n\n\
          }\n\
          fn main() throws { println(f\"{revived()}\") }",
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// **A temporary has no second use to refuse** (D2, and `NK2101`'s narrowing).
@@ -488,15 +494,17 @@ fn a_name_given_another_sequence_may_be_walked_again() {
 /// have had to invent one.
 #[test]
 fn a_walk_of_a_temporary_says_nothing() {
-    assert!(walked_twice(
-        "use std::collections\n\nfn f() -> i64 {\n\
+    assert!(
+        walked_twice(
+            "use std::collections\n\nfn f() -> i64 {\n\
          \x20   let counts: collections::HashMap[ref String, i64] = collections::HashMap()\n\
          \x20   let names = counts.keys().collect()\n\
          \x20   return names.len()\n\
          }\n\
          fn main() { println(f\"{f()}\") }",
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// **Two sequences fit when their items do, and `Par` fits `Seq`** (D1, D3).

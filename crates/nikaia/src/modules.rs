@@ -449,12 +449,11 @@ fn package_ledger(
 ) -> crate::contracts::Ledger {
     let sources = sources_of(units);
 
-    if let Some(dependency) = dependency {
-        if let Some(shipped) = shipped_ledger(&dependency.root) {
-            if shipped.stale_against(&sources).is_empty() {
-                return shipped.published(&dependency.reachable);
-            }
-        }
+    if let Some(dependency) = dependency
+        && let Some(shipped) = shipped_ledger(&dependency.root)
+        && shipped.stale_against(&sources).is_empty()
+    {
+        return shipped.published(&dependency.reachable);
     }
 
     let parsed: Vec<&Parsed> = units.iter().map(|u| &u.parsed).collect();

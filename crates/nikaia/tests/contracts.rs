@@ -9,7 +9,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use nikaia::contracts::{Ledger, Sync, STD};
+use nikaia::contracts::{Ledger, STD, Sync};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
@@ -983,7 +983,7 @@ fn a_call_that_cannot_be_resolved_is_not_a_violation() {
 
 // --- ADR-010: where the bytes came from --------------------------------------
 
-use nikaia::contracts::{trust, Provenance};
+use nikaia::contracts::{Provenance, trust};
 
 fn provenance(source: &str) -> trust::Trust {
     let parsed = parse_to_ast(source).expect("the source parses");
@@ -1194,7 +1194,7 @@ fn a_source_is_found_inside_a_nested_block() {
 /// (`crates/nikaia/build.rs`).
 #[test]
 fn the_provenance_chooses_the_map() {
-    use nikaia::emit::{emit_program_with_trust, Build};
+    use nikaia::emit::{Build, emit_program_with_trust};
 
     let source = "use std::collections\n\nfn main() { let m: collections::HashMap[ref String, i64] = collections::HashMap() }";
     let parsed = parse_to_ast(source).expect("parses");

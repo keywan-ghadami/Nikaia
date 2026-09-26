@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use nikaia::contracts::{Ledger, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn lowered(source: &str) -> Result<String, String> {

@@ -23,7 +23,7 @@ mod common;
 
 use std::process::Command;
 
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 const APP_CONF: &str = "# settings\nhost = example.org\nport = 8080\ninclude = extra.conf\n";

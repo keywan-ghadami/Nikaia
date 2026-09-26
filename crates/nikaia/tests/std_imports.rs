@@ -43,11 +43,13 @@ fn a_use_that_names_a_type_from_the_list_says_to_drop_the_line() {
         .filter(|f| f.code == "NK1156")
         .collect();
     assert_eq!(found.len(), 1, "{found:#?}");
-    assert!(found[0]
-        .help
-        .as_deref()
-        .unwrap_or_default()
-        .contains("drop the line"));
+    assert!(
+        found[0]
+            .help
+            .as_deref()
+            .unwrap_or_default()
+            .contains("drop the line")
+    );
 }
 
 /// **A map is reached through its module** — `use std::collections` and

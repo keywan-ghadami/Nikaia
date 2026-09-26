@@ -8,7 +8,7 @@
 //! different things. Kotlin and Swift are the precedent and both read `..<` as
 //! *up to, not including*.
 
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn emit(source: &str) -> String {

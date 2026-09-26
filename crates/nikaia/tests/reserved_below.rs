@@ -18,7 +18,7 @@ mod common;
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 /// The words the emitter escapes, as its own list writes them.
@@ -27,9 +27,9 @@ use nikaia::parser::parse_to_ast;
 /// that takes its input from the code under test cannot notice the code losing
 /// an entry.
 const RESERVED_BELOW: &[&str] = &[
-    "abstract", "async", "await", "become", "box", "const", "do", "dyn", "final", "loop", "macro",
-    "mod", "move", "override", "priv", "static", "try", "type", "typeof", "unsized", "virtual",
-    "where", "yield",
+    "abstract", "async", "await", "become", "box", "const", "do", "dyn", "final", "gen", "loop",
+    "macro", "mod", "move", "override", "priv", "static", "try", "type", "typeof", "unsized",
+    "virtual", "where", "yield",
 ];
 
 /// The words that have left the sweep since: reserved words of **this** language
@@ -67,9 +67,10 @@ const RESERVED_HERE_TOO: &[&str] = &["trait", "extern", "unsafe", "ref"];
 
 /// The words Rust takes as identifiers, which must therefore **not** be escaped.
 ///
-/// The other half of the measurement, and it is short: `gen` and `union` are the
-/// only two of the sweep's candidates Rust accepts as a name.
-const NOT_RESERVED_BELOW: &[&str] = &["gen", "union", "counter"];
+/// The other half of the measurement, and it is short: `union` is the only one
+/// of the sweep's candidates Rust accepts as a name. `gen` was one until the
+/// emitted code moved to Edition 2024, which reserves it (ADR-220).
+const NOT_RESERVED_BELOW: &[&str] = &["union", "counter"];
 
 /// The words the language below reserves and **cannot escape** — `r#crate` is
 /// answered with *"`crate` cannot be a raw identifier"*. There is nothing to
@@ -184,7 +185,9 @@ fn a_word_the_language_below_allows_is_not_escaped() {
             "`{word}` is a legal Rust identifier and must not be escaped:\n{rust}"
         );
         if let Some(complaint) = rejected(&purpose, &rust) {
-            panic!("`{word}` in every position does not compile:\n{complaint}\n--- the Rust ---\n{rust}");
+            panic!(
+                "`{word}` in every position does not compile:\n{complaint}\n--- the Rust ---\n{rust}"
+            );
         }
     }
 }
@@ -262,14 +265,38 @@ fn a_name_that_cannot_be_escaped_is_refused() {
 #[test]
 fn every_declaring_position_asks() {
     let positions = [
-        ("a struct", "struct crate {\n    at: i64,\n}\n\nfn main() {\n    println(\"x\")\n}\n"),
-        ("an enum", "enum crate {\n    One,\n}\n\nfn main() {\n    println(\"x\")\n}\n"),
-        ("a variant", "enum Kind {\n    crate,\n}\n\nfn main() {\n    println(\"x\")\n}\n"),
-        ("a function", "fn crate() -> i64 {\n    return 1\n}\n\nfn main() {\n    println(f\"{crate()}\")\n}\n"),
-        ("a field", "struct Row {\n    crate: i64,\n}\n\nfn main() {\n    println(\"x\")\n}\n"),
-        ("a parameter", "fn takes(crate: i64) -> i64 {\n    return crate\n}\n\nfn main() {\n    println(f\"{takes(1)}\")\n}\n"),
-        ("a `let`", "fn main() {\n    let crate = 1\n    println(f\"{crate}\")\n}\n"),
-        ("a `for` binding", "fn main() {\n    let mut xs = Vec()\n    xs.push(1)\n    for crate in xs {\n        println(f\"{crate}\")\n    }\n}\n"),
+        (
+            "a struct",
+            "struct crate {\n    at: i64,\n}\n\nfn main() {\n    println(\"x\")\n}\n",
+        ),
+        (
+            "an enum",
+            "enum crate {\n    One,\n}\n\nfn main() {\n    println(\"x\")\n}\n",
+        ),
+        (
+            "a variant",
+            "enum Kind {\n    crate,\n}\n\nfn main() {\n    println(\"x\")\n}\n",
+        ),
+        (
+            "a function",
+            "fn crate() -> i64 {\n    return 1\n}\n\nfn main() {\n    println(f\"{crate()}\")\n}\n",
+        ),
+        (
+            "a field",
+            "struct Row {\n    crate: i64,\n}\n\nfn main() {\n    println(\"x\")\n}\n",
+        ),
+        (
+            "a parameter",
+            "fn takes(crate: i64) -> i64 {\n    return crate\n}\n\nfn main() {\n    println(f\"{takes(1)}\")\n}\n",
+        ),
+        (
+            "a `let`",
+            "fn main() {\n    let crate = 1\n    println(f\"{crate}\")\n}\n",
+        ),
+        (
+            "a `for` binding",
+            "fn main() {\n    let mut xs = Vec()\n    xs.push(1)\n    for crate in xs {\n        println(f\"{crate}\")\n    }\n}\n",
+        ),
     ];
     for (what, source) in positions {
         let parsed = parse_to_ast(source).unwrap_or_else(|e| panic!("{what} parses: {e}"));

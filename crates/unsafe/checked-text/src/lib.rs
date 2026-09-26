@@ -161,7 +161,7 @@ fn char_boundaries(bytes: &[u8], n: usize) -> Vec<usize> {
 mod tests {
     #[cfg(feature = "rayon")]
     use super::CHUNKED_ABOVE;
-    use super::{validate, CheckedText};
+    use super::{CheckedText, validate};
 
     #[test]
     #[cfg(feature = "map")]

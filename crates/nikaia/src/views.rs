@@ -1083,10 +1083,10 @@ impl Scanner<'_> {
     fn mentions(&self, expr: &Expr) -> bool {
         let mut found = false;
         each(expr, &mut |inner| {
-            if let Expr::Variable(name) = inner {
-                if self.carriers.contains(self.parsed.text(*name)) {
-                    found = true;
-                }
+            if let Expr::Variable(name) = inner
+                && self.carriers.contains(self.parsed.text(*name))
+            {
+                found = true;
             }
         });
         found

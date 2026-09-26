@@ -198,10 +198,11 @@ pub fn block_on<T>(future: impl Future<Output = T>) -> T {
             });
         }
 
-        if outcome.is_none() && alarm.take() {
-            if let Poll::Ready(value) = main.as_mut().poll(&mut context) {
-                outcome = Some(value);
-            }
+        if outcome.is_none()
+            && alarm.take()
+            && let Poll::Ready(value) = main.as_mut().poll(&mut context)
+        {
+            outcome = Some(value);
         }
 
         // **Every task that says it is ready, once round.** Taking the queue

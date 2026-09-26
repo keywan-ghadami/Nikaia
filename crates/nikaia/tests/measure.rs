@@ -26,7 +26,7 @@ mod common;
 use std::path::PathBuf;
 use std::process::Command;
 
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {

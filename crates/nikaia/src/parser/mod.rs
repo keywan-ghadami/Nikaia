@@ -1,10 +1,10 @@
 // crates/nikaia/src/parser/mod.rs
 use crate::ast;
 use anyhow::Result;
-use winnow::stream::{LocatingSlice, Location};
 use winnow::Parser;
+use winnow::stream::{LocatingSlice, Location};
 use winnow_grammar::error::ParseError;
-use winnow_grammar::{grammar, InternerContext, ParseContext, ParseInput, StateOf, Symbol};
+use winnow_grammar::{InternerContext, ParseContext, ParseInput, StateOf, Symbol, grammar};
 
 /// What the whitespace skip has seen: where it ended, whether it held a line
 /// break, and the run of `///` lines in it.
@@ -495,13 +495,12 @@ impl Parsed {
                 path,
                 alias: Some(alias),
             } = &item.node
+                && let [package] = path.as_slice()
             {
-                if let [package] = path.as_slice() {
-                    out.insert(
-                        interner.resolve(*alias).to_string(),
-                        interner.resolve(*package).to_string(),
-                    );
-                }
+                out.insert(
+                    interner.resolve(*alias).to_string(),
+                    interner.resolve(*package).to_string(),
+                );
             }
         }
         out

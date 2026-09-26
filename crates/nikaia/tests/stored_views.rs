@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use nikaia::check::{self, Finding};
 use nikaia::contracts::{Ledger, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
@@ -107,8 +107,9 @@ fn no_program_in_the_repository_keeps_a_naked_view() {
 /// and it has to stay silent - it is the answer the refusal offers.
 #[test]
 fn a_view_inside_a_struct_is_not_a_finding() {
-    assert!(findings(
-        r#"
+    assert!(
+        findings(
+            r#"
 use std::collections
 
         struct Reading { name: ref String, temp: i32 }
@@ -119,8 +120,9 @@ use std::collections
             }
         }
         "#,
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// `examples/k-nucleotide.nika`'s shape: views of the parameter are written into
@@ -129,8 +131,9 @@ use std::collections
 /// do is refuse it.
 #[test]
 fn a_view_handed_back_in_the_result_it_came_from_is_not_a_finding() {
-    assert!(findings(
-        r#"
+    assert!(
+        findings(
+            r#"
 use std::collections
 
         struct Tally { n: i64 }
@@ -143,16 +146,18 @@ use std::collections
             return counts
         }
         "#,
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// A field that holds no view cannot be where a view went, so storing text into
 /// one is not a finding.
 #[test]
 fn a_field_that_holds_no_view_is_not_a_destination() {
-    assert!(findings(
-        r#"
+    assert!(
+        findings(
+            r#"
         struct Log { lines: Vec[String], n: i64 }
         impl Log {
             fn add(ref mut self, line: ref String) sync {
@@ -161,8 +166,9 @@ fn a_field_that_holds_no_view_is_not_a_destination() {
             }
         }
         "#,
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 // --- what it refuses, which is where the reach stops ------------------------

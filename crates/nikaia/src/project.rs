@@ -24,14 +24,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use orchestrator::cache::{Artifacts, Cache, Choices, Layout, Lockfile};
 use orchestrator::project::{
-    record_extra_dependencies, resolved_versions, toolchain_is_new_enough, write_if_changed, Cargo,
-    CargoProject, CrateKind, Invocation, Package, Profile, Workspace,
+    Cargo, CargoProject, CrateKind, Invocation, Package, Profile, Workspace,
+    record_extra_dependencies, resolved_versions, toolchain_is_new_enough, write_if_changed,
 };
 
-use crate::contracts::{sync, Ledger, STD};
+use crate::contracts::{Ledger, STD, sync};
 use crate::emit::{Build, Target};
 use crate::manifest::{Dependency, Manifest};
 use crate::sysroot::{Codegen, Sysroot};
@@ -1706,7 +1706,7 @@ impl Project {
                 name: member.name.clone(),
                 version: member.manifest.package_version().to_string(),
                 // What the emitter writes, and what the tests compile it as.
-                edition: "2021".to_string(),
+                edition: "2024".to_string(),
                 // ADR-109 D4: the floor the lowering needs, from one constant
                 // in the emitter.
                 rust_version: Some(crate::emit::RUST_FLOOR.to_string()),
@@ -1975,15 +1975,15 @@ impl Project {
 
         // Cargo has resolved by now, and only now: the versions do not exist
         // before it ran. A build that failed resolved nothing worth recording.
-        if code == 0 {
-            if let Err(error) = self.record_resolved_dependencies(no_cache) {
-                // D12: the record costs the *next* reader some information. It
-                // never costs this build, which has already succeeded.
-                eprintln!(
-                    "warning: the resolved dependency versions could not be recorded \
+        if code == 0
+            && let Err(error) = self.record_resolved_dependencies(no_cache)
+        {
+            // D12: the record costs the *next* reader some information. It
+            // never costs this build, which has already succeeded.
+            eprintln!(
+                "warning: the resolved dependency versions could not be recorded \
                      in nikaia.lock: {error:#}"
-                );
-            }
+            );
         }
         Ok(code)
     }
@@ -2295,14 +2295,14 @@ pub fn wrapper_main() -> Result<i32> {
     // package Cargo already thinks is stale. Without the file in here, flipping
     // `user-parallelism` left the program running at the setting it was built
     // at, and said nothing.
-    if code == 0 {
-        if let Some(dep_info) = invocation.dep_info() {
-            let mut inputs = lowered.sources.clone();
-            if let Some(switches) = switches_beside(&gen_dir) {
-                inputs.push(switches);
-            }
-            record_extra_dependencies(&dep_info, &inputs)?;
+    if code == 0
+        && let Some(dep_info) = invocation.dep_info()
+    {
+        let mut inputs = lowered.sources.clone();
+        if let Some(switches) = switches_beside(&gen_dir) {
+            inputs.push(switches);
         }
+        record_extra_dependencies(&dep_info, &inputs)?;
     }
     Ok(code)
 }

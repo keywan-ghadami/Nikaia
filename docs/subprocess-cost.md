@@ -209,7 +209,7 @@ asserts the whole path: `.nika` in, a binary out, and the binary prints what the
 
 A smaller thing found on the way, reported here and since changed: `execute` invoked `rustc` with
 no `--edition`, so the printed crate compiled at **2015**, while every other path in the workspace
-writes Rust for 2021 (`crates/nikaia/tests/common/mod.rs` passes `--edition 2021`). Nothing
+writes Rust for 2021 (`crates/nikaia/tests/common/mod.rs` passed `--edition 2021`; 2024 since 0.0.201). Nothing
 Bridge-IR can express tells the two apart today, which is why this file recorded it rather than
 acting on it — a change to what is compiled wants its own commit and its own check. It has one now:
 the interner's edition and `rustc`'s are a single constant in `crates/rustc-executor/src/lib.rs`,

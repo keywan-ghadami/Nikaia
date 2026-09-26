@@ -214,26 +214,26 @@ fn block_names(parsed: &Parsed, block: &Block, found: &mut impl FnMut(&str, &Spa
             ty_names(parsed, ty, &stmt.span, found);
         }
         crate::contracts::sync::visit_stmt(parsed, &stmt.node, &mut |expr| {
-            if let Expr::Path(segments) = expr {
-                if let Some(head) = segments.first() {
-                    // `unaliased`, because a file may write its own word for a
-                    // package (ADR-046 D3) - and the manifest key is the only
-                    // name the declaration has.
-                    // **The whole name and not its head**, because two
-                    // readers want it: the refusal takes the word in front
-                    // (`head_of`) and the describer takes the name after it.
-                    let head = parsed.unaliased(parsed.text(*head));
-                    let rest: Vec<String> = segments
-                        .iter()
-                        .skip(1)
-                        .map(|s| parsed.text(*s).to_string())
-                        .collect();
-                    let name = match rest.is_empty() {
-                        true => head.to_string(),
-                        false => format!("{head}::{}", rest.join("::")),
-                    };
-                    found(&name, &stmt.span);
-                }
+            if let Expr::Path(segments) = expr
+                && let Some(head) = segments.first()
+            {
+                // `unaliased`, because a file may write its own word for a
+                // package (ADR-046 D3) - and the manifest key is the only
+                // name the declaration has.
+                // **The whole name and not its head**, because two
+                // readers want it: the refusal takes the word in front
+                // (`head_of`) and the describer takes the name after it.
+                let head = parsed.unaliased(parsed.text(*head));
+                let rest: Vec<String> = segments
+                    .iter()
+                    .skip(1)
+                    .map(|s| parsed.text(*s).to_string())
+                    .collect();
+                let name = match rest.is_empty() {
+                    true => head.to_string(),
+                    false => format!("{head}::{}", rest.join("::")),
+                };
+                found(&name, &stmt.span);
             }
         });
         crate::contracts::sync::visit_stmt_blocks(&stmt.node, &mut |inner| {
@@ -253,9 +253,9 @@ fn ty_names(parsed: &Parsed, ty: &Type, span: &Span, found: &mut impl FnMut(&str
     for argument in &ty.generics {
         ty_names(parsed, argument, span, found);
     }
-    if let Some(code) = &ty.code {
-        if let Some(result) = &code.result {
-            ty_names(parsed, result, span, found);
-        }
+    if let Some(code) = &ty.code
+        && let Some(result) = &code.result
+    {
+        ty_names(parsed, result, span, found);
     }
 }

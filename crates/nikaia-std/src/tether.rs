@@ -5,4 +5,4 @@
 //! it takes and the argument for each ([ADR-218](../../../docs/specification/adr/adr-218.md)).
 //! Generated code reaches it here, under the name it has always had.
 
-pub use ::tether::{forever, hold, Dangling, Held, Holding, Keep, Views};
+pub use ::tether::{Dangling, Held, Holding, Keep, Views, forever, hold};

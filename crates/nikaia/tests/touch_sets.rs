@@ -505,14 +505,12 @@ fn an_unreadable_handler_is_not_an_empty_one() {
 /// two files, and the statement next to them is compared against both.
 #[test]
 fn a_value_that_is_not_a_bare_call_is_weighed() {
-    let reason = why(
-        "use std::fs\n\
+    let reason = why("use std::fs\n\
          fn main() throws {\n\
              let beide = (fs::read_to_string(\"eins.txt\", fs::Root::Anywhere), fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere)) catch { (\"\", \"\") }\n\
              let c = fs::read_to_string(\"drei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
              println(\"x\")\n\
-         }",
-    );
+         }");
     assert!(
         reason.contains("fs::read_to_string + fs::read_to_string / fs::read_to_string"),
         "{reason}"
@@ -521,14 +519,12 @@ fn a_value_that_is_not_a_bare_call_is_weighed() {
 
     // … and the union is what is compared: one of the two inner reads meets the
     // write next to it, so the pair keeps its order.
-    let reason = why(
-        "use std::fs\n\
+    let reason = why("use std::fs\n\
          fn main() throws {\n\
              let beide = (fs::read_to_string(\"eins.txt\", fs::Root::Anywhere), fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere)) catch { (\"\", \"\") }\n\
              fs::write(\"zwei.txt\", fs::Root::Anywhere, \"x\") catch { }\n\
              println(\"x\")\n\
-         }",
-    );
+         }");
     assert!(reason.contains("both reach file `zwei.txt`"), "{reason}");
 }
 

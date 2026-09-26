@@ -85,7 +85,7 @@ mod tests {
     #[cfg(not(miri))]
     #[test]
     fn an_extern_declaration_returns_one() {
-        extern "C" {
+        unsafe extern "C" {
             fn getenv(name: *const c_char) -> Option<CText>;
         }
         // SAFETY: `getenv` takes a zero-terminated name and returns a C string

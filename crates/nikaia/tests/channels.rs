@@ -9,7 +9,7 @@
 mod common;
 
 use nikaia::contracts::{Ledger, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {
@@ -201,7 +201,7 @@ fn there_is_no_unbounded_channel() {
 /// nothing about channels is written anywhere else.
 #[test]
 fn a_channel_is_answered_by_what_it_carries() {
-    use nikaia::contracts::send::{crossing, Crossing, Destination};
+    use nikaia::contracts::send::{Crossing, Destination, crossing};
     use nikaia::contracts::ty::Ty;
     let own = Ledger::default();
     let library = Ledger::parse(STD).expect("std ships a ledger");

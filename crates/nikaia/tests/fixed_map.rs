@@ -62,8 +62,7 @@ fn run(purpose: &str, source: &str) -> String {
 }
 
 /// Three keys: under [`nikaia::fixed::HASHED_FROM`], so the walked shape.
-const SMALL: &str =
-    "comptime ROUTES: Fixed[ref String, i64] = [(\"get\", 1), (\"post\", 2), (\"put\", 3)]\n\
+const SMALL: &str = "comptime ROUTES: Fixed[ref String, i64] = [(\"get\", 1), (\"post\", 2), (\"put\", 3)]\n\
      \n\
      fn main() {\n\
      \x20   println(f\"{ROUTES.get(\\\"get\\\") ?? 0}\")\n\
@@ -215,8 +214,7 @@ fn main() {
 /// evaluate the constant would be the same refusal again with less in it.
 #[test]
 fn a_key_written_twice_is_refused_once() {
-    let source =
-        "comptime ROUTES: Fixed[ref String, i64] = [(\"get\", 1), (\"post\", 2), (\"get\", 3)]\n\
+    let source = "comptime ROUTES: Fixed[ref String, i64] = [(\"get\", 1), (\"post\", 2), (\"get\", 3)]\n\
          \n\
          fn main() {\n\
          \x20   println(f\"{ROUTES.len()}\")\n\

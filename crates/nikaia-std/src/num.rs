@@ -136,7 +136,9 @@ macro_rules! itself {
     };
 }
 
-itself!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64, bool, char);
+itself!(
+    i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64, bool, char
+);
 
 /// **A view of one answers what it points at**, through any number of them:
 /// `&&i32` is what a lent binding over a container of views is.

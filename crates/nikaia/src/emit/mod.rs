@@ -23,7 +23,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 pub mod template;
 use winnow_grammar::Symbol;
@@ -33,7 +33,7 @@ use crate::ast::{
     BinaryOp, Block, Expr, FnArg, FoldSpec, FrameAttr, GrammarDef, GrammarRule, Item, MatchPattern,
     Pattern, Receiver, Repeat, SelectArm, Span, Spanned, Stmt, Type, UnaryOp, VariantFields,
 };
-use crate::parser::{parse_expression, Parsed};
+use crate::parser::{Parsed, parse_expression};
 use crate::{refused, refused_at};
 
 /// One branch of an `overlap { … }`, where the schedule and the written order
@@ -942,17 +942,18 @@ fn std_ledger() -> crate::contracts::Ledger {
 /// The sweep in `tests/reserved_below.rs` compiles every word in every position
 /// instead, which is what found them.
 ///
-/// `gen` and `union` are deliberately **absent**: Rust takes those as
-/// identifiers, so escaping them would be a change nothing asked for.
+/// `gen` is in since the emitted code is Edition 2024, which reserves it
+/// (ADR-220). `union` is deliberately **absent**: Rust takes it as an
+/// identifier, so escaping it would be a change nothing asked for.
 ///
 /// `crate`, `super`, `self` and `Self` are absent for the opposite reason —
 /// **Rust forbids a raw identifier for exactly those four**, so there is no
 /// escape to write. They are refused instead (`NK1128`, and `NK1119` for
 /// `self`), which is [ADR-076](../../../docs/specification/adr/adr-076.md) D3.
 const RESERVED_BELOW: &[&str] = &[
-    "abstract", "async", "await", "become", "box", "const", "do", "dyn", "extern", "final", "loop",
-    "macro", "mod", "move", "override", "priv", "ref", "static", "trait", "try", "type", "typeof",
-    "unsafe", "unsized", "virtual", "where", "yield",
+    "abstract", "async", "await", "become", "box", "const", "do", "dyn", "extern", "final", "gen",
+    "loop", "macro", "mod", "move", "override", "priv", "ref", "static", "trait", "try", "type",
+    "typeof", "unsafe", "unsized", "virtual", "where", "yield",
 ];
 
 /// A source name, written so the language below can read it.
@@ -1624,11 +1625,7 @@ impl Tail {
 
     /// What the statement at `i` of a block whose last index is `last` is.
     fn at(self, i: usize, last: usize) -> Self {
-        if i == last {
-            self
-        } else {
-            Tail::Statement
-        }
+        if i == last { self } else { Tail::Statement }
     }
 }
 
@@ -2687,12 +2684,11 @@ impl<'p> Emitter<'p> {
                     // it used to have. Missing it emitted a `parse_…_pieces`
                     // call with `ParseContext` and `Parallelism` undeclared —
                     // `rustc` about a file nobody wrote (Part III C.1).
-                    if let Expr::Call { func, .. } = e {
-                        if let Expr::Path(segments) = func.as_ref() {
-                            if let [grammar, rule] = segments.as_slice() {
-                                parallel(grammar, rule);
-                            }
-                        }
+                    if let Expr::Call { func, .. } = e
+                        && let Expr::Path(segments) = func.as_ref()
+                        && let [grammar, rule] = segments.as_slice()
+                    {
+                        parallel(grammar, rule);
                     }
                 });
             }
@@ -3003,7 +2999,7 @@ impl<'p> Emitter<'p> {
                         Ok(())
                     })?;
                 }
-                out.push(&format!("extern \"{abi}\" {{\n"));
+                out.push(&format!("unsafe extern \"{abi}\" {{\n"));
                 for declaration in declarations {
                     out.from(&declaration.span, |out| {
                         out.push("    ");
@@ -3198,12 +3194,13 @@ impl<'p> Emitter<'p> {
     /// where it is an ordinary value an `i32` is at both ends
     /// ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D3).
     fn pointer_for(&self, callee: &str, ty: &Type) -> Option<Pointer> {
-        if let Some(release) = self.opaque_handles.get(self.text(ty.name)) {
-            if !ty.is_view && !ty.is_slice {
-                return Some(Pointer::Handle {
-                    give: release == callee,
-                });
-            }
+        if let Some(release) = self.opaque_handles.get(self.text(ty.name))
+            && !ty.is_view
+            && !ty.is_slice
+        {
+            return Some(Pointer::Handle {
+                give: release == callee,
+            });
         }
         // **A run is an address beside a count and a view is one address**
         // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D2), and
@@ -4075,14 +4072,13 @@ impl<'p> Emitter<'p> {
     fn a_tail_that_enters_a_grammar(&self, stmt: &Stmt) -> bool {
         let mut found = false;
         let mut look = |expr: &Expr| {
-            if let Expr::Call { func, args, .. } = expr {
-                if let Expr::Path(segments) = func.as_ref() {
-                    if let [grammar, _] = segments.as_slice() {
-                        if self.grammars.contains_key(grammar) && args.len() == 1 {
-                            found = true;
-                        }
-                    }
-                }
+            if let Expr::Call { func, args, .. } = expr
+                && let Expr::Path(segments) = func.as_ref()
+                && let [grammar, _] = segments.as_slice()
+                && self.grammars.contains_key(grammar)
+                && args.len() == 1
+            {
+                found = true;
             }
         };
         match stmt {
@@ -4273,38 +4269,28 @@ impl<'p> Emitter<'p> {
     /// nothing, so the accumulator is threaded; a method that returns a new
     /// accumulator is left exactly as written.
     fn fold_step(&self, out: &mut Out, step: &Expr) -> Result<()> {
-        if let Expr::Closure { params, body, .. } = step {
-            if let [accumulator, item] = params.as_slice() {
-                if let Some(Stmt::Expr(Expr::MethodCall {
-                    receiver, method, ..
-                })) = body.stmts.last().map(|s| &s.node)
-                {
-                    let on_accumulator =
-                        matches!(&**receiver, Expr::Variable(name) if name == accumulator);
-                    let mutates = self
-                        .by_name
-                        .get(method)
-                        .and_then(|m| m.as_ref())
-                        .is_some_and(Method::mutates_in_place);
+        if let Expr::Closure { params, body, .. } = step
+            && let [accumulator, item] = params.as_slice()
+            && let Some(Stmt::Expr(Expr::MethodCall {
+                receiver, method, ..
+            })) = body.stmts.last().map(|s| &s.node)
+        {
+            let on_accumulator = matches!(&**receiver, Expr::Variable(name) if name == accumulator);
+            let mutates = self
+                .by_name
+                .get(method)
+                .and_then(|m| m.as_ref())
+                .is_some_and(Method::mutates_in_place);
 
-                    if on_accumulator && mutates {
-                        let accumulator = self.text(*accumulator);
-                        out.push(&format!("|mut {accumulator}, {}| {{ ", self.text(*item)));
-                        for stmt in &body.stmts {
-                            self.stmt(
-                                out,
-                                &stmt.node,
-                                &stmt.span,
-                                0,
-                                Tail::Statement,
-                                Flow::PLAIN,
-                            )?;
-                            out.push(" ");
-                        }
-                        out.push(&format!("{accumulator} }}"));
-                        return Ok(());
-                    }
+            if on_accumulator && mutates {
+                let accumulator = self.text(*accumulator);
+                out.push(&format!("|mut {accumulator}, {}| {{ ", self.text(*item)));
+                for stmt in &body.stmts {
+                    self.stmt(out, &stmt.node, &stmt.span, 0, Tail::Statement, Flow::PLAIN)?;
+                    out.push(" ");
                 }
+                out.push(&format!("{accumulator} }}"));
+                return Ok(());
             }
         }
 
@@ -4314,36 +4300,35 @@ impl<'p> Emitter<'p> {
     /// A fold's merge. `Summary::merge` names a method, and the `impl` says
     /// whether it mutates its subject and whether it takes the other by view.
     fn fold_merge(&self, out: &mut Out, merge: &Expr) -> Result<()> {
-        if let Expr::Path(segments) = merge {
-            if let [owner, name] = segments.as_slice() {
-                if let Some(method) = self.methods.get(&(*owner, *name)) {
-                    if method.mutates_in_place() && method.args.len() == 1 {
-                        let by_view = if method.args[0].ty.is_view { "&" } else { "" };
-                        // The accumulator's type is annotated because the path
-                        // names it: without that, the backend's `let merge = …`
-                        // leaves the closure with nothing to infer from.
-                        let owner = self.ty(
-                            &Type {
-                                name: *owner,
-                                generics: Vec::new(),
-                                is_view: false,
-                                is_tuple: false,
-                                is_nullable: false,
-                                code: None,
-                                count: None,
-                                is_mut: false,
-                                is_slice: false,
-                            },
-                            Lifetimes::NAMED,
-                        );
-                        out.push(&format!(
-                            "|mut a: {owner}, b| {{ a.{}({by_view}b); a }}",
-                            self.text(*name)
-                        ));
-                        return Ok(());
-                    }
-                }
-            }
+        if let Expr::Path(segments) = merge
+            && let [owner, name] = segments.as_slice()
+            && let Some(method) = self.methods.get(&(*owner, *name))
+            && method.mutates_in_place()
+            && method.args.len() == 1
+        {
+            let by_view = if method.args[0].ty.is_view { "&" } else { "" };
+            // The accumulator's type is annotated because the path
+            // names it: without that, the backend's `let merge = …`
+            // leaves the closure with nothing to infer from.
+            let owner = self.ty(
+                &Type {
+                    name: *owner,
+                    generics: Vec::new(),
+                    is_view: false,
+                    is_tuple: false,
+                    is_nullable: false,
+                    code: None,
+                    count: None,
+                    is_mut: false,
+                    is_slice: false,
+                },
+                Lifetimes::NAMED,
+            );
+            out.push(&format!(
+                "|mut a: {owner}, b| {{ a.{}({by_view}b); a }}",
+                self.text(*name)
+            ));
+            return Ok(());
         }
 
         self.expr(out, merge, 0, Flow::PLAIN)
@@ -4708,17 +4693,19 @@ impl<'p> Emitter<'p> {
         // call below reaches this line again and a `RefCell` held across it is
         // a panic rather than a message.
         let standing = self.specialising.borrow().clone();
-        if let Some((parameter, on)) = standing {
-            if ty.generics.is_empty() && ty.code.is_none() && self.text(ty.name) == parameter {
-                let concrete = crate::ast::Type {
-                    name: self.parsed.interner.intern_string(&on),
-                    ..ty.clone()
-                };
-                let held = self.specialising.replace(None);
-                let written = self.ty_counted(&concrete, lifetimes, count);
-                *self.specialising.borrow_mut() = held;
-                return written;
-            }
+        if let Some((parameter, on)) = standing
+            && ty.generics.is_empty()
+            && ty.code.is_none()
+            && self.text(ty.name) == parameter
+        {
+            let concrete = crate::ast::Type {
+                name: self.parsed.interner.intern_string(&on),
+                ..ty.clone()
+            };
+            let held = self.specialising.replace(None);
+            let written = self.ty_counted(&concrete, lifetimes, count);
+            *self.specialising.borrow_mut() = held;
+            return written;
         }
 
         // **A parameter that is code**
@@ -4925,18 +4912,18 @@ impl<'p> Emitter<'p> {
         // expanded here and nowhere earlier, so the checker, the ledger and every
         // message keep the name the source wrote. The two hulls are the ones the
         // count already decides - `written_name` answers for each.
-        if self.text(ty.name) == SHARED_MUT {
-            if let Some(held) = ty.generics.first() {
-                // `out` already carries the `&` of a view, so the expansion is
-                // pushed rather than returned on its own.
-                out.push_str(&format!(
-                    "{}<{}<{}>>",
-                    self.written_name(SHARED, count),
-                    self.written_name(LOCKED, count),
-                    self.ty_counted(held, lifetimes, count)
-                ));
-                return out;
-            }
+        if self.text(ty.name) == SHARED_MUT
+            && let Some(held) = ty.generics.first()
+        {
+            // `out` already carries the `&` of a view, so the expansion is
+            // pushed rather than returned on its own.
+            out.push_str(&format!(
+                "{}<{}<{}>>",
+                self.written_name(SHARED, count),
+                self.written_name(LOCKED, count),
+                self.ty_counted(held, lifetimes, count)
+            ));
+            return out;
         }
         // **`Array[T, N]` is `[T; N]`**
         // ([ADR-152](../../docs/specification/adr/adr-152.md) D1, D2): `N`
@@ -4945,16 +4932,15 @@ impl<'p> Emitter<'p> {
         // After the view, so `&Array[f64, 3]` is a borrow of the array rather
         // than an array of borrows, and before the name is written, because the
         // arguments do not go where a generic's do.
-        if self.text(ty.name) == ARRAY {
-            if let [element, length] = ty.generics.as_slice() {
-                if let Some(n) = length.count {
-                    out.push_str(&format!(
-                        "[{}; {n}]",
-                        self.ty_counted(element, lifetimes, count)
-                    ));
-                    return out;
-                }
-            }
+        if self.text(ty.name) == ARRAY
+            && let [element, length] = ty.generics.as_slice()
+            && let Some(n) = length.count
+        {
+            out.push_str(&format!(
+                "[{}; {n}]",
+                self.ty_counted(element, lifetimes, count)
+            ));
+            return out;
         }
         out.push_str(&self.written_name(self.text(ty.name), count));
 
@@ -5012,23 +4998,22 @@ impl<'p> Emitter<'p> {
             // links nested three deep is a line the reader has to unwind, and
             // Part III C.1's rule is about what a reader of the generated file
             // meets.
-            if let [only] = block.stmts.as_slice() {
-                if let Stmt::Expr(Expr::If {
+            if let [only] = block.stmts.as_slice()
+                && let Stmt::Expr(Expr::If {
                     cond,
                     then_branch,
                     else_branch,
                 }) = &only.node
-                {
-                    return self.if_expr(
-                        out,
-                        cond,
-                        then_branch,
-                        else_branch.as_ref(),
-                        depth,
-                        flow,
-                        tail,
-                    );
-                }
+            {
+                return self.if_expr(
+                    out,
+                    cond,
+                    then_branch,
+                    else_branch.as_ref(),
+                    depth,
+                    flow,
+                    tail,
+                );
             }
             self.block(out, block, depth, flow, tail)?;
         }
@@ -6056,22 +6041,21 @@ impl<'p> Emitter<'p> {
                 // **`variant.is(value)` is the pattern test a program would
                 // have written by hand**: `matches!(value, Op::Add { .. })`,
                 // which fits a variant of every shape.
-                if let Some(variant) = self.reflected(receiver, *method, "is") {
-                    if let (Some(value), Some((_, on))) =
+                if let Some(variant) = self.reflected(receiver, *method, "is")
+                    && let (Some(value), Some((_, on))) =
                         (args.first(), self.specialising.borrow().clone())
-                    {
-                        out.push("matches!(");
-                        self.expr(out, value, depth, flow)?;
-                        out.push(&format!(", {on}::{} {{ .. }})", escaped(&variant)));
-                        return Ok(());
-                    }
+                {
+                    out.push("matches!(");
+                    self.expr(out, value, depth, flow)?;
+                    out.push(&format!(", {on}::{} {{ .. }})", escaped(&variant)));
+                    return Ok(());
                 }
-                if let Some(field) = self.reflected(receiver, *method, "of") {
-                    if let Some(value) = args.first() {
-                        self.postfix_base(out, value, depth, flow)?;
-                        out.push(&format!(".{}", escaped(&field)));
-                        return Ok(());
-                    }
+                if let Some(field) = self.reflected(receiver, *method, "of")
+                    && let Some(value) = args.first()
+                {
+                    self.postfix_base(out, value, depth, flow)?;
+                    out.push(&format!(".{}", escaped(&field)));
+                    return Ok(());
                 }
                 // **`error.full()` in a handler a named channel reached**
                 // ([ADR-157](../../docs/specification/adr/adr-157.md) D2). Part
@@ -6159,11 +6143,10 @@ impl<'p> Emitter<'p> {
                 // one match becomes a match per member with the arms that
                 // belong to it, and the catch-all is what every one of them
                 // falls through to.
-                if let Some(sum) = flow.caught_sum {
-                    if matches!(value.as_ref(), Expr::Variable(name) if self.text(*name) == CAUGHT)
-                    {
-                        return self.match_over_a_sum(out, sum, arms, depth, flow);
-                    }
+                if let Some(sum) = flow.caught_sum
+                    && matches!(value.as_ref(), Expr::Variable(name) if self.text(*name) == CAUGHT)
+                {
+                    return self.match_over_a_sum(out, sum, arms, depth, flow);
                 }
                 out.push("match ");
                 self.expr(out, value, depth, flow)?;
@@ -6646,18 +6629,18 @@ impl<'p> Emitter<'p> {
                 // question is about the value, so a negation is folded here
                 // rather than left for `integer_literal` to answer about a number
                 // that is one too large.
-                if let (UnaryOp::Neg, Expr::LitInt(v)) = (op, &**expr) {
-                    if i32::try_from(-(*v as i128)).is_ok() {
-                        // The suffix still applies: a small negative number
-                        // inside a constant written wide is written wide too,
-                        // or the operands of one sum disagree.
-                        let wide = match flow.widen {
-                            true => "i64",
-                            false => "",
-                        };
-                        out.push(&format!("-{v}{wide}"));
-                        return Ok(());
-                    }
+                if let (UnaryOp::Neg, Expr::LitInt(v)) = (op, &**expr)
+                    && i32::try_from(-(*v as i128)).is_ok()
+                {
+                    // The suffix still applies: a small negative number
+                    // inside a constant written wide is written wide too,
+                    // or the operands of one sum disagree.
+                    let wide = match flow.widen {
+                        true => "i64",
+                        false => "",
+                    };
+                    out.push(&format!("-{v}{wide}"));
+                    return Ok(());
                 }
                 // **A `&` over a slice read is the view it already is**
                 // ([ADR-182](../../docs/specification/adr/adr-182.md) D2). The read
@@ -6667,10 +6650,11 @@ impl<'p> Emitter<'p> {
                 // in the ones that matter, and is not what the source says
                 // either: the source's `&` and the read's own view are one
                 // claim written twice.
-                if let (UnaryOp::Ref, Expr::Index { index, .. }) = (op, &**expr) {
-                    if self.slices(flow.statement, index) && !flow.in_a_place {
-                        return self.expr(out, expr, depth, flow);
-                    }
+                if let (UnaryOp::Ref, Expr::Index { index, .. }) = (op, &**expr)
+                    && self.slices(flow.statement, index)
+                    && !flow.in_a_place
+                {
+                    return self.expr(out, expr, depth, flow);
                 }
                 out.push(unary_op(*op));
                 self.nested(out, expr, u8::MAX, depth, flow)?;
@@ -7071,7 +7055,7 @@ impl<'p> Emitter<'p> {
                 return Err(refused_at!(
                     flow.statement,
                     "cannot emit expression yet: {other:?}"
-                ))
+                ));
             }
         }
         Ok(())
@@ -7135,12 +7119,12 @@ impl<'p> Emitter<'p> {
         // `Json::value(input)`, where `Json` names a grammar in this file and
         // `value` one of its `pub` rules. First, because it is not a call to
         // anything the recursion graph or the ledger knows.
-        if let Expr::Path(segments) = func {
-            if let [grammar, rule] = segments.as_slice() {
-                if self.grammars.contains_key(grammar) && args.len() == 1 {
-                    return self.grammar_entry(out, *grammar, *rule, &args[0], depth, flow);
-                }
-            }
+        if let Expr::Path(segments) = func
+            && let [grammar, rule] = segments.as_slice()
+            && self.grammars.contains_key(grammar)
+            && args.len() == 1
+        {
+            return self.grammar_entry(out, *grammar, *rule, &args[0], depth, flow);
         }
         let pausing = self.pausing_key(func);
         if let Some(key) = pausing.as_deref().filter(|_| flow.in_lambda) {
@@ -7254,18 +7238,18 @@ impl<'p> Emitter<'p> {
             // is what the trailing-lambda rule already made of it. The ordered
             // acquisition is `std`'s, because it is about addresses at run time
             // and not about anything this compiler can see.
-            if let Some(door) = crate::check::MultiLock::named(text) {
-                if let Some((block, locks)) = args.split_last() {
-                    out.push(&format!("nikaia_std::lock::{}(", door.written()));
-                    for lock in locks {
-                        out.push("&");
-                        self.expr(out, lock, depth, flow)?;
-                        out.push(", ");
-                    }
-                    self.expr(out, block, depth, flow)?;
-                    out.push(")");
-                    return Ok(());
+            if let Some(door) = crate::check::MultiLock::named(text)
+                && let Some((block, locks)) = args.split_last()
+            {
+                out.push(&format!("nikaia_std::lock::{}(", door.written()));
+                for lock in locks {
+                    out.push("&");
+                    self.expr(out, lock, depth, flow)?;
+                    out.push(", ");
                 }
+                self.expr(out, block, depth, flow)?;
+                out.push(")");
+                return Ok(());
             }
 
             // **A hull you can observe, you write**
@@ -7273,17 +7257,17 @@ impl<'p> Emitter<'p> {
             // `Shared(x)`, `SharedMut(x)` and `Locked(x)` are the three, and each
             // expands to the shape `written_name` would give the *type* - so the
             // constructor and the annotation cannot disagree about a value.
-            if let [held] = args {
-                if let Some(hulls) = self.hull_new(text, self.count_at(flow.function, flow.bound)) {
-                    for path in &hulls {
-                        out.push(&format!("{path}::new("));
-                    }
-                    self.expr(out, held, depth, flow)?;
-                    for _ in &hulls {
-                        out.push(")");
-                    }
-                    return Ok(());
+            if let [held] = args
+                && let Some(hulls) = self.hull_new(text, self.count_at(flow.function, flow.bound))
+            {
+                for path in &hulls {
+                    out.push(&format!("{path}::new("));
                 }
+                self.expr(out, held, depth, flow)?;
+                for _ in &hulls {
+                    out.push(")");
+                }
+                return Ok(());
             }
 
             // `println`, `print` and their `stderr` halves are macros in
@@ -7776,7 +7760,7 @@ impl<'p> Emitter<'p> {
                     return Err(refused_at!(
                         flow.statement,
                         "a branch of an `overlap` is an expression (Part I, 8.1.2)"
-                    ))
+                    ));
                 }
             }
             out.push(" },\n");
@@ -8618,7 +8602,7 @@ impl<'p> Emitter<'p> {
     }
 
     /// The expressions an `overlap`'s statements are, for [`Emitter::joined_throws`].
-    fn branch_values(block: &Block) -> impl Iterator<Item = &Expr> {
+    fn branch_values(block: &Block) -> impl Iterator<Item = &Expr> + use<'_> {
         block.stmts.iter().filter_map(|stmt| match &stmt.node {
             Stmt::Expr(value) => Some(value),
             _ => None,
@@ -9063,21 +9047,22 @@ impl<'p> Emitter<'p> {
         // of this language and nothing else could have been — a grammar name is
         // not a value, so there is no receiver to resolve and no ambiguity to
         // settle.
-        if let Some(Expr::Variable(name)) = receiver {
-            if self.grammars.contains_key(name) && args.len() == 1 {
-                // **The dot is gone** (ADR-140 D3). `NK1147` is what a program
-                // meets; this is here so that a caller who lowers without
-                // checking gets the same sentence rather than a method call on
-                // a name that is not a value.
-                return Err(refused_at!(
-                    flow.statement,
-                    "a rule of grammar `{}` is reached with `::`, not with a dot \
+        if let Some(Expr::Variable(name)) = receiver
+            && self.grammars.contains_key(name)
+            && args.len() == 1
+        {
+            // **The dot is gone** (ADR-140 D3). `NK1147` is what a program
+            // meets; this is here so that a caller who lowers without
+            // checking gets the same sentence rather than a method call on
+            // a name that is not a value.
+            return Err(refused_at!(
+                flow.statement,
+                "a rule of grammar `{}` is reached with `::`, not with a dot \
                      (ADR-140 D3): write `{}::{}(…)`",
-                    self.text(*name),
-                    self.text(*name),
-                    self.text(method)
-                ));
-            }
+                self.text(*name),
+                self.text(*name),
+                self.text(method)
+            ));
         }
         if let Some(into) = truncating(self.text(method)) {
             self.receiver(out, receiver, depth, flow, true)?;
@@ -10171,10 +10156,9 @@ fn declared_errors(parsed: &Parsed) -> std::collections::BTreeSet<String> {
             target,
             ..
         } = &item.node
+            && parsed.text(*trait_name) == "Error"
         {
-            if parsed.text(*trait_name) == "Error" {
-                out.insert(parsed.text(target.name).to_string());
-            }
+            out.insert(parsed.text(target.name).to_string());
         }
     }
     out
@@ -10206,14 +10190,14 @@ fn joining_bodies(parsed: &Parsed) -> std::collections::BTreeSet<String> {
             } => {
                 let target = parsed.text(target.name).to_string();
                 for method in methods {
-                    if let Item::Fn { name, body, .. } = &method.node {
-                        if body_joins(parsed, body) {
-                            let own = match name {
-                                Some(name) => parsed.text(*name).to_string(),
-                                None => "new".to_string(),
-                            };
-                            out.insert(format!("{target}::{own}"));
-                        }
+                    if let Item::Fn { name, body, .. } = &method.node
+                        && body_joins(parsed, body)
+                    {
+                        let own = match name {
+                            Some(name) => parsed.text(*name).to_string(),
+                            None => "new".to_string(),
+                        };
+                        out.insert(format!("{target}::{own}"));
                     }
                 }
             }
@@ -10504,7 +10488,7 @@ pub fn branch_starts_first<'p>(
     parsed: &'p Parsed,
     build: Build,
     contracts: &crate::contracts::Ledger,
-) -> impl Fn(&Spanned<Stmt>) -> bool + 'p {
+) -> impl Fn(&Spanned<Stmt>) -> bool + 'p + use<'p> {
     let emitter = Emitter::with_contracts(
         parsed,
         &[],
@@ -10912,7 +10896,7 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
             '}' => {
                 return Err(refused!(
                     "stray `}}` in \"{literal}\"; write `}}}}` for a brace"
-                ))
+                ));
             }
             _ => format.push(c),
         }

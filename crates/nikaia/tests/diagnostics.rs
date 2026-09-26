@@ -9,7 +9,7 @@
 mod common;
 
 use nikaia::diagnostics::{self, Diagnostic};
-use nikaia::emit::{emit_program, Build, Lowered};
+use nikaia::emit::{Build, Lowered, emit_program};
 use nikaia::parser::parse_to_ast;
 
 const BROKEN: &str = include_str!("fixtures/broken_frame.nika");
@@ -267,7 +267,10 @@ fn a_note_about_rust_rather_than_the_program_is_dropped() {
             "if you wanted to use a crate named `fremd`, use `cargo add fremd` to add it to your `Cargo.toml`",
             false,
         ),
-        ("run with `RUST_BACKTRACE=full` for a verbose backtrace", false),
+        (
+            "run with `RUST_BACKTRACE=full` for a verbose backtrace",
+            false,
+        ),
         // Dropped: a remedy in a type the specification does not offer. It was
         // kept here once, checked - `let x: u32 = 3000000000` compiles - and
         // ADR-048 D2 is what changed: the numeric surface is the one Part I 2.2

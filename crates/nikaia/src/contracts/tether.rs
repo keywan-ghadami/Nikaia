@@ -58,7 +58,7 @@ use crate::ast::{Item, Type};
 use crate::emit::{borrowing_structs, holds_view};
 use crate::parser::Parsed;
 
-use super::{Ledger, INPUT};
+use super::{INPUT, Ledger};
 
 /// The position a function's result occupies in the column.
 ///

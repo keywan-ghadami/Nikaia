@@ -11,7 +11,7 @@ mod common;
 
 use nikaia::check;
 use nikaia::contracts::{Ledger, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 /// Lower it, compile it, run it, hand back what it printed.

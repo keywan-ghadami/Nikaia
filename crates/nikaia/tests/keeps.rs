@@ -28,22 +28,26 @@ fn keeps(source: &str, name: &str) -> Vec<String> {
 /// whole record exists for: `page(entries)` rather than `page(&entries)`.
 #[test]
 fn a_parameter_that_is_only_read_is_not_kept() {
-    assert!(keeps(
-        "fn width(text: String) -> i64 { return text.len() as i64 }",
-        "width"
-    )
-    .is_empty());
+    assert!(
+        keeps(
+            "fn width(text: String) -> i64 { return text.len() as i64 }",
+            "width"
+        )
+        .is_empty()
+    );
 
     // A field read is a read of the field and not of the parameter — **where
     // the field copies**. An `i64` handed back takes nothing away, and owning
     // the parameter for it would take the value from a caller that still wants
     // it. A field that *moves* is the test at the bottom of this file.
-    assert!(keeps(
-        "struct Row { total: i64 }\n\
+    assert!(
+        keeps(
+            "struct Row { total: i64 }\n\
          fn of(row: Row) -> i64 { return row.total }",
-        "of"
-    )
-    .is_empty());
+            "of"
+        )
+        .is_empty()
+    );
 }
 
 /// **Handed back by value, it is kept** — the value outlives the call by
@@ -215,11 +219,13 @@ fn a_call_nothing_describes_keeps_what_it_is_given() {
 #[test]
 fn a_receiver_is_kept_where_the_method_might_consume_it() {
     // Every method here resolves, and every one of them reads its receiver.
-    assert!(keeps(
-        "fn width(text: String) -> i64 { return text.len() as i64 }",
-        "width"
-    )
-    .is_empty());
+    assert!(
+        keeps(
+            "fn width(text: String) -> i64 { return text.len() as i64 }",
+            "width"
+        )
+        .is_empty()
+    );
 
     // One unresolvable call in the body, and every receiver in it is kept —
     // including the one whose own method resolves perfectly well.
@@ -420,23 +426,27 @@ fn a_parameter_that_leaves_by_any_way_out_is_kept() {
     );
     // `n` is the scrutinee, and what the column says of a number does not
     // matter: a copy is never lent (`keeps::lends` asks `moves` first).
-    assert!(keeps(
-        "fn pick(n: i64, name: String) -> String {\n\
+    assert!(
+        keeps(
+            "fn pick(n: i64, name: String) -> String {\n\
              let s = match n { 0 => f\"zero\" else => name }\n\
              return s\n\
          }",
-        "pick"
-    )
-    .contains(&"name".to_string()));
+            "pick"
+        )
+        .contains(&"name".to_string())
+    );
 }
 
 /// **And a `let` that only reads still keeps nothing**: the second name has to
 /// leave for the first to be kept.
 #[test]
 fn a_parameter_bound_again_and_only_read_is_not_kept() {
-    assert!(keeps(
-        "fn width(name: String) -> i64 { let s = name\n return s.len() as i64 }",
-        "width"
-    )
-    .is_empty());
+    assert!(
+        keeps(
+            "fn width(name: String) -> i64 { let s = name\n return s.len() as i64 }",
+            "width"
+        )
+        .is_empty()
+    );
 }

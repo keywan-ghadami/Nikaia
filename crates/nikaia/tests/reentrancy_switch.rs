@@ -34,10 +34,12 @@ fn the_manifest_carries_it_and_it_is_on_by_default() {
         "no"
     );
     assert!(settings("").build.reentrancy_check.is_on());
-    assert!(!settings("[build]\nreentrancy-check = \"no\"\n")
-        .build
-        .reentrancy_check
-        .is_on());
+    assert!(
+        !settings("[build]\nreentrancy-check = \"no\"\n")
+            .build
+            .reentrancy_check
+            .is_on()
+    );
 }
 
 /// **A third spelling is refused rather than guessed at**, which is what

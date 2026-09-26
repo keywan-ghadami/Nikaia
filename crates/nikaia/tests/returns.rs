@@ -19,7 +19,7 @@
 
 mod common;
 
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn lowered(source: &str) -> String {
@@ -213,7 +213,9 @@ fn the_ordering_analysis_and_the_lowering_agree_about_a_diverting_handler() {
 /// function body ends in is what the function hands back.
 #[test]
 fn a_return_at_the_end_of_a_function_is_still_its_value() {
-    let rust = lowered("fn f(c: bool) -> i64 {\n    if c {\n        return 1\n    } else {\n        return 2\n    }\n}\n");
+    let rust = lowered(
+        "fn f(c: bool) -> i64 {\n    if c {\n        return 1\n    } else {\n        return 2\n    }\n}\n",
+    );
     assert!(rust.contains("if c { 1 } else { 2 }"), "{rust}");
     assert!(!rust.contains("return"), "{rust}");
 }

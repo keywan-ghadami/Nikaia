@@ -11,8 +11,8 @@
 mod common;
 
 use nikaia::check;
-use nikaia::contracts::{Ledger, Sync, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::contracts::{Ledger, STD, Sync};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 /// **`check_program` and not `check`**, because the trait rules read the
@@ -637,7 +637,7 @@ fn main() throws {
 /// the same at both settings.
 #[test]
 fn the_send_bound_follows_the_setting() {
-    use nikaia::emit::{emit_program, Build, UserParallelism};
+    use nikaia::emit::{Build, UserParallelism, emit_program};
 
     let parsed = parse_to_ast(SUMMARIZE).expect("the source parses");
     for (setting, expected) in [(UserParallelism::Yes, true), (UserParallelism::No, false)] {

@@ -9,7 +9,7 @@
 //!     > crates/nikaia/tests/fixtures/measurements_expected.rs
 //! ```
 
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn main() -> anyhow::Result<()> {

@@ -37,7 +37,7 @@ use std::net::{TcpListener, TcpStream};
 
 use crate::bytes::Bytes;
 use crate::io::IoError;
-use crate::rt::{io as readiness, Interest};
+use crate::rt::{Interest, io as readiness};
 
 /// How much one `read` asks the kernel for.
 ///

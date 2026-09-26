@@ -27,7 +27,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::sync::{reached, visit_stmt, visit_stmt_blocks, Reached};
+use super::sync::{Reached, reached, visit_stmt, visit_stmt_blocks};
 use super::{FnContract, Ledger, UNNAMED_ERROR};
 use crate::ast::{Block, Expr, Item};
 use crate::check::MethodCalls;

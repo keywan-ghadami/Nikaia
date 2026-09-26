@@ -34,9 +34,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::assets::{Denied, Reads, ASSET};
+use crate::assets::{ASSET, Denied, Reads};
 use crate::ast::{BinaryOp, Block, Expr, Item, Stmt, UnaryOp};
-use crate::contracts::{touch, Ledger};
+use crate::contracts::{Ledger, touch};
 use crate::parser::Parsed;
 
 /// How deep a build-time call may go before this stops
@@ -350,10 +350,10 @@ impl<'a> BuildTime<'a> {
                 // above this one has already worked out. Asked only while the
                 // body is that file's: a body read elsewhere names its own
                 // file's constants, and this scope is not that file's.
-                if !self.foreign {
-                    if let Some(known) = (self.known)(&name) {
-                        return Ok(known);
-                    }
+                if !self.foreign
+                    && let Some(known) = (self.known)(&name)
+                {
+                    return Ok(known);
                 }
                 // …and otherwise the **item**, read from the file that wrote
                 // it. A constant is an item, so it is visible wherever its file
@@ -1419,7 +1419,7 @@ fn one_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<ch
                         return Err(Refused {
                             written,
                             why: "`\\x` takes exactly two hexadecimal digits",
-                        })
+                        });
                     }
                 }
             }
@@ -1452,7 +1452,7 @@ fn one_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<ch
                         return Err(Refused {
                             written,
                             why: "`\\u{` is never closed",
-                        })
+                        });
                     }
                 }
             }

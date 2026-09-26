@@ -2,7 +2,7 @@
 //! came out of `examples/n-body.nika`, which is arithmetic and nothing else.
 
 use nikaia::ast::{Expr, Item, Stmt};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn emit(source: &str) -> String {
@@ -353,7 +353,9 @@ fn an_option_becomes_a_positional_argument_in_declaration_order() {
 /// …and `std`'s options come from the ledger `std` ships, by the same path.
 #[test]
 fn a_library_option_is_filled_in_from_the_shipped_ledger() {
-    let rust = emit("use std::fs\n\nfn main() throws { fs::write(\"o\", fs::Root::Anywhere, \"x\"; append: true) }");
+    let rust = emit(
+        "use std::fs\n\nfn main() throws { fs::write(\"o\", fs::Root::Anywhere, \"x\"; append: true) }",
+    );
     assert!(
         // The root gets the `&` the compiler writes for a parameter the callee
         // only reads (ADR-094 D1); the options are filled in behind it.

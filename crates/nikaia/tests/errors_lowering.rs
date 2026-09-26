@@ -9,7 +9,7 @@
 mod common;
 
 use nikaia::contracts::Ledger;
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 /// The ledger this source produces, rendered the way it is committed.
@@ -599,8 +599,7 @@ fn a_function_that_cannot_fail_has_no_entry() {
 /// computed is never published.
 #[test]
 fn the_ledger_is_never_published_for_a_caller_that_does_not_say_it_can_fail() {
-    let source =
-        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
+    let source = "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
                   fn ruft() -> String { return liest() }\n\
                   fn main() { }";
 

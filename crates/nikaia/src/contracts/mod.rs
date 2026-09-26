@@ -40,7 +40,7 @@ pub mod ty;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use crate::ast::Item;
 use crate::emit::{borrowing_structs, holds_view, names_borrowing};
@@ -2497,7 +2497,7 @@ impl Ledger {
                                          - and leaving it out is the third answer, which is \
                                          *nobody said* (ADR-193 D1)",
                                         at()
-                                    ))
+                                    ));
                                 }
                             }
                         }
@@ -2564,7 +2564,7 @@ impl Ledger {
                                         "line {}: `crosses` is `true` or `false`, not `{value}` \
                                          - and leaving the line out is the third answer",
                                         at()
-                                    ))
+                                    ));
                                 }
                             }
                         }
@@ -2625,7 +2625,7 @@ impl Ledger {
                     return Err(anyhow!(
                         "line {}: a `trait` or an `impl` table has no keys, and this has `{key}`",
                         at()
-                    ))
+                    ));
                 }
             }
         }

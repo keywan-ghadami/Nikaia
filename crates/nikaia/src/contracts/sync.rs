@@ -220,20 +220,20 @@ pub fn infer(
                             // type's methods `async`. Silence about a
                             // declaration that is not here is the rule rather
                             // than a gap, and `traits::check` says the same.
-                            if let Some(declared_by) = &declared_by {
-                                if let Some(own) = name.rsplit("::").next() {
-                                    let declared = format!("{declared_by}::{own}");
-                                    // **Either ledger**, because a trait a
-                                    // *dependency* publishes is declared just
-                                    // as much as one written here — the
-                                    // `handler::Handler` an app implements is
-                                    // the case (ADR-100 D1: a consumer reads a
-                                    // dependency's contracts).
-                                    if ledger.functions.contains_key(&declared)
-                                        || library.functions.contains_key(&declared)
-                                    {
-                                        reach.calls.insert(declared);
-                                    }
+                            if let Some(declared_by) = &declared_by
+                                && let Some(own) = name.rsplit("::").next()
+                            {
+                                let declared = format!("{declared_by}::{own}");
+                                // **Either ledger**, because a trait a
+                                // *dependency* publishes is declared just
+                                // as much as one written here — the
+                                // `handler::Handler` an app implements is
+                                // the case (ADR-100 D1: a consumer reads a
+                                // dependency's contracts).
+                                if ledger.functions.contains_key(&declared)
+                                    || library.functions.contains_key(&declared)
+                                {
+                                    reach.calls.insert(declared);
                                 }
                             }
                             graph.insert(name, reach);
@@ -335,20 +335,20 @@ pub fn infer(
         if !holds {
             continue;
         }
-        if let Some(contract) = ledger.functions.get_mut(name) {
-            if contract.sync == Sync::No {
-                // **`from(f)` where a code parameter is what decides**
-                // ([ADR-102](../../../docs/specification/adr/adr-102.md) D3,
-                // [ADR-029](../../../docs/specification/adr/adr-029.md) D3), and
-                // `inferred` otherwise. A caller reads both the same way — *this
-                // call adds no pausing of its own* — and the difference is that
-                // `from` says **whose** answer it is, which is what a reader of
-                // the ledger and a second build of the same package need.
-                contract.sync = match graph.get(name).and_then(|reach| reach.runs.clone()) {
-                    Some(parameter) => Sync::From(parameter),
-                    None => Sync::Inferred,
-                };
-            }
+        if let Some(contract) = ledger.functions.get_mut(name)
+            && contract.sync == Sync::No
+        {
+            // **`from(f)` where a code parameter is what decides**
+            // ([ADR-102](../../../docs/specification/adr/adr-102.md) D3,
+            // [ADR-029](../../../docs/specification/adr/adr-029.md) D3), and
+            // `inferred` otherwise. A caller reads both the same way — *this
+            // call adds no pausing of its own* — and the difference is that
+            // `from` says **whose** answer it is, which is what a reader of
+            // the ledger and a second build of the same package need.
+            contract.sync = match graph.get(name).and_then(|reach| reach.runs.clone()) {
+                Some(parameter) => Sync::From(parameter),
+                None => Sync::Inferred,
+            };
         }
     }
 }

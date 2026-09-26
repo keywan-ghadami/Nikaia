@@ -109,12 +109,14 @@ mod tests {
         poller
             .add(OwnedFd::from(b), Event::readable(7))
             .expect("add");
-        assert!(poller
-            .add(
-                OwnedFd::from(UnixStream::pair().unwrap().0),
-                Event::readable(7)
-            )
-            .is_err());
+        assert!(
+            poller
+                .add(
+                    OwnedFd::from(UnixStream::pair().unwrap().0),
+                    Event::readable(7)
+                )
+                .is_err()
+        );
         a.write_all(b"x").expect("write");
         let mut events = Events::new();
         poller

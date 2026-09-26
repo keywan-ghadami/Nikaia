@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use nikaia::check::Severity;
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn fixture(name: &str) -> String {

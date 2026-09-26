@@ -115,7 +115,7 @@ macro_rules! refuse {
 /// `Flow::statement` wherever it is emitting one.
 #[macro_export]
 macro_rules! refused_at {
-    ($at:expr, $($arg:tt)*) => {
+    ($at:expr_2021, $($arg:tt)*) => {
         $crate::diagnostics::refuse_at($at, format!($($arg)*))
     };
 }
@@ -512,14 +512,12 @@ fn shared_names(message: &str) -> String {
                         .chars()
                         .next_back()
                         .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == ':');
-                if !preceded_by_a_name {
-                    if let Some(inner) = balanced(&rest[hull.len()..]) {
-                        out.push_str("Shared[");
-                        out.push_str(&shared_names(inner));
-                        out.push(']');
-                        rest = &rest[hull.len() + inner.len() + 1..];
-                        continue 'outer;
-                    }
+                if !preceded_by_a_name && let Some(inner) = balanced(&rest[hull.len()..]) {
+                    out.push_str("Shared[");
+                    out.push_str(&shared_names(inner));
+                    out.push(']');
+                    rest = &rest[hull.len() + inner.len() + 1..];
+                    continue 'outer;
                 }
             }
         }

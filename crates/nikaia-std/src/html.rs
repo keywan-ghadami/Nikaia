@@ -161,7 +161,7 @@ pub fn escape(text: &str) -> Cow<'_, str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape, ESCAPES};
+    use super::{ESCAPES, escape};
     use std::borrow::Cow;
 
     #[test]
@@ -307,7 +307,9 @@ macro_rules! render_by_display {
     )*};
 }
 
-render_by_display!(bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64);
+render_by_display!(
+    bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64
+);
 
 #[cfg(test)]
 mod render_tests {

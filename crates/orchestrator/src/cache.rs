@@ -213,10 +213,10 @@ impl Lockfile {
              # backend) are deliberately absent - see ADR-021 D5. `[dependencies]` is\n\
              # what Cargo resolved, listed per name because one name can resolve twice.\n{body}"
         );
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).ok();
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent).ok();
         }
         std::fs::write(path, text)
             .with_context(|| format!("failed to write lockfile {}", path.display()))
@@ -970,9 +970,11 @@ mod tests {
         let mut cache =
             Cache::open(dir.join("nikaia.lock"), dir.join("store"), "t", "0.1.0").unwrap();
 
-        assert!(cache
-            .lookup("a.nika", "fn main() {}", &choices(), &dir)
-            .is_none());
+        assert!(
+            cache
+                .lookup("a.nika", "fn main() {}", &choices(), &dir)
+                .is_none()
+        );
 
         cache
             .record(
@@ -989,18 +991,22 @@ mod tests {
             Some(emitted())
         );
         // A changed source is a different unit as far as the key is concerned.
-        assert!(cache
-            .lookup("a.nika", "fn other() {}", &choices(), &dir)
-            .is_none());
+        assert!(
+            cache
+                .lookup("a.nika", "fn other() {}", &choices(), &dir)
+                .is_none()
+        );
         // As is the same source under different switches.
-        assert!(cache
-            .lookup(
-                "a.nika",
-                "fn main() {}",
-                &Choices::new("x86_64-linux/0", "rust"),
-                &dir
-            )
-            .is_none());
+        assert!(
+            cache
+                .lookup(
+                    "a.nika",
+                    "fn main() {}",
+                    &Choices::new("x86_64-linux/0", "rust"),
+                    &dir
+                )
+                .is_none()
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

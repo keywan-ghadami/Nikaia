@@ -169,7 +169,7 @@ pub mod prelude {
     // in scope for one, and `sleep` because Part II 12.4 writes it bare — the
     // same way `digit_value` is written bare.
     pub use crate::time;
-    pub use crate::time::{sleep, Duration, DurationExt};
+    pub use crate::time::{Duration, DurationExt, sleep};
     // `rt` is in the prelude so that the `fn main` the emitter writes can name
     // `rt::start` without a `use` the program did not ask for. Nothing in a
     // `.nika` file reaches it: ADR-038 D3's whole point is that a program says

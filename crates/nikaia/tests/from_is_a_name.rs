@@ -14,7 +14,7 @@
 mod common;
 
 use nikaia::contracts::{Ledger, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 use std::process::Command;
 
@@ -84,13 +84,15 @@ fn from_is_a_name_everywhere_and_the_program_runs() {
 /// was worth taking off the list at all.
 #[test]
 fn the_paths_two_names_parse_as_the_page_writes_them() {
-    assert!(parse_to_ast(
-        "fn rename(from: ref String, to: ref String) -> i64 {\n\
+    assert!(
+        parse_to_ast(
+            "fn rename(from: ref String, to: ref String) -> i64 {\n\
          \x20   return from.len() + to.len()\n\
          }\n\
          fn main() { println(f\"{rename(\\\"a\\\", \\\"b\\\")}\") }"
-    )
-    .is_ok());
+        )
+        .is_ok()
+    );
 }
 
 /// **The removed form keeps its sentence** (D1's *loses nothing*).

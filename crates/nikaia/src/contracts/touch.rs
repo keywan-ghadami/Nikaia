@@ -26,7 +26,7 @@
 // naming anything else the way ADR-033 D4 answers every other thing it cannot
 // read: it reaches everything, and stays where it was written.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// Every resource a `touches` entry may name (ADR-033 D2).
 ///
@@ -204,7 +204,7 @@ impl Touch {
             other => {
                 return Err(anyhow!(
                     "a touch is `read` or `write`, not `{other}` (in `{text}`)"
-                ))
+                ));
             }
         };
 
@@ -455,8 +455,8 @@ use crate::ast::Item;
 use crate::check::MethodCalls;
 // `Reached` is a name this file already has for something else, so the one
 // `sync` uses for a call site comes in as `Call`.
-use crate::contracts::sync::{reached, visit_stmt, visit_stmt_blocks, Reached as Call};
 use crate::contracts::Ledger;
+use crate::contracts::sync::{Reached as Call, reached, visit_stmt, visit_stmt_blocks};
 use crate::parser::Parsed;
 
 /// What one function's body reaches, before the fixpoint joins it up.

@@ -57,8 +57,8 @@ use std::collections::BTreeSet;
 use crate::ast::{BinaryOp, Expr, Item, Spanned, Stmt};
 use crate::parser::Parsed;
 
-use super::touch::Reached;
 use super::Ledger;
+use super::touch::Reached;
 
 /// One statement, reduced to what deciding an order needs.
 #[derive(Debug, Clone)]
@@ -265,7 +265,7 @@ pub fn accounted(parsed: &Parsed, stmt: &Stmt, own: &Ledger, library: &Ledger) -
     // thing building this found, and it is recorded in ADR-034.
     let (value, handler, caught) = match value {
         Expr::TryCatch { handler, .. } if diverts(&handler.stmts) => {
-            return Accounted::DivertingHandler
+            return Accounted::DivertingHandler;
         }
         Expr::TryCatch { expr, handler } => (&**expr, Some(handler), true),
         other => (other, None, false),
@@ -795,10 +795,10 @@ impl Verdict {
 /// a **data** dependency - `later` uses what `earlier` bound - and an **effect**
 /// dependency, where their touch sets meet on something one of them writes.
 pub fn verdict(earlier: &Operation, later: &Operation) -> Verdict {
-    if let Some(bound) = &earlier.binds {
-        if later.mentions.contains(bound) {
-            return Verdict::DataDependency(bound.clone());
-        }
+    if let Some(bound) = &earlier.binds
+        && later.mentions.contains(bound)
+    {
+        return Verdict::DataDependency(bound.clone());
     }
     // Two `let`s of the same name would make the order decide which value
     // survives. The parser allows shadowing, so this is reachable.
@@ -887,11 +887,7 @@ pub fn group_of(run: &[Operation]) -> usize {
         }
         taken += 1;
     }
-    if taken < 2 {
-        0
-    } else {
-        taken
-    }
+    if taken < 2 { 0 } else { taken }
 }
 
 /// The ledger key of the call an expression performs, where it performs one.

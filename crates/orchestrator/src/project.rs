@@ -23,7 +23,7 @@
 //!   [`record_extra_dependencies`] puts the real ones back, and without it a
 //!   changed source would not rebuild.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::io::Read;
@@ -265,16 +265,16 @@ fn key(name: &str) -> String {
 /// package rebuilds - every time, for ever. Measured before it was believed:
 /// with an unconditional write, `cargo build` twice in a row recompiles twice.
 pub fn write_if_changed(path: &Path, contents: &str) -> Result<bool> {
-    if let Ok(existing) = std::fs::read_to_string(path) {
-        if existing == contents {
-            return Ok(false);
-        }
+    if let Ok(existing) = std::fs::read_to_string(path)
+        && existing == contents
+    {
+        return Ok(false);
     }
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
     std::fs::write(path, contents).with_context(|| format!("writing {}", path.display()))?;
     Ok(true)
@@ -740,17 +740,21 @@ mod tests {
             .iter()
             .map(OsString::from)
             .collect();
-        assert!(!Invocation::parse(&printing, "nika")
-            .expect("a rustc is named")
-            .is_a_probe());
+        assert!(
+            !Invocation::parse(&printing, "nika")
+                .expect("a rustc is named")
+                .is_a_probe()
+        );
 
         let from_stdin: Vec<OsString> = ["/usr/bin/rustc", "-", "--crate-type", "bin"]
             .iter()
             .map(OsString::from)
             .collect();
-        assert!(!Invocation::parse(&from_stdin, "nika")
-            .expect("a rustc is named")
-            .is_a_probe());
+        assert!(
+            !Invocation::parse(&from_stdin, "nika")
+                .expect("a rustc is named")
+                .is_a_probe()
+        );
     }
 
     fn project() -> CargoProject {

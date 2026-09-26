@@ -186,11 +186,13 @@ fn a_set_under_a_stamped_condition_is_refused() {
 
     // And a plain condition is not one, which is the half that says the rule
     // reads the condition rather than the `if`.
-    assert!(coded(
-        &program("    let n = 7\n    if n > 3 { kasse.set(0) }"),
-        "NK2205"
-    )
-    .is_empty());
+    assert!(
+        coded(
+            &program("    let n = 7\n    if n > 3 { kasse.set(0) }"),
+            "NK2205"
+        )
+        .is_empty()
+    );
 }
 
 /// **And an ordinary variable is not a hull**, which keeps `NK2204` off every

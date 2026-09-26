@@ -21,8 +21,8 @@
 //! compute rather than by somebody else's waiting.
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The one message, so re-entering reads the same whichever shape a value got.
 ///

@@ -219,7 +219,7 @@ fn manifest(key: &str, program: &str) -> String {
          [package]\n",
     );
     out.push_str(&format!("name = \"p{key}\"\n"));
-    out.push_str("version = \"0.0.0\"\nedition = \"2021\"\n\n[[bin]]\n");
+    out.push_str("version = \"0.0.0\"\nedition = \"2024\"\n\n[[bin]]\n");
     out.push_str(&format!("name = \"p{key}\"\npath = \"src/main.rs\"\n\n"));
     out.push_str("[dependencies]\n");
     for (name, value) in crate::project::runtime_dependencies_for(program) {
@@ -663,7 +663,7 @@ fn read(text: &str, at: &mut Cursor<'_>) -> Result<crate::build_time::Value, Wal
         other => {
             return Err(Wall::Unreadable {
                 detail: format!("`{other}` is not a shape this reads"),
-            })
+            });
         }
     };
     skip_blanks(at);
@@ -717,7 +717,7 @@ fn quoted(at: &mut Cursor<'_>) -> Result<String, Wall> {
                     None => {
                         return Err(Wall::Unreadable {
                             detail: "the dump ended inside an escape".to_string(),
-                        })
+                        });
                     }
                 }
             }
@@ -725,7 +725,7 @@ fn quoted(at: &mut Cursor<'_>) -> Result<String, Wall> {
             None => {
                 return Err(Wall::Unreadable {
                     detail: "the dump ended inside a string".to_string(),
-                })
+                });
             }
         }
     }

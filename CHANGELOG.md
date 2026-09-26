@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.201] — 2026-09-26
+
+**Edition 2024, and no `.await` point needs a change** —
+[ADR-220](docs/specification/adr/adr-220.md), the owner's question.
+
+The migration lints found no `if_let_rescope` and ten `tail_expr_drop_order`
+sites. Both changes make temporaries live shorter, and none of the ten holds
+anything across a pause. `crates/nikaia`, `nikaia-std`, `orchestrator` and the
+six `crates/unsafe/` crates are on 2024; nested `if let`s became let chains, and
+imports follow rustfmt's 2024 order. The emitted code is 2024 as well, which
+broke two things the emitter now writes differently: `unsafe extern "C"`, and
+`gen` escaped as `r#gen`. The floor stays 1.88, which `scripts/check-floor.sh`
+confirms, because nothing needs 1.94.
+
 ## [0.0.200] — 2026-09-26
 
 **The oldest Rust Nikaia works with is measured: 1.88** —

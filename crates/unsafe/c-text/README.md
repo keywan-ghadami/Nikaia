@@ -10,7 +10,7 @@ No dependencies.
 ```rust,no_run
 use c_text::CText;
 
-extern "C" {
+unsafe extern "C" {
     fn getenv(name: *const std::ffi::c_char) -> Option<CText>;
 }
 let path = unsafe { getenv(c"PATH".as_ptr()) };

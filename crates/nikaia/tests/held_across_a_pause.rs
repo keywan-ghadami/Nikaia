@@ -115,8 +115,9 @@ fn a_value_finished_with_before_the_pause_is_not_held() {
 /// call the future does not suspend at, so there is no point to be held over.
 #[test]
 fn a_task_that_never_pauses_holds_nothing() {
-    assert!(held(
-        "fn work(n: i64) -> i64 sync { return n + 1 }\n\
+    assert!(
+        held(
+            "fn work(n: i64) -> i64 sync { return n + 1 }\n\
          fn main() {\n\
          \x20   spawn fn {\n\
          \x20       let a = work(1)\n\
@@ -124,8 +125,9 @@ fn a_task_that_never_pauses_holds_nothing() {
          \x20       println(f\"{a} {b}\")\n\
          \x20   }\n\
          }\n"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// **What the task *captures* is not this question.** A name bound outside is
@@ -134,16 +136,18 @@ fn a_task_that_never_pauses_holds_nothing() {
 /// answering both about one name would say the same thing twice.
 #[test]
 fn a_captured_name_is_the_other_halfs_question() {
-    assert!(held(
-        "use std::fs\n\nfn main() {\n\
+    assert!(
+        held(
+            "use std::fs\n\nfn main() {\n\
          \x20   let message = \"hello\"\n\
          \x20   spawn fn {\n\
          \x20       let text = fs::read_to_string(\"log\", fs::Root::Anywhere) catch { return }\n\
          \x20       println(f\"{message} {text.len()}\")\n\
          \x20   }\n\
          }\n"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// **A call this compiler cannot name counts as a pause**, which is the
@@ -173,7 +177,7 @@ fn a_call_nothing_describes_counts_as_a_pause() {
 /// refused.
 #[test]
 fn nothing_may_not_cross_into_our_own_code_today() {
-    use nikaia::contracts::send::{crossing, Crossing, Destination};
+    use nikaia::contracts::send::{Crossing, Destination, crossing};
     use nikaia::contracts::ty::Ty;
 
     let own = Ledger::default();

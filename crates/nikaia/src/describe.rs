@@ -67,9 +67,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
-use crate::contracts::{ty::Ty, FnContract, Ledger, Notes, Signature, Sync, TypeContract};
+use crate::contracts::{FnContract, Ledger, Notes, Signature, Sync, TypeContract, ty::Ty};
 
 /// What a run of the command did, for the line it prints.
 #[derive(Debug)]
@@ -867,20 +867,20 @@ fn exported(at: &str, text: &str) -> Vec<Export> {
     let text = text.trim();
     // A brace group is the only place several names stand, and the `::` before
     // it is the last one outside it.
-    if let Some(open) = text.find("::{") {
-        if text.ends_with('}') {
-            let prefix = text[..open].to_string();
-            let inside = &text[open + 3..text.len() - 1];
-            return split_top_level(inside)
-                .into_iter()
-                .filter(|one| !one.is_empty())
-                .map(|one| Export {
-                    at: at.to_string(),
-                    prefix: prefix.clone(),
-                    name: named(&one),
-                })
-                .collect();
-        }
+    if let Some(open) = text.find("::{")
+        && text.ends_with('}')
+    {
+        let prefix = text[..open].to_string();
+        let inside = &text[open + 3..text.len() - 1];
+        return split_top_level(inside)
+            .into_iter()
+            .filter(|one| !one.is_empty())
+            .map(|one| Export {
+                at: at.to_string(),
+                prefix: prefix.clone(),
+                name: named(&one),
+            })
+            .collect();
     }
     if let Some(prefix) = text.strip_suffix("::*") {
         return vec![Export {

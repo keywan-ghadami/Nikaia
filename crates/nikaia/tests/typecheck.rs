@@ -320,15 +320,17 @@ fn an_option_of_the_wrong_type_is_reported() {
 /// what a default is for.
 #[test]
 fn options_are_not_counted_as_arguments() {
-    assert!(findings(
-        "fn request(url: ref String; timeout: i32 = 30, method: ref String = \"GET\") { }\n\
+    assert!(
+        findings(
+            "fn request(url: ref String; timeout: i32 = 30, method: ref String = \"GET\") { }\n\
          fn main() {\n\
          \x20   request(\"x\")\n\
          \x20   request(\"x\"; timeout: 5)\n\
          \x20   request(\"x\"; method: \"POST\", timeout: 5)\n\
          }"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// `std`'s options are read from the ledger it ships, like everything else.
@@ -339,8 +341,9 @@ fn an_option_of_a_library_function_is_checked_from_its_ledger() {
             .is_empty()
     );
 
-    let (code, message) =
-        one("use std::fs\n\nfn main() throws { fs::write(\"o\", fs::Root::Anywhere, \"x\"; apend: true) }");
+    let (code, message) = one(
+        "use std::fs\n\nfn main() throws { fs::write(\"o\", fs::Root::Anywhere, \"x\"; apend: true) }",
+    );
     assert_eq!(code, "NK1109");
     assert_eq!(message, "`fs::write` has no option `apend`");
 }
@@ -423,14 +426,16 @@ fn a_loop_that_can_fail_in_a_function_that_does_not_say_so_is_reported() {
 /// …and nothing at all once it does.
 #[test]
 fn a_loop_that_can_fail_is_fine_where_the_failure_may_leave() {
-    assert!(findings(
-        "use std::io\n\nfn count() -> i64 throws {\n\
+    assert!(
+        findings(
+            "use std::io\n\nfn count() -> i64 throws {\n\
          \x20   let mut n = 0\n\
          \x20   for line in io::lines() { n += 1 }\n\
          \x20   return n\n\
          }"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// The stream may be named first, and it is the same loop.
@@ -470,15 +475,17 @@ fn a_fallible_loop_binds_one_name() {
 /// An ordinary loop is not touched by any of this.
 #[test]
 fn a_loop_over_something_that_cannot_fail_says_nothing() {
-    assert!(findings(
-        "fn count(xs: Vec[i32]) -> i64 {\n\
+    assert!(
+        findings(
+            "fn count(xs: Vec[i32]) -> i64 {\n\
          \x20   let mut n = 0\n\
          \x20   for x in xs { n += 1 }\n\
          \x20   for i in 0..<10 { n += 1 }\n\
          \x20   return n\n\
          }"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 // --- what it deliberately does not catch -------------------------------------
@@ -500,14 +507,16 @@ fn a_method_nobody_wrote_down_says_nothing() {
     // repository keeps *"no ledger describes this"* — see the reason there. The
     // three arguments are deliberate: an entry would catch the arity, and the
     // point is that without one nothing is claimed at all.
-    assert!(findings(&format!(
-        "fn main() {{\n\
+    assert!(
+        findings(&format!(
+            "fn main() {{\n\
          \x20   let mut out = String()\n\
          \x20   out.{}(0, \"a\", \"b\")\n\
          }}",
-        common::UNDESCRIBED_METHOD
-    ))
-    .is_empty());
+            common::UNDESCRIBED_METHOD
+        ))
+        .is_empty()
+    );
 }
 
 /// A bare number fits every numeric type, as it does in the language below.
@@ -515,23 +524,27 @@ fn a_method_nobody_wrote_down_says_nothing() {
 /// is not that one.
 #[test]
 fn an_integer_literal_fits_any_numeric_parameter() {
-    assert!(findings(
-        "fn small(a: i32) { }\n\
+    assert!(
+        findings(
+            "fn small(a: i32) { }\n\
          fn big(a: u64) { }\n\
          fn main() { small(3) big(3) }"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// A generic parameter is a name that stands for a type rather than being one,
 /// so nothing is claimed about it.
 #[test]
 fn a_generic_parameter_is_not_a_type() {
-    assert!(findings(
-        "fn first[T](xs: T) -> T { return xs }\n\
+    assert!(
+        findings(
+            "fn first[T](xs: T) -> T { return xs }\n\
          fn main() { let n: i32 = first(1) }"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// A type whose **fields** are not written down anywhere is not checked, so a
@@ -556,13 +569,15 @@ fn a_field_of_an_unknown_type_says_nothing() {
 /// for, so it binds nothing rather than guessing.
 #[test]
 fn a_loop_over_pairs_binds_nothing() {
-    assert!(findings(
-        "struct Row { id: i32 }\n\
+    assert!(
+        findings(
+            "struct Row { id: i32 }\n\
          fn count(rows: Vec[Row]) {\n\
          \x20   for (a, b) in rows { let n: i32 = a.idd }\n\
          }"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// A parameter whose Rust type is a *bound* rather than a type is `?` in the
@@ -570,14 +585,16 @@ fn a_loop_over_pairs_binds_nothing() {
 /// buffer, so a claim of `&str` there would refuse a correct program.
 #[test]
 fn a_parameter_that_accepts_several_types_claims_none() {
-    assert!(findings(
-        "use std::fs\nuse std::io\n\nfn main() throws {\n\
+    assert!(
+        findings(
+            "use std::fs\nuse std::io\n\nfn main() throws {\n\
          \x20   let text = io::read_to_string()\n\
          \x20   let path = \"out.txt\"\n\
          \x20   fs::write(path, fs::Root::Anywhere, text)\n\
          }"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 
     // …and the arity is still checked, which is the half that survives.
     let (code, _) =
@@ -610,14 +627,16 @@ fn a_parameter_that_accepts_several_types_claims_none() {
 /// to be revisited with that answer, and this is that.
 #[test]
 fn a_value_from_a_signature_that_claims_nothing_fits_anywhere() {
-    assert!(findings(
-        "fn takes(a: i32) { }\n\
+    assert!(
+        findings(
+            "fn takes(a: i32) { }\n\
          fn hand[T](x: T) -> T { return x }\n\
          fn main() {\n\
          \x20   takes(hand(1))\n\
          }"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// **And a signature that *is* written is checked**, which is the other half of
@@ -740,13 +759,11 @@ fn the_note_quotes_the_callees_contract_and_the_help_is_a_way_out() {
 /// never do is refuse one.
 #[test]
 fn a_declared_throws_or_a_catch_is_the_end_of_it() {
-    let declared =
-        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
+    let declared = "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
                     fn ruft() -> String throws { return liest() }";
     assert!(findings(declared).is_empty(), "{:#?}", findings(declared));
 
-    let caught =
-        "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
+    let caught = "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
                   fn ruft() -> String { return liest() catch { return \"\" } }";
     assert!(findings(caught).is_empty(), "{:#?}", findings(caught));
 }

@@ -79,8 +79,8 @@ fn four_tasks_joined_from_main_run_at_the_same_time() {
 /// has to have happened by the time `block_on` returns.
 #[test]
 fn a_task_nobody_joins_still_runs_on_the_pool() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     let _runtime = nikaia_std::rt::start(nikaia_std::rt::UserCode::Concurrent);
     let ran = Arc::new(AtomicBool::new(false));

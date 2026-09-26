@@ -19,7 +19,7 @@ mod common;
 
 use nikaia::check::{self, Finding};
 use nikaia::contracts::{Ledger, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn lowered(source: &str) -> String {
@@ -702,7 +702,9 @@ fn a_bare_binary_fallback_is_refused_in_a_head_too() {
         let refused = nikaia::parser::parse_to_ast(shape)
             .expect_err("a bare binary fallback is refused wherever it stands");
         assert!(
-            refused.to_string().contains("the fallback of a `??` is one value"),
+            refused
+                .to_string()
+                .contains("the fallback of a `??` is one value"),
             "and says the same thing in every position:\n{refused}"
         );
     }

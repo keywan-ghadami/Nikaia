@@ -47,7 +47,7 @@ use std::path::{Path, PathBuf};
 use nikaia::check::{self, Finding};
 use nikaia::contracts::order;
 use nikaia::contracts::send::{self, Crossing};
-use nikaia::contracts::{ty::Ty, Ledger, STD};
+use nikaia::contracts::{Ledger, STD, ty::Ty};
 use nikaia::parser::parse_to_ast;
 
 fn repo_root() -> PathBuf {
@@ -350,12 +350,14 @@ fn a_lock_does_not_go_into_code_nothing_describes() {
 
     // And into a task of our own the same value is fine, which is the pair D1
     // added. Without this half the refusal above would read as the old rule.
-    assert!(crossings(
-        "fn zaehle(counter: SharedMut[i32]) {\n\
+    assert!(
+        crossings(
+            "fn zaehle(counter: SharedMut[i32]) {\n\
              spawn fn { println(f\"{counter}\") }\n\
          }",
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// **A `Shared` does not go into a call this compiler cannot see the end of**
@@ -394,12 +396,14 @@ fn a_shared_does_not_go_into_a_call_this_compiler_cannot_see() {
 
     // And into a task of our own the same value is fine, which is the pair: D1
     // is about a signature outside this language and nothing else.
-    assert!(crossings(
-        "fn ueber(handle: Shared[String]) {\n\
+    assert!(
+        crossings(
+            "fn ueber(handle: Shared[String]) {\n\
              spawn fn { println(f\"{handle}\") }\n\
          }",
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// A call into a *described* function is not this, however unpleasant its
@@ -572,7 +576,10 @@ fn verdict_against_probe(source: &str) -> String {
         .map(|stmt| order::accounted(&parsed, &stmt.node, &own, &library))
         .collect();
     match pair.as_slice() {
-        [order::Accounted::Operation(earlier), order::Accounted::Operation(later)] => {
+        [
+            order::Accounted::Operation(earlier),
+            order::Accounted::Operation(later),
+        ] => {
             let verdict = order::verdict(earlier, later);
             let mark = if verdict.is_overlap() {
                 "together"

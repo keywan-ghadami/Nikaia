@@ -5,7 +5,7 @@
 //! type, and a hole only where escaping is enough.
 
 use nikaia::emit::template::{self, Position, Segment};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn emit(source: &str) -> String {

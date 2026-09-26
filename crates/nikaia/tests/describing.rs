@@ -695,7 +695,10 @@ fn the_draft_for_the_experiment_is_the_file_a_reviewer_wrote() {
             .lines()
             .find(|line| line.starts_with("\"src/lib.rs\""))
             .expect("the reviewed file records the source's hash");
-        assert!(text.contains(hash), "{project}: the draft records {hash}\n{text}");
+        assert!(
+            text.contains(hash),
+            "{project}: the draft records {hash}\n{text}"
+        );
     }
 }
 

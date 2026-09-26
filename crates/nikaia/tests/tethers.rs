@@ -336,8 +336,10 @@ fn a_view_of_a_buffer_the_body_owns_is_tethered() {
     let library = Ledger::parse(STD).expect("std ships a ledger");
     let found = nikaia::contracts::tether::check(&parsed, &own, &library);
     assert!(found.is_empty(), "{found:?}");
-    assert!(own.functions["first"]
-        .views
-        .iter()
-        .any(|h| h.state == State::Tethered));
+    assert!(
+        own.functions["first"]
+            .views
+            .iter()
+            .any(|h| h.state == State::Tethered)
+    );
 }

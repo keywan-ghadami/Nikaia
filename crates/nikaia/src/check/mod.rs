@@ -27,10 +27,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::assets::{Denied, Reads, ASSET};
+use crate::assets::{ASSET, Denied, Reads};
 use crate::ast::{self, BinaryOp, Block, Expr, Item, MatchPattern, Span, Stmt, UnaryOp};
 use crate::build_time;
-use crate::contracts::{send, ty, ty::Ty, FieldContract, FnContract, Ledger};
+use crate::contracts::{FieldContract, FnContract, Ledger, send, ty, ty::Ty};
 use crate::fold::Constant;
 use crate::parser::Parsed;
 use crate::types::SHAPE_BOUNDS;
@@ -4294,10 +4294,8 @@ impl<'a> Checker<'a> {
             .functions
             .get(key)
             .is_some_and(|c| !c.throws.is_empty());
-        if fallible {
-            if let Some(guarded) = &mut self.guarded {
-                guarded.fallible = true;
-            }
+        if fallible && let Some(guarded) = &mut self.guarded {
+            guarded.fallible = true;
         }
         self.own
             .functions
@@ -5066,11 +5064,12 @@ impl<'a> Checker<'a> {
         // entry writes its receiver `(Seq[$T], …)` and not `&Seq[$T]`, so the
         // signature is what says so rather than a list of method names. A
         // container's methods take a view and are untouched.
-        if matches!(&on, Ty::Seq { shape, .. } if !shape.replays) && walks_by_value(contract) {
-            if let Some(name) = self.receiver_name.clone() {
-                let taken = self.taken(name, on.clone(), self.read_seq, "", span);
-                self.walked.push(taken);
-            }
+        if matches!(&on, Ty::Seq { shape, .. } if !shape.replays)
+            && walks_by_value(contract)
+            && let Some(name) = self.receiver_name.clone()
+        {
+            let taken = self.taken(name, on.clone(), self.read_seq, "", span);
+            self.walked.push(taken);
         }
         // ADR-023 D8: the failure leaves at the call, and the emitter
         // is what writes that. Recorded whether or not the function
@@ -6766,13 +6765,13 @@ impl<'a> Checker<'a> {
                 // **`NK2203`, the method half**: which entry `other.get()` goes
                 // to is the type checker's answer (ADR-028), so it is asked
                 // here where the receiver's type is in hand.
-                if self.inside_a_door {
-                    if let Ty::Named { name, .. } = &on {
-                        let key = format!("{name}::{written}");
-                        if let Some((key, contract)) = self.method(&key) {
-                            let (key, holds) = (key.clone(), contract.touches_a_lock);
-                            self.a_lock_inside_a_lock(&key, holds, span);
-                        }
+                if self.inside_a_door
+                    && let Ty::Named { name, .. } = &on
+                {
+                    let key = format!("{name}::{written}");
+                    if let Some((key, contract)) = self.method(&key) {
+                        let (key, holds) = (key.clone(), contract.touches_a_lock);
+                        self.a_lock_inside_a_lock(&key, holds, span);
                     }
                 }
                 // **And a method on a mapping reads the file**
@@ -6786,11 +6785,9 @@ impl<'a> Checker<'a> {
                 // inside the block is not one.
                 let at_a_door =
                     self.parsed.text(*method) == "update" && locked_content_of(&on).is_some();
-                if at_a_door {
-                    if let Some(Expr::Closure { params, body, .. }) = args.last() {
-                        self.an_update_block_returns_nothing(body, span);
-                        self.an_update_block_reads_what_it_writes(params, body, span);
-                    }
+                if at_a_door && let Some(Expr::Closure { params, body, .. }) = args.last() {
+                    self.an_update_block_returns_nothing(body, span);
+                    self.an_update_block_reads_what_it_writes(params, body, span);
                 }
                 let outer_door = std::mem::replace(&mut self.at_a_write_door, at_a_door);
                 // **And `access` holds one open too** (ADR-039 D10): `get` and
@@ -6925,13 +6922,13 @@ impl<'a> Checker<'a> {
                 self.inside_a_door = outer_inside;
                 self.set_receiver = outer_receiver;
                 // **And what `access` hands back came out of a lock** (D1).
-                let value = match self.parsed.text(*method) == "access"
+
+                match self.parsed.text(*method) == "access"
                     && locked_content_of(&on_for_the_stamp).is_some()
                 {
                     true => Ty::seen(value.unseen()),
                     false => value,
-                };
-                value
+                }
             }
 
             // Part I 3.5: `x?.m(…)`. The receiver must be a `T?`, the call
@@ -7580,10 +7577,10 @@ impl<'a> Checker<'a> {
                 let from = self.expr(expr, span);
                 let into = self.declared(ty, span);
                 self.a_cast_over_a_lent_binding(expr, span);
-                if let Ty::Named { name, .. } = &into {
-                    if !OFFERED.contains(&name.as_str()) {
-                        self.cast_names_a_foreign_type(name, span);
-                    }
+                if let Ty::Named { name, .. } = &into
+                    && !OFFERED.contains(&name.as_str())
+                {
+                    self.cast_names_a_foreign_type(name, span);
                 }
                 self.record_cast(&from, &into, span);
                 into
@@ -8563,30 +8560,29 @@ impl<'a> Checker<'a> {
     /// The walk under [`Checker::declared`], over a written type and everything
     /// inside it.
     fn spelling(&mut self, ty: &ast::Type, span: &Span) {
-        if self.parsed.text(ty.name) == SHARED {
-            if let Some(held) = ty.generics.first() {
-                if self.parsed.text(held.name) == LOCKED {
-                    let inside = held
-                        .generics
-                        .first()
-                        .map(|t| self.parsed.text(t.name).to_string())
-                        .unwrap_or_else(|| "T".to_string());
-                    self.checked.findings.push(Finding {
-                        severity: Severity::Error,
-                        span: span.clone(),
-                        code: "NK1123",
-                        message: format!(
-                            "a `{SHARED}` around a lock is what `{SHARED_MUT}[{inside}]` is called"
-                        ),
-                        notes: vec![
-                            "the common case has the short name, and it is the only way \
+        if self.parsed.text(ty.name) == SHARED
+            && let Some(held) = ty.generics.first()
+            && self.parsed.text(held.name) == LOCKED
+        {
+            let inside = held
+                .generics
+                .first()
+                .map(|t| self.parsed.text(t.name).to_string())
+                .unwrap_or_else(|| "T".to_string());
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK1123",
+                message: format!(
+                    "a `{SHARED}` around a lock is what `{SHARED_MUT}[{inside}]` is called"
+                ),
+                notes: vec![
+                    "the common case has the short name, and it is the only way \
                                      to write it - one type, one spelling (Part I, 6.2)"
-                                .to_string(),
-                        ],
-                        help: Some(format!("write `{SHARED_MUT}[{inside}]`")),
-                    });
-                }
-            }
+                        .to_string(),
+                ],
+                help: Some(format!("write `{SHARED_MUT}[{inside}]`")),
+            });
         }
         for inner in &ty.generics {
             self.spelling(inner, span);
@@ -8614,22 +8610,22 @@ impl<'a> Checker<'a> {
         // A handle of a handle is two counts around one value and means nothing
         // the one count does not: it is refused where the type says so, and a
         // value nothing describes is not claimed about (C.4).
-        if let Ty::Named { name: inner, .. } = &held {
-            if is_hull(inner) {
-                self.checked.findings.push(Finding {
-                    severity: Severity::Error,
-                    span: span.clone(),
-                    code: "NK1123",
-                    message: format!("this is already a `{inner}`, so `{name}` has nothing to add"),
-                    notes: vec![
-                        "a handle is duplicated by being handed on, never by being wrapped \
+        if let Ty::Named { name: inner, .. } = &held
+            && is_hull(inner)
+        {
+            self.checked.findings.push(Finding {
+                severity: Severity::Error,
+                span: span.clone(),
+                code: "NK1123",
+                message: format!("this is already a `{inner}`, so `{name}` has nothing to add"),
+                notes: vec![
+                    "a handle is duplicated by being handed on, never by being wrapped \
                          again (Part I, 6.2)"
-                            .to_string(),
-                    ],
-                    help: Some(format!("hand the `{inner}` on as it is")),
-                });
-                return held;
-            }
+                        .to_string(),
+                ],
+                help: Some(format!("hand the `{inner}` on as it is")),
+            });
+            return held;
         }
         Ty::Named {
             name: name.to_string(),
@@ -8663,17 +8659,17 @@ impl<'a> Checker<'a> {
         // and ADR-067 D1 is where it was pinned down: it never pauses, so
         // `sync` says nothing about it, and it takes standard output's own lock
         // while yours is open.
-        if self.inside_a_door {
-            if let Some(name) = self.free_callee(func) {
-                let holds = self
-                    .own
-                    .functions
-                    .get(&name)
-                    .or_else(|| self.library.functions.get(&name))
-                    .map(|c| c.touches_a_lock)
-                    .unwrap_or_default();
-                self.a_lock_inside_a_lock(&name, holds, span);
-            }
+        if self.inside_a_door
+            && let Some(name) = self.free_callee(func)
+        {
+            let holds = self
+                .own
+                .functions
+                .get(&name)
+                .or_else(|| self.library.functions.get(&name))
+                .map(|c| c.touches_a_lock)
+                .unwrap_or_default();
+            self.a_lock_inside_a_lock(&name, holds, span);
         }
         // **The callee is named and resolved before the arguments are walked**
         // ([ADR-029](../../docs/specification/adr/adr-029.md), the free half).
@@ -8703,27 +8699,27 @@ impl<'a> Checker<'a> {
 
         // **A kept function value called by name**: a `let`, or a parameter
         // the function keeps. What its type says is what the call does.
-        if matches!(func, Expr::Variable(_)) && !self.run_code.contains(&name) {
-            if let Some(Ty::Fn {
+        if matches!(func, Expr::Variable(_))
+            && !self.run_code.contains(&name)
+            && let Some(Ty::Fn {
                 params,
                 result,
                 is_sync,
                 throws,
             }) = self.lookup(&name)
-            {
-                self.read_at.push((name.clone(), span.start));
-                self.arguments_given(args, &params, false, None, span);
-                self.kept_arguments_are_its_own(args, &params);
-                self.checked
-                    .kept_calls
-                    .insert((span.start, name), (!is_sync, throws));
-                if let Some(current) = &self.current {
-                    let entry = self.checked.methods.entry(current.clone()).or_default();
-                    entry.code_pauses |= !is_sync;
-                    entry.code_fails |= throws;
-                }
-                return result.map(|r| *r).unwrap_or_else(|| Ty::named("()"));
+        {
+            self.read_at.push((name.clone(), span.start));
+            self.arguments_given(args, &params, false, None, span);
+            self.kept_arguments_are_its_own(args, &params);
+            self.checked
+                .kept_calls
+                .insert((span.start, name), (!is_sync, throws));
+            if let Some(current) = &self.current {
+                let entry = self.checked.methods.entry(current.clone()).or_default();
+                entry.code_pauses |= !is_sync;
+                entry.code_fails |= throws;
             }
+            return result.map(|r| *r).unwrap_or_else(|| Ty::named("()"));
         }
 
         // **A call to an `extern` name is written inside `unsafe { … }`**
@@ -9056,15 +9052,14 @@ impl<'a> Checker<'a> {
                 && !want.is_a_view()
                 && !signature.mutable.contains(name)
                 && !self.foreign_names.contains(written)
+                && let Some(given) = given.get(at)
             {
-                if let Some(given) = given.get(at) {
-                    self.hands_over(
-                        given,
-                        found,
-                        &format!("handed to `{written}`, which keeps it"),
-                        span,
-                    );
-                }
+                self.hands_over(
+                    given,
+                    found,
+                    &format!("handed to `{written}`, which keeps it"),
+                    span,
+                );
             }
             let array = given.get(at).and_then(|given| {
                 self.array_literal(found, want, given, span)
@@ -9266,11 +9261,11 @@ impl<'a> Checker<'a> {
         if self.checked.findings.len() == before {
             return;
         }
-        if let Some((why, help)) = self.a_view_kept(found, want, value, keeper) {
-            if let Some(finding) = self.checked.findings.last_mut() {
-                finding.notes.extend(why);
-                finding.help = Some(help);
-            }
+        if let Some((why, help)) = self.a_view_kept(found, want, value, keeper)
+            && let Some(finding) = self.checked.findings.last_mut()
+        {
+            finding.notes.extend(why);
+            finding.help = Some(help);
         }
     }
 
@@ -10034,14 +10029,13 @@ impl<'a> Checker<'a> {
     /// handed, because the next turn hands over what is already gone.
     fn hands_over(&mut self, value: &Expr, ty: &Ty, to: &str, span: &Span) {
         // `name.to_string()` is `name` (ADR-216 D4): what is handed over is it.
-        if let Expr::MethodCall { receiver, .. } = value {
-            if self
+        if let Expr::MethodCall { receiver, .. } = value
+            && self
                 .checked
                 .text_as_is
                 .contains(&(span.start, argument_shape(receiver)))
-            {
-                return self.hands_over(receiver, ty, to, span);
-            }
+        {
+            return self.hands_over(receiver, ty, to, span);
         }
         let Some(&at) = self.read_index.get(&(address(value), span.start)) else {
             return;
@@ -11754,11 +11748,12 @@ impl<'a> Checker<'a> {
         // **Text keys, and the rest by name** (D5). A number wants a dense
         // array, which is a different table and a different measurement.
         let (held, value_below, borrow) = match args.as_slice() {
-            [Ty::Named {
-                name, view: true, ..
-            }, value]
-                if name == "str" =>
-            {
+            [
+                Ty::Named {
+                    name, view: true, ..
+                },
+                value,
+            ] if name == "str" => {
                 match rust_constant_type(value) {
                     Some(below) => (value, below, ""),
                     // **A `struct` or an `enum` this program declares is held
@@ -12298,13 +12293,11 @@ impl<'a> Checker<'a> {
                 args,
                 ..
             } = count
+                && self.parsed.text(*method) == "len"
+                && args.is_empty()
+                && argument_shape(receiver) == argument_shape(buffer)
             {
-                if self.parsed.text(*method) == "len"
-                    && args.is_empty()
-                    && argument_shape(receiver) == argument_shape(buffer)
-                {
-                    continue;
-                }
+                continue;
             }
             let folded = self.constant_of(count).map(|c| c.value);
             // A constant the buffer's own length covers. `Array[T, N]` is the
@@ -12433,10 +12426,9 @@ impl<'a> Checker<'a> {
             },
             Expr::Closure { body, .. },
         ) = (want, value)
+            && let Some(tail) = tail_of(body)
         {
-            if let Some(tail) = tail_of(body) {
-                self.text_literal(result, tail, true);
-            }
+            self.text_literal(result, tail, true);
         }
     }
 
@@ -14953,18 +14945,17 @@ impl<'a> Checker<'a> {
             for stmt in &body.stmts {
                 // A whole-name assignment is the shape the rule is about; a
                 // mention anywhere else is a read.
-                if let Stmt::Assign { target, op, value } = &stmt.node {
-                    if op.is_none()
-                        && matches!(target, Expr::Variable(n) if self.parsed.text(*n) == name)
-                    {
-                        assigned = true;
-                        // **And the value being stored is still a read**:
-                        // `v = v + 1` mentions `v`, and it decides inside the
-                        // lock exactly as `v += 1` does.
-                        let mentioned = crate::contracts::send::names_used(self.parsed, value);
-                        read |= mentioned.contains(&name);
-                        continue;
-                    }
+                if let Stmt::Assign { target, op, value } = &stmt.node
+                    && op.is_none()
+                    && matches!(target, Expr::Variable(n) if self.parsed.text(*n) == name)
+                {
+                    assigned = true;
+                    // **And the value being stored is still a read**:
+                    // `v = v + 1` mentions `v`, and it decides inside the
+                    // lock exactly as `v += 1` does.
+                    let mentioned = crate::contracts::send::names_used(self.parsed, value);
+                    read |= mentioned.contains(&name);
+                    continue;
                 }
                 let mentioned = crate::contracts::send::names_used_in_stmt(self.parsed, &stmt.node);
                 read |= mentioned.contains(&name);
@@ -15746,10 +15737,10 @@ impl<'a> Checker<'a> {
         if lending {
             self.checked.lent_returns.insert(span.start);
         }
-        if let Some(value) = value {
-            if !lending {
-                self.a_field_of_a_borrowed_subject(value, span, "handed back");
-            }
+        if let Some(value) = value
+            && !lending
+        {
+            self.a_field_of_a_borrowed_subject(value, span, "handed back");
         }
         let found = match value {
             Some(value) => self.expr(value, span),
@@ -16085,10 +16076,10 @@ fn shape_through(contract: &FnContract, receiver: &Ty, found: &[Ty], result: Ty)
             Ty::Seq { shape, .. } => *shape,
             _ => ty::Shape::default(),
         };
-        if let Some((name, Ty::Seq { .. })) = signature.params.first() {
-            if name == "self" {
-                inputs.push(shape_of(receiver));
-            }
+        if let Some((name, Ty::Seq { .. })) = signature.params.first()
+            && name == "self"
+        {
+            inputs.push(shape_of(receiver));
         }
         for ((_, pattern), actual) in signature.arguments().iter().zip(found) {
             if matches!(pattern, Ty::Seq { .. }) {
@@ -16445,10 +16436,10 @@ fn convert(found: &Ty, want: &Ty) -> String {
     // not that line - so the generic "make it a `Shared[T]`" below would name a
     // destination without a road, which is what made this look like a dead end.
     // It is not: there are two roads and this says both.
-    if becomes_shared(found, want) {
-        if let Ty::Named { name, .. } = want {
-            return format!("write `{name}(…)` around it - a hull you can see is one you write");
-        }
+    if becomes_shared(found, want)
+        && let Ty::Named { name, .. } = want
+    {
+        return format!("write `{name}(…)` around it - a hull you can see is one you write");
     }
     // **A slice where a list is declared** (ADR-215 D3): the parameter is
     // what changes, to the type that takes a run of any list - a slice and a
@@ -16465,17 +16456,18 @@ fn convert(found: &Ty, want: &Ty) -> String {
             ..
         },
     ) = (found, want)
+        && slice == ty::ARRAY
+        && run.len() == 1
+        && ty::base(list) == "Vec"
     {
-        if slice == ty::ARRAY && run.len() == 1 && ty::base(list) == "Vec" {
-            let element = elements
-                .first()
-                .map(Ty::text)
-                .unwrap_or_else(|| "?".to_string());
-            return format!(
-                "this is a slice of a list; declare the parameter `ref Array[{element}]`, \
+        let element = elements
+            .first()
+            .map(Ty::text)
+            .unwrap_or_else(|| "?".to_string());
+        return format!(
+            "this is a slice of a list; declare the parameter `ref Array[{element}]`, \
                  which takes a slice and a whole list alike"
-            );
-        }
+        );
     }
     let (found, want) = (found.text(), want.text());
     match (found.as_str(), want.as_str()) {
@@ -16830,10 +16822,10 @@ fn bindings(contract: &FnContract, receiver: &Ty) -> BTreeMap<String, Ty> {
     let Some(signature) = &contract.signature else {
         return bound;
     };
-    if let Some((name, pattern)) = signature.params.first() {
-        if name == "self" {
-            ty::bind(pattern, receiver, &mut bound);
-        }
+    if let Some((name, pattern)) = signature.params.first()
+        && name == "self"
+    {
+        ty::bind(pattern, receiver, &mut bound);
     }
     bound
 }

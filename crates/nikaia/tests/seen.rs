@@ -20,7 +20,7 @@
 mod common;
 
 use nikaia::contracts::{Ledger, STD};
-use nikaia::emit::{emit_program, Build};
+use nikaia::emit::{Build, emit_program};
 use nikaia::parser::parse_to_ast;
 
 fn findings(source: &str) -> Vec<nikaia::check::Finding> {
@@ -211,15 +211,17 @@ fn an_update_that_reads_the_old_value_is_the_door() {
 /// configuration that arrived from outside, a reset an operator asked for.
 #[test]
 fn an_unstamped_set_is_a_program() {
-    assert!(findings(
-        "fn main() {\n\
+    assert!(
+        findings(
+            "fn main() {\n\
          \x20   let kasse = SharedMut(0)\n\
          \x20   kasse.set(42)\n\
          \x20   let n = 7\n\
          \x20   kasse.set(n * 6)\n\
          }\n"
-    )
-    .is_empty());
+        )
+        .is_empty()
+    );
 }
 
 /// **`access` hands back a stamp too** (D1): what the block computed came out

@@ -111,7 +111,7 @@ use std::collections::BTreeSet;
 use crate::ast::Expr;
 use crate::parser::Parsed;
 
-use super::{ty::Ty, Ledger};
+use super::{Ledger, ty::Ty};
 
 /// Plain data: a value of one of these carries nothing that a second thread
 /// could be wrong about.

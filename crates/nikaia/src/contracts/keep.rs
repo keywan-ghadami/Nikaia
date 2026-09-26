@@ -52,8 +52,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ast::{Block, Expr, Item, Span, Stmt, Type};
 use crate::parser::Parsed;
 
-use super::tether::{Buffer, State, RESULT};
 use super::Ledger;
+use super::tether::{Buffer, RESULT, State};
 
 /// A source, by the statement it stands in and - for a call - the callee:
 /// what the emitter has in hand where it writes either.
@@ -446,15 +446,14 @@ fn plan(
             walk.statement = stmt.span.start;
             walk.stmt(&stmt.node, &stmt.span);
         }
-        if result_carries {
-            if let Some(last) = body.stmts.last() {
-                if let Stmt::Expr(value) = &last.node {
-                    walk.statement = last.span.start;
-                    let origins = walk.origins(value);
-                    if !walk.is_the_buffer(value) {
-                        walk.escape_all(&origins, Escape::Result);
-                    }
-                }
+        if result_carries
+            && let Some(last) = body.stmts.last()
+            && let Stmt::Expr(value) = &last.node
+        {
+            walk.statement = last.span.start;
+            let origins = walk.origins(value);
+            if !walk.is_the_buffer(value) {
+                walk.escape_all(&origins, Escape::Result);
             }
         }
         walk.scopes.pop();
@@ -881,12 +880,11 @@ impl Walk<'_> {
                             if held.state != State::Tethered || held.position == RESULT {
                                 continue;
                             }
-                            if let Some(at) = params.iter().position(|p| *p == held.position) {
-                                if let Some(root) =
+                            if let Some(at) = params.iter().position(|p| *p == held.position)
+                                && let Some(root) =
                                     args.get(at).and_then(|a| root_of(self.parsed, a))
-                                {
-                                    self.flow_into(&root, source.clone());
-                                }
+                            {
+                                self.flow_into(&root, source.clone());
                             }
                         }
                         let hands_back = contract

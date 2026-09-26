@@ -21,7 +21,7 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use nikaia::contracts::{Ledger, Sync, STD};
+use nikaia::contracts::{Ledger, STD, Sync};
 use nikaia::modules::{Dependency, Program};
 
 /// A program and one package it depends on by path, as directories.
@@ -250,10 +250,12 @@ fn the_sources_table_renders_and_parses_back() {
     // rendered - `std`'s among them, whose Rust half has no `.nika` to hash.
     let bare = Ledger::empty();
     assert!(!bare.render().contains("[sources]"));
-    assert!(!Ledger::parse(STD)
-        .expect("std's ledger parses")
-        .render()
-        .contains("[sources]"));
+    assert!(
+        !Ledger::parse(STD)
+            .expect("std's ledger parses")
+            .render()
+            .contains("[sources]")
+    );
 }
 
 /// What `stale_against` answers, in the three shapes a package can move in.
@@ -326,8 +328,10 @@ fn a_transitive_packages_entries_are_not_absorbed_with_its_parents() {
         "Row::new".to_string(),
         nikaia::contracts::FnContract::default(),
     );
-    assert!(with_methods
-        .published(&BTreeSet::from(["c".to_string()]))
-        .functions
-        .contains_key("Row::new"));
+    assert!(
+        with_methods
+            .published(&BTreeSet::from(["c".to_string()]))
+            .functions
+            .contains_key("Row::new")
+    );
 }

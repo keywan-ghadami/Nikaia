@@ -192,7 +192,7 @@ pub async fn map(path: impl AsRef<Path>, root: &Root) -> Result<Mapped, crate::i
         Err(at) => {
             return Err(crate::io::IoError::NotText(format!(
                 "{asked} (at byte {at})"
-            )))
+            )));
         }
     };
 
@@ -488,14 +488,16 @@ mod tests {
         let path = std::env::temp_dir()
             .join("nikaia-no-such-directory")
             .join("report.html");
-        assert!(crate::rt::exec::block_on(super::write(
-            &path,
-            &super::Root::Anywhere,
-            "x",
-            false,
-            true
-        ))
-        .is_err());
+        assert!(
+            crate::rt::exec::block_on(super::write(
+                &path,
+                &super::Root::Anywhere,
+                "x",
+                false,
+                true
+            ))
+            .is_err()
+        );
     }
 
     /// The two options Part III 17.1 names, doing what it says they do.
@@ -644,9 +646,11 @@ mod tests {
 
             // A write is checked before it creates anything, which is the half a
             // canonicalising check would have got wrong.
-            assert!(super::write("../made.txt", &root, "x", false, true)
-                .await
-                .is_err());
+            assert!(
+                super::write("../made.txt", &root, "x", false, true)
+                    .await
+                    .is_err()
+            );
             assert!(
                 !dir.join("made.txt").exists(),
                 "the write created it anyway"
