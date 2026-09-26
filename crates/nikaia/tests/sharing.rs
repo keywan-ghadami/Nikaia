@@ -172,7 +172,7 @@ fn a_call_this_compiler_cannot_see_the_end_of_comes_out_atomic() {
 ///
 /// A public function's callers are in a unit this build never sees. The
 /// representation is in the artifact by the time one of them crosses, so nothing
-/// here can answer - and `docs/history/rc-or-arc.md` §5.1 is why a ledger column would
+/// here can answer - and ADR-037 D8 is why a ledger column would
 /// not answer either.
 #[test]
 fn a_shared_in_a_published_signature_comes_out_atomic() {
@@ -296,7 +296,7 @@ fn a_struct_field_is_decided_whatever_order_the_functions_are_written_in() {
 /// A struct whose fields are Rust - an entry with no `fields` - cannot be walked,
 /// so a crossing of it says nothing about the `Shared` it may hold.
 ///
-/// This is the gap `docs/history/rc-or-arc.md` §5.2 names: the transitivity is exactly as
+/// This is the gap ADR-037 D8 names: the transitivity is exactly as
 /// good as the ledger's `fields`, and `fields` is empty for every type whose
 /// parts are Rust. A value *put into* such a type by a Nikaia program is still
 /// caught, because the putting is visible; one built inside the Rust half is not.
@@ -631,7 +631,7 @@ fn a_public_parameter_that_holds_a_shared_exposes_the_field() {
 /// The summary is a ledger column, beside `sync`, `throws`, `touches` and
 /// `borrows`.
 ///
-/// `docs/history/rc-or-arc.md` §5.1 names the shape: which parameters and result are one
+/// ADR-037 D7 names the shape: which parameters and result are one
 /// class, and which count that class gets. The union-find that decides a count
 /// computes it already, which is what makes this a column and not a mechanism
 /// (ADR-020 D1).

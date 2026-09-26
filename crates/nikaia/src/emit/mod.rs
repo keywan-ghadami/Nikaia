@@ -4451,8 +4451,7 @@ impl<'p> Emitter<'p> {
         let close = "    ".repeat(depth);
         // The compiler knows every literal byte of this template, so it knows
         // what the result is at least as long as - and a `String` that starts
-        // that size does not double its way there
-        // (`docs/history/staging-candidates.md` §3).
+        // that size does not double its way there (ADR-178 §1).
         //
         // It is a *floor*, not a guess: the holes and the bodies of `<for>`
         // add to it and never subtract, so reserving it can never be too much

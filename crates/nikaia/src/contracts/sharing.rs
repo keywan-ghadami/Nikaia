@@ -23,7 +23,7 @@
 // **That is why being wrong here costs speed in one direction and correctness in
 // the other**, and why the polarity is not negotiable. An atomic count where a
 // plain one would have done costs about 9 ns per clone-and-drop pair
-// (`docs/history/rc-or-arc.md` §3). A plain count on a value that crosses is a data
+// (ADR-037 D7). A plain count on a value that crosses is a data
 // race. So every case this cannot decide comes out [`Count::Atomic`], every such
 // case carries the reason, and the reasons are a **closed list** - see
 // [`Fallback`], which is the enumeration ADR-037 D8 answers "would an override
@@ -313,7 +313,7 @@ impl Decision {
 /// One allocation class of a function's caller-visible positions, as the ledger
 /// records it.
 ///
-/// This is the summary `docs/history/rc-or-arc.md` §5.1 names as the thing that
+/// This is the summary ADR-037 D7 names as the thing that
 /// composes: **which parameters and result are one class, and which count that
 /// class gets**. A caller reads it to know what it is handing over; a later
 /// build that can read a dependency's source reads it to continue the analysis
@@ -452,7 +452,7 @@ pub fn analyse_program(
             }
             // A `pub` field of a `pub` type is a place code this build never
             // reads can take the value out of, which is the library boundary
-            // one level in from a signature (`docs/history/rc-or-arc.md` §5.1).
+            // one level in from a signature (ADR-037 D8).
             Item::Struct {
                 name,
                 fields,

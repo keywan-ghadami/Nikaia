@@ -76,7 +76,7 @@ const ESCAPES: [(char, &str); 5] = [
 /// That is the second thing measured here and it is the one that mattered: a
 /// 256-entry table of `&str` was **16 % slower** than the five compares it
 /// replaced, because a fat pointer per byte is 4 KB of cache to walk where a
-/// mask is a register (`docs/history/staging-candidates.md` §3).
+/// mask is a register (ADR-178 §1).
 ///
 /// **A byte scan is sound because all five are ASCII.** A byte of a multi-byte
 /// UTF-8 character is always `0x80` or above, so it can never be one of these -

@@ -261,7 +261,7 @@ fn the_compiler_and_the_library_hash_the_same_bytes() {
 }
 
 /// **The threshold is where the measurement put it**
-/// ([`docs/history/fixed-map-lookup.md`](../../../docs/history/fixed-map-lookup.md) §6, D3).
+/// ([ADR-176](../../../docs/specification/adr/adr-176.md) D3).
 ///
 /// Twelve is not arbitrary and it is not free to move: the tests above are
 /// written around it, one on each side. A change here is a re-measurement, and

@@ -5,7 +5,7 @@
 //! a function that only *uses* the value takes an ordinary view of it. Neither
 //! claim can be checked by reading the emitted Rust: `Rc` and `Arc` differ in
 //! nothing a program can observe except speed and `Send`-ness
-//! (`docs/history/rc-or-arc.md` §2), so a test that compared text would pass on a
+//! (ADR-037 D7), so a test that compared text would pass on a
 //! lowering that does not run. These compile the emitted Rust and run the
 //! binary.
 //!
@@ -153,7 +153,7 @@ fn the_switches_agree_about_a_shared_value() {
 /// A value the analysis cannot prove stays put gets the atomic floor, and the
 /// program still runs and still prints the same thing.
 ///
-/// `Rc` and `Arc` differ in nothing observable (`docs/history/rc-or-arc.md` §2), which
+/// `Rc` and `Arc` differ in nothing observable (ADR-037 D7), which
 /// is what lets the count be inferred at all - so the two lowerings of the same
 /// program have to agree about what it prints. Here the public signature is what
 /// forces the floor (ADR-037 D8's last row).

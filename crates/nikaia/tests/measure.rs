@@ -1,7 +1,7 @@
 //! The measurement loop.
 //!
 //! `docs/history/staging-candidates.md` §5 records that the benchmark *programs* exist
-//! and the harness does not, and §6 ends on the rule this file serves: **a
+//! and the harness does not, and ADR-178 D2 is the rule this file serves: **a
 //! staging decision enters the compiler only together with a measured
 //! crossover.** This is where a crossover is measured.
 //!
