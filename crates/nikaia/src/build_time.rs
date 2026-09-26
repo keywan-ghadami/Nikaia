@@ -47,6 +47,12 @@ use crate::parser::Parsed;
 /// the compiler's stack down with it, which it did not.
 const DEEPEST: usize = 128;
 
+/// The stack [`BuildTime::evaluate`] runs on: room for [`DEEPEST`] calls
+/// with a body nested deeply inside each, in a debug build, many times over.
+/// Reserved, not touched - the pages a shallow evaluation never reaches cost
+/// nothing.
+const EVALUATION_STACK: usize = 256 * 1024 * 1024;
+
 /// How a block ended.
 ///
 /// Four ways, and the evaluator needed all four the moment it gained a loop: a
@@ -243,7 +249,7 @@ pub enum Refusal {
 
 /// What a name outside a build-time body is worth: a `comptime` already
 /// evaluated, or a `let` whose value folded.
-pub type Known<'a> = &'a dyn Fn(&str) -> Option<Value>;
+pub type Known<'a> = &'a (dyn Fn(&str) -> Option<Value> + Sync);
 
 /// The evaluator, over one unit's items.
 pub struct BuildTime<'a> {
@@ -300,8 +306,28 @@ impl<'a> BuildTime<'a> {
     }
 
     /// What an initialiser comes to.
+    ///
+    /// **On a thread of its own, with a stack of its own size**
+    /// ([`EVALUATION_STACK`]). [`DEEPEST`] counts calls, and what a call costs
+    /// on the stack is this evaluator's frames, which differ by build profile
+    /// and by how deeply the body nests: measured, 128 calls of a one-line
+    /// recursion took more than the 2 MiB a test thread has in a debug build,
+    /// and `an_unbounded_recursion_is_refused_rather_than_crashing` overflowed
+    /// instead of reading `NK1152`. Whether the refusal happens may not depend
+    /// on which thread asked.
     pub fn evaluate(&mut self, expr: &Expr) -> Result<Value, Refusal> {
-        self.expr(expr, &BTreeMap::new())
+        std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .name("nikaia-build-time".to_string())
+                .stack_size(EVALUATION_STACK)
+                .spawn_scoped(scope, || self.expr(expr, &BTreeMap::new()))
+                .map(|thread| thread.join())
+        })
+        .unwrap_or_else(|_| {
+            // No thread to be had: the caller's own stack, as before.
+            Ok(self.expr(expr, &BTreeMap::new()))
+        })
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
 
     fn expr(&mut self, expr: &Expr, frame: &BTreeMap<String, Value>) -> Result<Value, Refusal> {

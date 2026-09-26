@@ -692,7 +692,17 @@ pub mod io {
                     // index may already belong to another operation - giving
                     // *that* one's slot away is the defect `Job::owned` exists
                     // to prevent.
-                    *operation = InFlight::Done(None);
+                    //
+                    // **Replaced without being dropped.** A plain assignment
+                    // drops the old `Ring(slot)`, which is exactly the `Drop`
+                    // this comment forbids, run after the lock was released:
+                    // another thread had taken the slot in between, lost it
+                    // to `abandon`, and was answered *the runtime lost a file
+                    // operation's slot*
+                    // (`fs::tests::many_threads_reading_and_writing_at_once_each_get_their_own_answer`).
+                    // The old value is an index and nothing else, so
+                    // forgetting it leaks nothing.
+                    std::mem::forget(std::mem::replace(operation, InFlight::Done(None)));
                 }
                 done
             }

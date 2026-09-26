@@ -11715,12 +11715,23 @@ impl<'a> Checker<'a> {
             // **The whole value where the build has one**, and the fold's
             // integer otherwise. `comptime BIG = ORIGIN.scaled(10)` needs
             // `ORIGIN` to be a `Point` here and not the number it is not.
-            let known = |name: &str| -> Option<build_time::Value> {
-                let held = self.binding(name)?;
-                held.built
+            //
+            // **Read off the scope before the evaluation starts**, because
+            // it runs on a thread of its own (`BuildTime::evaluate`): later
+            // bindings of a name go in after earlier ones, so the innermost
+            // is the one that answers, as `binding` would.
+            let mut held: BTreeMap<&str, build_time::Value> = BTreeMap::new();
+            for local in self.scope.iter().flatten() {
+                let value = local
+                    .built
                     .clone()
-                    .or_else(|| held.constant.map(build_time::Value::Int))
-            };
+                    .or_else(|| local.constant.map(build_time::Value::Int));
+                match value {
+                    Some(value) => held.insert(local.name.as_str(), value),
+                    None => held.remove(local.name.as_str()),
+                };
+            }
+            let known = |name: &str| -> Option<build_time::Value> { held.get(name).cloned() };
             build_time::BuildTime::new(self.parsed, self.beside, self.own, self.reads, &known)
                 .evaluate(value)
         };

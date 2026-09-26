@@ -509,6 +509,45 @@ mod tests {
         );
     }
 
+    /// **Many threads reading and writing at once each get their own answer.**
+    ///
+    /// A finished operation's handle used to give its ring slot back when it
+    /// was replaced by its answer - a `Drop` running on the assignment - and by
+    /// then another thread could already hold that slot. Its operation was
+    /// marked as nobody's, reclaimed before it was read, and answered *the
+    /// runtime lost a file operation's slot*: a CI failure of
+    /// `appending_adds_and_create_false_refuses_a_new_file`, once in a dozen
+    /// runs, with other tests running beside it.
+    #[test]
+    fn many_threads_reading_and_writing_at_once_each_get_their_own_answer() {
+        let dir = std::env::temp_dir().join(format!("nikaia-many-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let threads: Vec<_> = (0..8)
+            .map(|t| {
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    let path = dir.join(format!("file-{t}"));
+                    crate::rt::exec::block_on(async {
+                        for round in 0..300 {
+                            let text = format!("{t}:{round}\n");
+                            super::write(&path, &super::Root::Anywhere, &text, false, true)
+                                .await
+                                .expect("write");
+                            let back = super::read_to_string(&path, &super::Root::Anywhere)
+                                .await
+                                .expect("read back");
+                            assert_eq!(back, text);
+                        }
+                    });
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().expect("a thread's reads and writes");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// The two options Part III 17.1 names, doing what it says they do.
     #[test]
     fn appending_adds_and_create_false_refuses_a_new_file() {

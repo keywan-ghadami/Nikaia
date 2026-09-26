@@ -48,6 +48,14 @@ fn nikaia(args: &[&str], dir: &Path) -> std::process::Output {
         .arg("--project")
         .arg(dir)
         .env("NIKAIA_CACHE_DIR", shared_cache_dir())
+        // **The cache these tests check is the one a user gets**, so the
+        // variable that overrides it is not handed on from whoever runs the
+        // suite. `scripts/check-floor.sh` sets it for its own build, and a
+        // project build honours it, as it must (`project.rs`, *`CARGO_TARGET_DIR`
+        // still wins*): the compiled `std` went there, and
+        // `a_second_project_links_the_std_the_first_one_built` failed on
+        // every CI run since the floor job was added.
+        .env_remove("CARGO_TARGET_DIR")
         .output()
         .expect("the nikaia binary runs")
 }

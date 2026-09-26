@@ -4,6 +4,39 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.204] — 2026-09-26
+
+**CI is green again, and runs what a change needs, once.** It had been red
+since 0.0.200, and not for one reason.
+
+- **A file operation could lose its slot to another thread** (`std`'s
+  runtime). A finished operation's handle was replaced by its answer with a
+  plain assignment, which ran its `Drop` - the `abandon` its own comment
+  forbids - after the ring's lock was released. Where another thread had
+  taken the slot in between, its operation was marked as nobody's, reclaimed
+  unread, and answered *the runtime lost a file operation's slot*. It showed as
+  a rare failure of `fs::tests::appending_adds_and_create_false_refuses_a_new_file`;
+  `many_threads_reading_and_writing_at_once_each_get_their_own_answer` failed
+  on every run before the fix and passes after it. A program at
+  `user-parallelism = "yes"` reading files from several threads could meet it.
+- **The floor job failed on every run.** `scripts/check-floor.sh` set
+  `CARGO_TARGET_DIR`, every project build the tests start inherited it and put
+  the compiled `std` there, as it must, and
+  `a_second_project_links_the_std_the_first_one_built` looked in the shared
+  cache. The script passes `--target-dir`, and the project tests no longer hand
+  the variable on.
+- **A recursion without a base case overflowed the compiler's stack in a debug
+  build** instead of being refused with `NK1152`: the depth limit counts calls,
+  and 128 calls of the build-time evaluator needed more than a test thread's
+  2 MiB there. The evaluator runs on a thread of its own with a stack of its
+  own size, so the refusal no longer depends on which thread asked.
+- **The workflow**: a pull request's commit ran twice, as `push` and as
+  `pull_request`; it now runs once, and a newer push cancels the older run. The
+  `unsafe` crates are checked when one of them changes. The floor runs on every
+  push to `main`, weekly, and on a pull request that changes a manifest, the
+  lock file or the toolchain (`scripts/ci-changes.sh`). Tests run with
+  `--no-fail-fast`, so a red run names every failure.
+
 ## [0.0.203] — 2026-09-26
 
 **A `String` field or result is below what flows into it** —
