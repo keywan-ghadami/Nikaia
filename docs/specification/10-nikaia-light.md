@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.194 (Draft)
+**Version:** 0.0.195 (Draft)
 **Date:** 2026-09-26
 
 ---
@@ -85,8 +85,8 @@ The compiler decides the shape of a `SharedMut[T]` per value. A program writes `
 `eprint` and `eprintln`, like `panic` and `assert`, are diagnosis; what they do
 depends on the target, and the compiler decides it. `access_all` and
 `update_all` take the locks in one order however the program wrote them, so a
-deadlock cycle cannot form. `Bytes` is one shared buffer. A view of a
-buffer a body owns is refused with `NK2303`. `panic` ends the
+deadlock cycle cannot form. `Bytes` is one shared buffer: what `fs::read`
+hands back, passed on by a count. `panic` ends the
 program with the program's own words, at the Nikaia line.
 
 Everything else in the standard library is reached the way a package is
@@ -206,9 +206,9 @@ Nikaia provides basic types to represent simple values.
     * `i32`: a 32-bit integer. It is written where the layout matters: a
       struct that has to be small, a wire format, a C header. An `i32` that
       meets an `i64` is widened where the program says so, with `as i64`.
-    * `u8`: one byte. Reading a file hands back a list of them
-      (`fs::read` → `Vec[u8]`). It has the same conversion and arithmetic
-      names as the other integer types.
+    * `u8`: one byte. It has the same conversion and arithmetic names as the
+      other integer types. A file read whole is a `Bytes` (`fs::read`): one
+      shared buffer of them, handed on by a count and not copied.
 * **Floats:** numbers with decimal points.
     * `f64`: a double-precision floating-point number. A literal may carry an
       **exponent**: `1.5e-4`, `2e3`, `9.54791938424326609e-04`.
@@ -1355,9 +1355,30 @@ hands back, gives to a task) is detached and moves. It is the question 6.5 asks
 of every parameter, and there is no `@detached` to write. For an immediate
 parameter the callee's own promises follow the lambda, as `map`'s do. For a
 kept parameter they follow the type, so a `listen` that calls a stored
-`fn(Request) -> Response` may pause. A kept parameter of function type is
-refused with `NK1142`. The capture at a `spawn` is reported with `NK2101`
-(8.3).
+`fn(Request) -> Response` may pause. The capture at a `spawn` is reported with
+`NK2101` (8.3).
+
+**A function type stands wherever a type does**: a struct field, a result, a
+`let`, an element of a list. A function value in any of them is **kept**: the
+lambda moves what it captures, and a copy of the value shares the one closure.
+A field that holds one is called like a method, `button.on_click(4)`, where the
+struct has no method of that name. A named function stands where a function
+value is wanted. A kept value handed to a parameter that only runs it is lent.
+Two values of a type that holds a function are not compared (`NK1188`).
+
+```nika
+struct Button { label: String, on_click: fn(i64) -> i64 sync }
+
+fn adder(n: i64) -> fn(i64) -> i64 sync {
+    return fn(x) { x + n }
+}
+
+fn main() {
+    let b = Button { label: "ok", on_click: fn(x) { x * 2 } }
+    let add = adder(3)
+    println(f"{b.on_click(4)} {add(1)}")
+}
+```
 
 ---
 
@@ -1793,15 +1814,16 @@ There is no struct with lifetime parameters in Nikaia.
 and its buffer lives on the stack or came from a foreign library, no tether is
 possible. The compiler refuses the program and names the ways out, `.clone()`
 among them. The compiler never inserts that copy. One buffer handed both to a
-task and out of the function is refused, and so is a container of *structs*
-holding views that drops entries inside a loop.
+task and out of the function is refused with `NK2304`, and so is a container of
+*structs* holding views that drops entries inside a loop.
 
-**A parameter written `ref String` may not be kept past its call.** A view
-inside a struct carries the buffer it points into; a parameter written
-`ref String` does not. A function that stores such a parameter, into a field of
-its subject, into a struct it hands back, or into a task, is refused with
-`NK2302` (Part III, C.3). Such a function puts the view in a struct and takes
-the struct:
+**A parameter written `ref String` may not be kept past its call** unless the
+place it is kept names a buffer. A view inside a struct carries the buffer it
+points into; a parameter written `ref String` does not. A function that stores
+such a parameter where nothing names its buffer is refused with `NK2302`
+(Part III, C.3): into a task, into a field of a subject that holds no view, into
+a result that may point into another buffer as well. Such a function puts the
+view in a struct and takes the struct:
 
 ```nika
 struct Reading { name: ref String, temp: i32 }
@@ -1813,18 +1835,23 @@ impl Summary {
 
 Handing a view back out of the buffer it came from is **not** this rule:
 `fn count(seq: ref String, k: i64) -> HashMap[ref String, Tally]` returns views
-of `seq`, and the result points into `seq` and nothing else.
+of `seq`, and the result points into `seq` and nothing else. The same holds for
+a struct literal handed back: `fn make(name: ref String) -> Reading` returns a
+`Reading` that points into `name`, where `name` is the only view the function
+takes.
 
 Where the destination **already carries a buffer**, there is nothing to refuse.
 A method of a struct that holds a view has that struct's buffer in hand, so
 storing the parameter into one of its fields is accepted, and the parameter is
 a view of *that* buffer. `fn note(ref mut self, name: ref String)` on a
 `Summary` holding `label: ref String` compiles, and `name` is a view of the
-buffer `label` points into. That narrows what a caller may pass. A function or
-method whose own subject holds no view is refused with `NK2302` even when the
-destination is a field of a struct that carries one. Where the view is handed
-to a call on the subject, it is treated as kept, and the parameter is a view of
-the subject's buffer.
+buffer `label` points into. That narrows what a caller may pass. The same holds
+for a field of a struct **parameter** that holds views, where the subject holds
+none: `fn relabel(mut s: Summary, name: ref String) { s.label = name }`
+compiles, and `name` is a view of the buffer `s` points into. Fields of two such
+parameters are refused with `NK2302`. Where the view is handed to a call on the
+subject, it is treated as kept, and the parameter is a view of the subject's
+buffer.
 
 **A tether keeps the whole buffer alive**, not just the part pointed at.
 `nikaia --tethers` names every buffer kept this way and what keeps it;

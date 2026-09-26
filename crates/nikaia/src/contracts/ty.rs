@@ -306,6 +306,11 @@ pub const ARRAY: &str = "Array";
 /// descriptor to be at run time.
 pub const FIELD: &str = "$Field";
 
+/// **One of an `enum`'s variants, as `T::variants` hands it out**: `.name`,
+/// the variant's own name as text, and `.is(value)`, whether a value is that
+/// variant. Unrolled as a field is, so it never reaches the language below.
+pub const VARIANT: &str = "$Variant";
+
 /// **The one type text has** ([ADR-107](../../../docs/specification/adr/adr-107.md)),
 /// under the name a program writes it with.
 ///

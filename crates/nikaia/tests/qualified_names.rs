@@ -162,10 +162,10 @@ fn the_shape_of_a_type_is_reached_through_a_bound() {
     assert_eq!(found.code, "NK1171");
     assert_eq!(
         found.message,
-        "`Point::fields` is specified and this compiler does not have it"
+        "`Point::fields` is reached under a `Struct` bound"
     );
     assert!(
-        found.notes[0].contains("Part II 10.3") && found.notes[0].contains("ADR-181"),
+        found.notes[0].contains("Part II 10.3"),
         "{:#?}",
         found.notes
     );

@@ -393,8 +393,8 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-**Pre-alpha, as of 0.0.194.** The [roadmap](docs/project_status_and_roadmap.md) shows 73 % —
-that counts *areas of scope* built, and the language area alone reads 98 %. Neither number says
+**Pre-alpha, as of 0.0.195.** The [roadmap](docs/project_status_and_roadmap.md) shows 74 % —
+that counts *areas of scope* built, and the language area alone reads 100 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in
 [`open-work.md`](docs/open-work.md), with the evidence and the record behind it.

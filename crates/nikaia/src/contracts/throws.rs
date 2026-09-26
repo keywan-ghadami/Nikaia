@@ -210,7 +210,7 @@ fn contrib_of(
     // ledger carries after all contributes `"?"` too, because "I cannot see
     // it" may never be read as "it does not fail" (ADR-010 D1).
     if let Some(methods) = resolved.get(&key) {
-        if methods.unresolved {
+        if methods.unresolved || methods.code_fails {
             contrib.direct.insert(UNNAMED_ERROR.to_string());
         }
         for callee in &methods.resolved {

@@ -656,7 +656,11 @@ fn the_text_form_of_text_is_the_text() {
     );
     assert_eq!(refused.len(), 1, "{refused:#?}");
     assert!(
-        refused[0].help.as_deref().unwrap_or_default().contains(".clone()"),
+        refused[0]
+            .help
+            .as_deref()
+            .unwrap_or_default()
+            .contains(".clone()"),
         "{refused:#?}"
     );
 }

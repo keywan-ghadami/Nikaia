@@ -268,16 +268,13 @@ fn the_shape_the_bound_reaches_is_built() {
     assert!(!rust.contains("T::fields"), "{rust}");
 }
 
-/// **`variants` is the half that is not built**, and the refusal says which is
-/// which ([ADR-181](../../../docs/specification/adr/adr-181.md) D4).
-///
-/// An `enum`'s shape is a different value: a variant carries a payload where a
-/// field carries a type, so the two are one feature only on the page.
+/// **Each shape member is reached under its own bound**: `T::variants` under
+/// `[T: Enum]`, so written under `[T: Struct]` it is `NK1171` naming `Enum`.
 #[test]
 fn the_other_shape_is_refused_by_name() {
-    let found = one("enum Shade { Odd, Even }\n\
+    let found = one("struct Point { x: i64 }\n\
          \n\
-         fn tell[T: Enum](value: T) -> ref String {\n\
+         fn tell[T: Struct](value: T) -> ref String {\n\
          \x20   for v in T::variants {\n\
          \x20       println(\"x\")\n\
          \x20   }\n\
@@ -285,17 +282,12 @@ fn the_other_shape_is_refused_by_name() {
          }\n\
          \n\
          fn main() {\n\
-         \x20   println(tell(Shade::Odd))\n\
+         \x20   println(tell(Point { x: 1 }))\n\
          }");
     assert_eq!(found.code, "NK1171");
     assert_eq!(
         found.message,
-        "`T::variants` is specified and this compiler does not have it"
-    );
-    assert!(
-        found.notes[0].contains("`T::fields` are built"),
-        "it says which half is built: {:#?}",
-        found.notes
+        "`T::variants` is reached under a `Enum` bound"
     );
 }
 
@@ -316,7 +308,7 @@ fn the_shape_without_a_bound_names_the_bound() {
          }");
     assert_eq!(found.code, "NK1171");
     assert!(
-        found.notes[0].contains("`[T: Struct]`") && found.notes[0].contains("ADR-181"),
+        found.notes[0].contains("`[T: Struct]`"),
         "{:#?}",
         found.notes
     );

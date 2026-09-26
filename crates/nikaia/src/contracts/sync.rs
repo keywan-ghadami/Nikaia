@@ -405,7 +405,7 @@ fn reach_of(
     if let Some(methods) = resolved.get(&key) {
         // One method whose receiver is not known is enough. It is the absence
         // of an answer, and D2's polarity says what to do with one.
-        reach.blocked |= methods.unresolved;
+        reach.blocked |= methods.unresolved || methods.code_pauses;
         for callee in &methods.resolved {
             if own.functions.contains_key(callee) {
                 reach.calls.insert(callee.clone());

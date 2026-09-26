@@ -1061,6 +1061,22 @@ struct Emitter<'p> {
     owned_copies: std::collections::BTreeSet<(usize, String)>,
     /// `.to_string()` on text, written as its receiver (ADR-216 D4).
     text_as_is: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::kept_lambdas`.
+    kept_lambdas: std::collections::BTreeMap<(usize, String), (bool, bool)>,
+    /// `check::Checked::kept_calls`.
+    kept_calls: std::collections::BTreeMap<(usize, String), (bool, bool)>,
+    /// `check::Checked::kept_args`.
+    kept_args: std::collections::BTreeSet<(usize, String)>,
+    /// `check::Checked::kept_functions`.
+    kept_functions: std::collections::BTreeMap<(usize, String), (bool, bool, usize)>,
+    /// Set while the call a kept named function stands for is written, whose
+    /// callee is that same name.
+    in_a_kept_call: std::cell::RefCell<bool>,
+    /// `check::Checked::field_calls`.
+    field_calls: std::collections::BTreeMap<(usize, String), bool>,
+    /// Set while a parameter's type is written, where a function type the
+    /// callee only runs is a closure argument rather than a kept value.
+    in_parameter: std::cell::RefCell<bool>,
     /// The walks of a pausing sequence that have no form
     /// ([ADR-172](../../docs/specification/adr/adr-172.md) D5), by the byte the
     /// statement starts at and the method's name.
@@ -2148,6 +2164,13 @@ impl<'p> Emitter<'p> {
             slice_indices: propagation.slice_indices,
             owned_copies: propagation.owned_copies,
             text_as_is: propagation.text_as_is,
+            kept_lambdas: propagation.kept_lambdas,
+            field_calls: propagation.field_calls,
+            kept_calls: propagation.kept_calls,
+            kept_args: propagation.kept_args,
+            kept_functions: propagation.kept_functions,
+            in_a_kept_call: std::cell::RefCell::new(false),
+            in_parameter: std::cell::RefCell::new(false),
             pausing_walks: propagation.pausing_walks,
             fallible_methods: propagation.methods,
             pausing_methods: propagation.pausing_methods,
@@ -2284,7 +2307,7 @@ impl<'p> Emitter<'p> {
         let [parameter, member] = names.as_slice() else {
             return None;
         };
-        if *parameter != name || member != "fields" {
+        if *parameter != name || !matches!(member.as_str(), "fields" | "variants") {
             return None;
         }
         self.unrolled
@@ -2779,7 +2802,14 @@ impl<'p> Emitter<'p> {
                 out.push("}\n");
                 Ok(())
             }
-            Item::Fn { .. } => self.function(out, item, 0, Lifetimes::ELIDED, None, None),
+            Item::Fn { .. } => self.function(
+                out,
+                item,
+                0,
+                Lifetimes::ELIDED,
+                self.carries_input.get(&span.start),
+                None,
+            ),
             Item::Impl {
                 trait_name,
                 target,
@@ -3502,9 +3532,16 @@ impl<'p> Emitter<'p> {
             if let Some(kept) = kept.filter(|_| self.tethered_position(&key, self.text(name))) {
                 return kept;
             }
-            match carries_input.is_some_and(|set| set.contains(&name)) {
-                true => lifetimes.of_the_input(),
-                false => lifetimes,
+            let viewed = args.iter().any(|a| a.name == name && a.ty.is_view);
+            match (carries_input.is_some_and(|set| set.contains(&name)), viewed) {
+                (true, true) => lifetimes.of_the_input(),
+                // **A struct parameter that carries a view parameter's buffer**
+                // is written over it: `s: &mut Summary<'a>, name: &'a str`.
+                (true, false) => Lifetimes {
+                    reference: lifetimes.reference,
+                    params: "'a",
+                },
+                (false, _) => lifetimes,
             }
         };
         // **A parameter the body does not keep is a view**
@@ -3598,7 +3635,9 @@ impl<'p> Emitter<'p> {
                     // shapes.
                     let runs = lent.is_none_or(|c| !c.keeps.iter().any(|k| k == name));
                     let held = self.code_parameter_runs.replace(runs);
+                    let inside = self.in_parameter.replace(true);
                     let written = self.ty_counted(&a.ty, how(a.name), self.count_at(&key, name));
+                    *self.in_parameter.borrow_mut() = inside;
                     *self.code_parameter_runs.borrow_mut() = held;
                     written
                 }
@@ -3683,6 +3722,14 @@ impl<'p> Emitter<'p> {
         let declared: Vec<String> = match kept {
             Some(Lifetimes::KEPT) => std::iter::once("'k".to_string()).chain(declared).collect(),
             _ => declared,
+        };
+        // **The buffer a struct parameter carries is named on the function**
+        // where no `impl` names it already.
+        let declared: Vec<String> = match lifetimes == Lifetimes::ELIDED
+            && carries_input.is_some_and(|set| !set.is_empty())
+        {
+            true => std::iter::once("'a".to_string()).chain(declared).collect(),
+            false => declared,
         };
 
         // Kap 7.1: `throws` becomes a `Result` in the emitted Rust, over
@@ -4736,6 +4783,25 @@ impl<'p> Emitter<'p> {
             // ([ADR-027](../../docs/specification/adr/adr-027.md)), and a
             // parameter that cannot pause has no future to hand back either
             // way.
+            // **A kept function value is one shared closure**: a field, a
+            // result, a `let`, and a parameter the callee keeps. What may
+            // pause hands back a boxed future.
+            let runs = *self.in_parameter.borrow() && *self.code_parameter_runs.borrow();
+            if !runs {
+                let outcome = match code.is_sync {
+                    true => outcome,
+                    false => format!("{}<{outcome}>", self.boxed_future()),
+                };
+                // Where tasks run on threads, what a task takes crosses one.
+                let crossing = match self.build.overlaps_user_code() {
+                    true => " + Send + Sync",
+                    false => "",
+                };
+                return format!(
+                    "nikaia_std::func::Kept<dyn Fn({}) -> {outcome}{crossing}>",
+                    params.join(", ")
+                );
+            }
             if code.is_sync {
                 let shape = match (&code.result, code.throws) {
                     (None, false) => String::new(),
@@ -5834,6 +5900,50 @@ impl<'p> Emitter<'p> {
             Expr::Variable(name) if self.constructs_by_name(self.text(*name)) => {
                 out.push(&self.path(&[self.text(*name), "new"]))
             }
+            Expr::Variable(name)
+                if !*self.in_a_kept_call.borrow()
+                    && self
+                        .kept_functions
+                        .contains_key(&(flow.statement, self.text(*name).to_string())) =>
+            {
+                // **A named function where a function value is kept** is the
+                // closure that calls it, written as the checker typed it.
+                let (pauses, fails, arity) =
+                    self.kept_functions[&(flow.statement, self.text(*name).to_string())];
+                let (names, call) = crate::check::kept_function_call(self.parsed, *name, arity);
+                out.push(&format!(
+                    "nikaia_std::func::Kept(std::sync::Arc::new(move |{}| ",
+                    names
+                        .iter()
+                        .map(|n| self.text(*n).to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                let inside = Flow {
+                    throws: fails,
+                    statement: flow.statement,
+                    ..Flow::PLAIN
+                };
+                if pauses {
+                    out.push("Box::pin(async move ");
+                }
+                out.push(match fails {
+                    true => "{ Ok(",
+                    false => "{ ",
+                });
+                let outer = self.in_a_kept_call.replace(true);
+                let written = self.expr(out, &call, depth, inside);
+                *self.in_a_kept_call.borrow_mut() = outer;
+                written?;
+                out.push(match fails {
+                    true => ") }",
+                    false => " }",
+                });
+                if pauses {
+                    out.push(&format!(") as {}<_>", self.boxed_future()));
+                }
+                out.push("))");
+            }
             Expr::Variable(name) => {
                 out.push(&self.name(*name));
                 // **A binding packed for a task is read through its handle**
@@ -5904,6 +6014,45 @@ impl<'p> Emitter<'p> {
                 // written by hand** ([ADR-088](../../docs/specification/adr/adr-088.md)
                 // D2, D5's *at run time: nothing*): `value.name`, with no
                 // descriptor and no dispatch left.
+                // **A field that holds a function is called through the
+                // field**: `(button.on_click)(4)`, awaited where it may pause.
+                let called = format!(
+                    "{}.{}",
+                    crate::check::argument_shape(receiver),
+                    self.text(*method)
+                );
+                if let Some(pauses) = self.field_calls.get(&(flow.statement, called)).copied() {
+                    out.push("(");
+                    self.postfix_base(out, receiver, depth, flow)?;
+                    out.push(&format!(".{})(", self.name(*method)));
+                    for (at, arg) in args.iter().enumerate() {
+                        if at > 0 {
+                            out.push(", ");
+                        }
+                        self.expr(out, arg, depth, flow)?;
+                    }
+                    out.push(")");
+                    if pauses {
+                        out.push(".await");
+                    }
+                    if flow.throws && !flow.caught && self.method_can_fail(flow, *method) {
+                        out.push("?");
+                    }
+                    return Ok(());
+                }
+                // **`variant.is(value)` is the pattern test a program would
+                // have written by hand**: `matches!(value, Op::Add { .. })`,
+                // which fits a variant of every shape.
+                if let Some(variant) = self.reflected(receiver, *method, "is") {
+                    if let (Some(value), Some((_, on))) =
+                        (args.first(), self.specialising.borrow().clone())
+                    {
+                        out.push("matches!(");
+                        self.expr(out, value, depth, flow)?;
+                        out.push(&format!(", {on}::{} {{ .. }})", escaped(&variant)));
+                        return Ok(());
+                    }
+                }
                 if let Some(field) = self.reflected(receiver, *method, "of") {
                     if let Some(value) = args.first() {
                         self.postfix_base(out, value, depth, flow)?;
@@ -6411,6 +6560,45 @@ impl<'p> Emitter<'p> {
             } => {
                 let names: Vec<String> =
                     params.iter().map(|p| self.name(*p).into_owned()).collect();
+                // **A lambda where a function value is kept** is one shared
+                // closure, and it takes what it captures with it.
+                let kept = self
+                    .kept_lambdas
+                    .get(&(flow.statement, crate::check::argument_shape(expr)))
+                    .copied();
+                if let Some((pauses, fails)) = kept {
+                    out.push(&format!(
+                        "nikaia_std::func::Kept(std::sync::Arc::new(move |{}| ",
+                        names.join(", ")
+                    ));
+                    let mut changed: Vec<Symbol> = flow.changed.to_vec();
+                    changed.extend(mutable.iter().copied());
+                    let inside = Flow {
+                        in_lambda: !pauses,
+                        throws: fails,
+                        statement: flow.statement,
+                        changed: &changed,
+                        ..Flow::PLAIN
+                    };
+                    if pauses {
+                        out.push("Box::pin(async move ");
+                    }
+                    // A type that may fail hands back a `Result`, as a
+                    // `throws` function does: the value goes inside the `Ok`.
+                    match fails {
+                        true => {
+                            out.push("{ Ok(");
+                            self.block(out, body, depth, inside, Tail::Value)?;
+                            out.push(") }");
+                        }
+                        false => self.block(out, body, depth, inside, Tail::Return)?,
+                    }
+                    if pauses {
+                        out.push(&format!(") as {}<_>", self.boxed_future()));
+                    }
+                    out.push("))");
+                    return Ok(());
+                }
                 out.push(&format!("|{}| ", names.join(", ")));
                 // **The `mut` ones reach inward** (ADR-110 D1), and the list is
                 // the enclosing one plus this lambda's rather than this
@@ -6900,6 +7088,28 @@ impl<'p> Emitter<'p> {
         depth: usize,
         flow: Flow<'_>,
     ) -> Result<()> {
+        // **A kept function value called by name** is the closure it holds,
+        // awaited where its type may pause and propagated where it may fail.
+        if let Expr::Variable(name) = func {
+            let key = (flow.statement, self.text(*name).to_string());
+            if let Some((pauses, fails)) = self.kept_calls.get(&key).copied() {
+                out.push(&format!("{}(", self.name(*name)));
+                for (at, arg) in args.iter().enumerate() {
+                    if at > 0 {
+                        out.push(", ");
+                    }
+                    self.expr(out, arg, depth, flow)?;
+                }
+                out.push(")");
+                if pauses {
+                    out.push(".await");
+                }
+                if fails && flow.throws && !flow.caught {
+                    out.push("?");
+                }
+                return Ok(());
+            }
+        }
         // ADR-055 D6: a recursive `async fn` is an infinitely sized future, and
         // Rust says so rather than guessing - so a call that closes a cycle
         // through pausing functions puts the future behind a pointer.
@@ -7006,7 +7216,11 @@ impl<'p> Emitter<'p> {
         // ([ADR-028](../../docs/specification/adr/adr-028.md)), so the name is
         // handed over keyed by the byte the call stands at.
         if let Some(copy) = self.unrolled_calls.get(&flow.statement) {
-            if matches!(func, Expr::Variable(_)) {
+            // **Only the call to the walking function**: the key is the
+            // statement, and `println(describe(u))` holds two calls.
+            let walker = matches!(func, Expr::Variable(name)
+                if copy.starts_with(&format!("{}__", self.text(*name))));
+            if walker {
                 out.push(&format!("{copy}("));
                 for (at, arg) in args.iter().enumerate() {
                     if at > 0 {
@@ -8676,6 +8890,15 @@ impl<'p> Emitter<'p> {
         crate::check::text_key(self.hole.borrow().as_ref(), at)
     }
 
+    /// The future a kept function that may pause hands back: one that crosses
+    /// threads where tasks run on them.
+    fn boxed_future(&self) -> &'static str {
+        match self.build.overlaps_user_code() {
+            true => "nikaia_std::func::SendBoxed",
+            false => "nikaia_std::func::Boxed",
+        }
+    }
+
     /// The literal as a Rust format string, with its holes as arguments.
     fn format_string(
         &self,
@@ -9294,7 +9517,10 @@ impl<'p> Emitter<'p> {
             // detached case, arrived at from the lowering rather than from a
             // word.
             let future = matches!(arg, Expr::Closure { .. })
-                && self.future_lambdas.contains(&(flow.statement, i));
+                && self.future_lambdas.contains(&(flow.statement, i))
+                && !self
+                    .kept_lambdas
+                    .contains_key(&(flow.statement, crate::check::argument_shape(arg)));
             // **The pointer a C declaration takes**
             // ([ADR-147](../../docs/specification/adr/adr-147.md) D1). The
             // declaration says `&[u8]` and C wants an address, so the address
@@ -9405,7 +9631,17 @@ impl<'p> Emitter<'p> {
                             self.expr(out, arg, depth, inside)?;
                             out.push(") }");
                         }
-                        None => self.expr(out, arg, depth, inside)?,
+                        None => {
+                            // A kept value handed to a parameter that only
+                            // runs it: the closure it holds.
+                            if self
+                                .kept_args
+                                .contains(&(flow.statement, crate::check::argument_shape(arg)))
+                            {
+                                out.push("&*");
+                            }
+                            self.expr(out, arg, depth, inside)?
+                        }
                     }
                 }
             }

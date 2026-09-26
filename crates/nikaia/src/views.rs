@@ -125,6 +125,9 @@ pub struct Stored {
     pub method: usize,
     /// The parameter's interned name, for the same reason.
     pub symbol: Ident,
+    /// Where the view is carried by a struct **parameter** rather than the
+    /// subject: that parameter, whose buffer the view is written as a view of.
+    pub carrier: Option<Ident>,
 }
 
 /// The kind of place a stored view reaches.
@@ -143,6 +146,15 @@ pub enum Destination {
     Result { ty: String },
     /// A task's body. It outlives the call whatever it does with the view.
     Task,
+    /// A field of a **parameter** whose struct holds views: `s.label = name`
+    /// in `fn relabel(mut s: Summary, name: ref String)`. The struct names
+    /// the buffer, so the view parameter can be written as a view of it.
+    ParamField {
+        param: Ident,
+        owner: String,
+        field: String,
+        ty: String,
+    },
 }
 
 /// Every naked view parameter in this unit whose view is stored.
@@ -206,7 +218,11 @@ pub fn carried(parsed: &Parsed, own: &Ledger, library: &Ledger) -> HashMap<usize
     let mut out: HashMap<usize, HashSet<Ident>> = HashMap::new();
     for stored in analyse(parsed, own, library) {
         if stored.carried {
-            out.entry(stored.method).or_default().insert(stored.symbol);
+            let at = out.entry(stored.method).or_default();
+            at.insert(stored.symbol);
+            // The struct parameter that carries it is written over the same
+            // buffer.
+            at.extend(stored.carrier);
         }
     }
     out
@@ -229,13 +245,19 @@ fn finding(stored: &Stored) -> Finding {
     } = stored;
 
     let where_it_goes = match into {
-        Destination::Field { owner, field, .. } => format!("`{owner}.{field}`"),
+        Destination::Field { owner, field, .. } | Destination::ParamField { owner, field, .. } => {
+            format!("`{owner}.{field}`")
+        }
         Destination::Subject { owner } => format!("`{owner}`, through a call on it"),
         Destination::Result { .. } => "the value this function hands back".to_string(),
         Destination::Task => "a task, which goes on running after the call".to_string(),
     };
 
     let why = match into {
+        Destination::ParamField { owner, field, .. } => format!(
+            "`{owner}.{field}` belongs to a struct handed in, and this function stores into \
+             more than one such struct - so `{param}` cannot be a view of one of their buffers"
+        ),
         Destination::Field {
             owner,
             field,
@@ -419,6 +441,10 @@ fn scan(unit: Unit<'_>, target: Option<&Type>, method: usize, item: &Item, out: 
             } else {
                 None
             },
+            ours: ret_type
+                .as_ref()
+                .filter(|_| result_holds_view && result_is_ours)
+                .map(|ty| ty.name),
             carriers: BTreeSet::from([parsed.text(*param).to_string()]),
             found: Vec::new(),
         };
@@ -430,10 +456,23 @@ fn scan(unit: Unit<'_>, target: Option<&Type>, method: usize, item: &Item, out: 
         // it does not cover is a refusal, and that one is what the caret goes
         // under - at the place that says the most about where the view went (see
         // [`rank`]).
-        let (unreached, reached): (Vec<_>, Vec<_>) = scanner
+        // **A field of one struct parameter** is covered the same way, by
+        // that parameter's buffer - where the subject names none, and every
+        // such field is the same parameter's.
+        let carriers: HashSet<Ident> = scanner
             .found
-            .into_iter()
-            .partition(|(_, into)| !covered_by_the_subject(subject_names_a_buffer, into));
+            .iter()
+            .filter_map(|(_, into)| match into {
+                Destination::ParamField { param, .. } => Some(*param),
+                _ => None,
+            })
+            .collect();
+        let one_carrier = carriers.len() == 1 && !subject_names_a_buffer;
+        let (unreached, reached): (Vec<_>, Vec<_>) =
+            scanner.found.into_iter().partition(|(_, into)| {
+                !(covered_by_the_subject(subject_names_a_buffer, into)
+                    || (one_carrier && matches!(into, Destination::ParamField { .. })))
+            });
         let pick = |found: Vec<(Span, Destination)>| {
             found
                 .into_iter()
@@ -454,6 +493,11 @@ fn scan(unit: Unit<'_>, target: Option<&Type>, method: usize, item: &Item, out: 
             carried,
             method,
             symbol: *param,
+            carrier: carriers
+                .iter()
+                .next()
+                .copied()
+                .filter(|_| one_carrier && carried),
         });
     }
 }
@@ -484,6 +528,7 @@ fn rank(into: &Destination) -> u8 {
         Destination::Subject { .. } => 1,
         Destination::Task => 2,
         Destination::Result { .. } => 3,
+        Destination::ParamField { .. } => 0,
     }
 }
 
@@ -567,6 +612,10 @@ struct Scanner<'p> {
     declared: &'p [(Ident, &'p Type)],
     /// The declared result, where handing the view back would be storing it.
     result: Option<&'p Type>,
+    /// The declared result's name, where the result holds a view and can only
+    /// point into this parameter's buffer: a literal of it handed back puts
+    /// the view where the signature already says it goes.
+    ours: Option<Ident>,
     /// Names that may carry this parameter's view. Monotone: a name that ever
     /// carries it keeps carrying it, which is the fail-closed direction.
     carriers: BTreeSet<String>,
@@ -579,6 +628,10 @@ enum Root {
     Subject,
     /// `self.stations`, `self.a.b` - the field off `self` is what carries.
     SubjectField(Ident),
+    /// A parameter whose struct holds views.
+    Param(Ident),
+    /// `s.label`, off such a parameter: the parameter and the field.
+    ParamField(Ident, Ident),
     /// A local, a literal, a free call: not a place this module decides about.
     Elsewhere,
 }
@@ -639,14 +692,16 @@ impl Scanner<'_> {
                 }
                 Stmt::Return(Some(value)) => {
                     self.returned(value, &stmt.span);
-                    self.stores(value, &stmt.span);
+                    self.handed_back(value, &stmt.span);
                 }
                 Stmt::Return(None) => {}
                 Stmt::Expr(expr) => {
                     if returning {
                         self.returned(expr, &stmt.span);
+                        self.handed_back(expr, &stmt.span);
+                    } else {
+                        self.stores(expr, &stmt.span);
                     }
-                    self.stores(expr, &stmt.span);
                 }
                 Stmt::For {
                     bindings,
@@ -672,13 +727,63 @@ impl Scanner<'_> {
         }
     }
 
+    /// **A literal of the result, handed back**, where the result can only
+    /// point into this parameter's buffer: its fields are what the signature
+    /// says the result views, so they are no store. What stands inside them
+    /// is still asked.
+    fn handed_back(&mut self, value: &Expr, span: &Span) {
+        match value {
+            Expr::StructLit { name, .. } if self.ours == Some(*name) => self.descend(value, span),
+            _ => self.stores(value, span),
+        }
+    }
+
     /// `self.label = name`, and the deeper forms of it.
     fn assigned(&mut self, target: &Expr, span: &Span) {
         match self.root(target) {
             Root::SubjectField(field) => self.field_of_subject(field, span),
             Root::Subject => self.subject_destination(span),
-            Root::Elsewhere => {}
+            Root::ParamField(param, field) => self.field_of_param(param, field, span),
+            Root::Param(_) | Root::Elsewhere => {}
         }
+    }
+
+    /// The struct a parameter's declared type names, where that struct holds
+    /// views and the parameter is not itself a view.
+    fn a_struct_parameter(&self, name: Ident) -> Option<Ident> {
+        self.declared
+            .iter()
+            .find(|(declared, _)| *declared == name)
+            .map(|(_, ty)| *ty)
+            .filter(|ty| !ty.is_view && self.borrowing.contains(&ty.name))
+            .map(|ty| ty.name)
+    }
+
+    /// A store into the field `field` of the parameter `param`.
+    fn field_of_param(&mut self, param: Ident, field: Ident, span: &Span) {
+        let Some(owner) = self.a_struct_parameter(param) else {
+            return;
+        };
+        let name = self.parsed.text(field).to_string();
+        let Some((_, ty)) = self
+            .fields
+            .get(&owner)
+            .and_then(|fields| fields.iter().find(|(declared, _)| *declared == name))
+        else {
+            return;
+        };
+        if !holds_view(ty) && !names_borrowing(ty, self.borrowing) {
+            return;
+        }
+        self.found.push((
+            span.clone(),
+            Destination::ParamField {
+                param,
+                owner: self.parsed.text(owner).to_string(),
+                field: name,
+                ty: write_type(self.parsed, ty),
+            },
+        ));
     }
 
     /// A value handed back, where the result holds a view of another buffer.
@@ -862,7 +967,7 @@ impl Scanner<'_> {
                     match self.root(receiver) {
                         Root::SubjectField(field) => self.field_of_subject(field, span),
                         Root::Subject => self.subject_destination(span),
-                        Root::Elsewhere => {}
+                        Root::Param(_) | Root::ParamField(..) | Root::Elsewhere => {}
                     }
                 }
                 self.descend(expr, span);
@@ -952,10 +1057,12 @@ impl Scanner<'_> {
     fn root(&self, expr: &Expr) -> Root {
         match expr {
             Expr::Variable(name) if self.parsed.text(*name) == "self" => Root::Subject,
+            Expr::Variable(name) if self.a_struct_parameter(*name).is_some() => Root::Param(*name),
             Expr::Field { base, name } => match self.root(base) {
                 // The outer field sits inside the root one, so the root field
                 // is what carries the buffer.
                 Root::Subject => Root::SubjectField(*name),
+                Root::Param(param) => Root::ParamField(param, *name),
                 other => other,
             },
             Expr::MethodCall { receiver, .. } | Expr::SafeMethod { receiver, .. } => {

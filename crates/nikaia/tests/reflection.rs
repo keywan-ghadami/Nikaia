@@ -176,33 +176,52 @@ fn a_bound_that_is_never_asked_is_an_ordinary_generic() {
     assert!(!rust.contains("tell__User"), "{rust}");
 }
 
-/// **`variants` is the half that is not built**
-/// ([ADR-181](../../../docs/specification/adr/adr-181.md) D4), and the refusal
-/// says so rather than listing what has since arrived.
+/// **`T::variants` walks an `enum`'s variants**, in the order they are
+/// declared: a variant answers `.name` and `.is(value)`, and the loop is
+/// unrolled once per variant, as `T::fields` is once per field.
 #[test]
-fn variants_says_which_half_is_built() {
+fn variants_are_walked_like_fields() {
+    let source = "enum Op { Add, Sub(i64), Mul { by: i64 } }\n\
+         \n\
+         fn which[T: Enum](value: T) -> String {\n\
+         \x20   for v in T::variants {\n\
+         \x20       if v.is(value) {\n\
+         \x20           return f\"{v.name}\"\n\
+         \x20       }\n\
+         \x20   }\n\
+         \x20   return \"?\"\n\
+         }\n\
+         \n\
+         fn names[T: Enum](value: T) {\n\
+         \x20   for v in T::variants { println(v.name) }\n\
+         }\n\
+         \n\
+         fn main() {\n\
+         \x20   println(which(Op::Sub(2)))\n\
+         \x20   println(which(Op::Mul { by: 3 }))\n\
+         \x20   names(Op::Add)\n\
+         }\n";
+    assert!(findings(source).is_empty(), "{:#?}", findings(source));
+    assert_eq!(ran("variants", source), "Sub\nMul\nAdd\nSub\nMul\n");
+}
+
+/// **A variant answers two members**, as a field does: anything else is
+/// `NK1180`, with the `match` named for what a variant carries.
+#[test]
+fn a_member_a_reflected_variant_does_not_have_is_refused() {
     let found = findings(
         "enum Shade { Odd, Even }\n\
          \n\
          fn tell[T: Enum](value: T) {\n\
-         \x20   for v in T::variants { println(\"x\") }\n\
+         \x20   for v in T::variants { println(v.payload) }\n\
          }\n\
          \n\
          fn main() { tell(Shade::Odd) }\n",
     );
-    let refused: Vec<_> = found.iter().filter(|f| f.code == "NK1171").collect();
+    let refused: Vec<_> = found.iter().filter(|f| f.code == "NK1180").collect();
     assert_eq!(refused.len(), 1, "{found:#?}");
     assert!(
-        refused[0].notes[0].contains("`T::fields` are built"),
-        "{:#?}",
-        refused[0].notes
-    );
-    assert!(
-        refused[0]
-            .help
-            .as_deref()
-            .unwrap_or_default()
-            .contains("`match`"),
+        refused[0].message.contains("`payload`"),
         "{:#?}",
         refused[0]
     );

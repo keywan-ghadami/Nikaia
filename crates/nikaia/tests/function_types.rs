@@ -280,8 +280,8 @@ fn a_kept_parameter_keeps_the_boxed_closure() {
          fn main() { }\n",
     );
     assert!(
-        rust.contains("Pin<Box<dyn std::future::Future<Output = String>>>"),
-        "a kept parameter keeps the box: {rust}"
+        rust.contains("nikaia_std::func::Kept<dyn Fn() -> nikaia_std::func::Boxed<String>>"),
+        "a kept parameter is a kept value, over a boxed future: {rust}"
     );
     assert!(!rust.contains("impl AsyncFn"), "{rust}");
 }
@@ -305,36 +305,23 @@ fn a_std_entrys_lambda_keeps_its_plain_closure() {
     assert!(!rust.contains("Box::pin"), "{rust}");
 }
 
-/// **`NK1142`: only a parameter yet.** D1 says a function type may stand
-/// wherever a type may and D5 says the two cases lower differently — a run
-/// parameter is a closure argument, a **kept** one is a boxed closure over a
-/// boxed future, and only the first is built. A field written `impl Fn(…)` is
-/// not Rust, so the reader would meet the backend's words about a file nobody
-/// wrote ([Part III C.1](../../../docs/specification/30-nikaia-tooling.md)).
+/// **A function type outside a parameter is a kept value** (D5): a field, a
+/// result and a `let` are one shared closure below, and nothing is refused
+/// for standing there.
 #[test]
-fn a_function_type_outside_a_parameter_is_refused_here() {
+fn a_function_type_outside_a_parameter_is_a_kept_value() {
     for source in [
-        "struct Router { handler: fn(Request) -> Response }\nfn main() { }\n",
-        "fn make() -> fn(i64) -> i64 { }\nfn main() { }\n",
-        "fn main() { let f: fn(i64) -> i64 = 1 }\n",
+        "struct Router { handler: fn(i64) -> i64 }\nfn main() { }\n",
+        "fn make() -> fn(i64) -> i64 sync { return fn(x) { x } }\nfn main() { }\n",
+        "fn main() { let f: fn(i64) -> i64 sync = fn(x) { x + 1 }\n println(f\"{f(1)}\") }\n",
     ] {
         let refused = findings(source);
-        let about = refused
-            .iter()
-            .find(|f| f.code == "NK1142")
-            .unwrap_or_else(|| panic!("{source}\n{refused:#?}"));
+        assert!(refused.is_empty(), "{source}\n{refused:#?}");
         assert!(
-            about
-                .help
-                .as_deref()
-                .is_some_and(|h| h.contains("parameter")),
-            "the help names the way through: {:?}",
-            about.help
+            lowered(source).contains("nikaia_std::func::Kept<dyn Fn("),
+            "{source}"
         );
     }
-    // …and a parameter is not refused, which is the whole of what is built.
-    let fine = findings("fn twice(x: i64, f: fn(i64) -> i64) -> i64 { return f(f(x)) }\n");
-    assert!(!fine.iter().any(|f| f.code == "NK1142"), "{fine:#?}");
 }
 
 /// **`NK2206`: a lambda that pauses, handed to a `fn() sync`** (D2).

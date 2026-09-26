@@ -28,6 +28,7 @@ pub mod error;
 pub mod fixed;
 pub mod foreign;
 pub mod fs;
+pub mod func;
 pub mod grammar;
 pub mod hash;
 pub mod html;

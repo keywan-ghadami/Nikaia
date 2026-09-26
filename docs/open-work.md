@@ -478,8 +478,8 @@ left here is an order rather than a design:
 
 *What an application writes needs no language change*, measured at 0.0.152 —
 and what it turned out to write is **not** the chain that measurement ran.
-`NK1142` refuses a function type in a field, so nothing can *keep* a handler per
-path and a `.route(…)` chain has nowhere to put what it was handed
+`NK1142` refused a function type in a field until 0.0.195, so nothing could *keep* a handler per
+path and a `.route(…)` chain had nowhere to put what it was handed
 ([§2.14](#214-a-parameter-may-be-a-function-and-a-kept-one-has-no-lowering) is
 the entry that owes it). So the MVP's shape is **one handler and not a route
 table** — `http::listen(at) fn(request) { … }`, with the handler deciding — which
@@ -621,17 +621,12 @@ first one that did, `examples/http/`'s server passing its handler to an `answer`
 inside its accept loop, got *use of moved value* from `rustc` about a file nobody
 wrote.
 
-*What is left is D5's lowering of a **kept** handler*, which is *a lambda that
-pauses is refused where `std` takes it* one entry up, with a callee that can now
-say which shape it wants.
+*D5's lowering of a **kept** handler is built since 0.0.195*
+([ADR-217](specification/adr/adr-217.md) D2): a function type in a field, a
+result, a `let` or a kept parameter is `nikaia_std::func::Kept`, one shared
+closure, and `NK1142` is retired. **A route table can be written now.**
 
-*Until that lands, a function type is a **parameter** and nothing else.* A
-field, a result and a `let` are the positions where it can only be kept, and
-they are `NK1142` here rather than `impl Fn(…)` in a Rust field — which is not
-Rust, and would reach the reader as the backend's words about a file nobody
-wrote.
-
-*And what that costs is now a concrete thing and not a hypothetical one.* A
+*What it cost until then was concrete.* A
 **route table** is a field holding a handler per path, so `NK1142` is why the
 HTTP MVP is **one handler and not a `.route(…)` chain**
 ([§2.6](#26-the-http-server-is-built-and-what-waits-on-it-is-the-parsing-moved-into-nikaia)).
@@ -982,8 +977,8 @@ which held for as long as no program handed a handler on — and `&F` is a funct
 too, so the call writes one `&` and nothing else changes.
 
 *What is left is step 4*, `fortunes.nika` as the corpus program. `examples/http/`
-is written and **declares no `route`**: `NK1142` refuses a function type in a
-field, so a chain cannot keep what it was handed, and the MVP's shape is one
+is written and **declares no `route`**: `NK1142` refused a function type in a
+field until 0.0.195, so a chain could not keep what it was handed, and the MVP's shape is one
 handler ([§2.6](#26-the-http-server-is-built-and-what-waits-on-it-is-the-parsing-moved-into-nikaia)).
 So this line's *needs the package rewritten rather than the compiler changed* was
 wrong about which half is blocking: the package is written, and what `route`

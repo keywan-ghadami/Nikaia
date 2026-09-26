@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.194 (Draft)
+**Version:** 0.0.195 (Draft)
 **Date:** 2026-09-26
 
 ---
@@ -160,7 +160,8 @@ fn describe[T: Struct](value: T) {
 
 **The bound makes `T::fields` exist.** `T: Struct` is an ordinary bound (4.7),
 answered from the **declaration** rather than an `impl`. It says that a shape
-may be asked for. A `T: Enum` has `T::variants`. There is no builtin and no
+may be asked for. A `T: Enum` has `T::variants`, the variants in declared
+order. There is no builtin and no
 special syntax: **reflection is reached as a member**, and `field.of(value)` is
 a method on the reflected field. The separator is `::` (10.2).
 
@@ -190,7 +191,12 @@ error: `println` cannot format a `Vec[u8]`
      = unrolling `T::fields` for `User`, at field `avatar`
 ```
 
-A member a reflected field does not have is refused with `NK1180`.
+A reflected field answers `.name`, its name as text, and `.of(value)`, what it
+holds on that value. A reflected variant answers `.name` and `.is(value)`,
+whether the value is that variant; what a variant carries is read with a
+`match`. Any other member is refused with `NK1180`. `T::fields` without a
+`Struct` bound, or `T::variants` without an `Enum` bound, is refused with
+`NK1171`.
 
 **What cannot be read is printed.** `nikaia --comptime` prints what was
 unrolled, once for the program, for the types actually used, as `--overlaps`,

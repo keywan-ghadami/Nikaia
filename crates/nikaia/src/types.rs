@@ -577,49 +577,6 @@ fn written_at(
         if let Some(result) = &code.result {
             written(parsed, result, known, span, out);
         }
-        if at == Position::Elsewhere {
-            out.push(only_a_parameter_yet(span));
-        }
-    }
-}
-
-/// `NK1142`: a function type outside a parameter, which is
-/// [ADR-102](../../../docs/specification/adr/adr-102.md) D5's **kept** lowering
-/// and is not built.
-///
-/// D1 says a function type may stand wherever a type may — a parameter, a
-/// struct field, a result — and D5 says the two cases lower differently: a
-/// **run** parameter is a closure argument, which is what `std`'s own
-/// higher-order entries are, and a **kept** one is a boxed closure over a boxed
-/// future. Only the first is built.
-///
-/// **It is refused rather than emitted**, which is the choice
-/// [Part III C.1](../../../docs/specification/30-nikaia-tooling.md) makes for
-/// this compiler: a field written `impl Fn(…)` is not Rust, and what the reader
-/// would get is the backend's words about a file nobody wrote. A refusal in
-/// this compiler's own words, naming what is missing, is the honest half of a
-/// record that is built in steps.
-fn only_a_parameter_yet(span: &Span) -> Finding {
-    Finding {
-        severity: Severity::Error,
-        span: span.clone(),
-        code: "NK1142",
-        message: "a function type may only be a parameter in this compiler".to_string(),
-        notes: vec![
-            "a parameter the callee **runs** lowers to a closure argument, which is what \
-             `std`'s own `map` and `access` take; a function type in a field, a result or \
-             a `let` is one the callee **keeps**, and that lowering is not built \
-             (ADR-102 D5)"
-                .to_string(),
-            "it is refused here rather than handed to the language below, because what \
-             comes back from there is about the generated file (Part III, C.1)"
-                .to_string(),
-        ],
-        help: Some(
-            "take the code in as a parameter and call it during the call - or hold it \
-             behind a type of your own until the kept lowering lands"
-                .to_string(),
-        ),
     }
 }
 

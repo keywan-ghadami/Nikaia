@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.195] — 2026-09-26
+
+**What the specification stated and the compiler did not build** —
+[ADR-217](docs/specification/adr/adr-217.md), the owner's request after 0.0.194.
+
+- **`T::variants`**: under `[T: Enum]` the loop is unrolled once per variant, in
+  declared order; a variant answers `.name` and `.is(value)`, anything else is
+  `NK1180`. A call to a shape walk inside another call no longer renames both.
+- **Kept function values**: a function type in a field, a result, a `let` or a
+  parameter the callee keeps is one shared closure, `nikaia_std::func::Kept`.
+  Lambdas and named functions are wrapped where they are kept, a field holding
+  one is called like a method, pausing and failing calls make their function
+  pause and fail, a kept value handed to a run parameter is lent. `NK1142` is
+  retired.
+- **Views kept by the result or by a struct parameter**: `fn make(name: ref
+  String) -> Reading` returning a literal is accepted, and a store into a field
+  of a struct parameter that holds views ties the two with a named lifetime
+  (this reached `rustc` before). The two `NK2304` refusals stay.
+- Part I 2.2 says `fs::read` hands back `Bytes`.
+
 ## [0.0.194] — 2026-09-26
 
 **The specification states the contract and nothing else** — the owner's

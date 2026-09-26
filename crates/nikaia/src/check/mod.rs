@@ -121,6 +121,10 @@ pub struct MethodCalls {
     /// checked again rather than remembered. `crates/nikaia/tests/sequences.rs`
     /// is what checks it.
     pub unanswered: usize,
+    /// It calls a **kept function value** through a field whose type may
+    /// pause, or may fail: the answer is the type's, not a callee's.
+    pub code_pauses: bool,
+    pub code_fails: bool,
     /// Which of `resolved` were reached from inside a **`spawn`** body, and
     /// whether any unresolvable call was
     /// ([ADR-039](../../docs/specification/adr/adr-039.md) D3).
@@ -345,6 +349,24 @@ pub struct Checked {
     /// form of text is the text itself, so the call is written as its receiver
     /// ([ADR-216](../../docs/specification/adr/adr-216.md) D4).
     pub text_as_is: BTreeSet<(usize, String)>,
+    /// **Lambdas put where a function value is kept** - a field, a result, an
+    /// annotated `let`, an assignment, a parameter the callee keeps - by
+    /// statement and shape, and whether the function type may pause. Written
+    /// below as one shared closure, `nikaia_std::func::Kept`.
+    pub kept_lambdas: BTreeMap<(usize, String), (bool, bool)>,
+    /// **Calls of a field that holds a function**, `button.on_click(4)`, by
+    /// statement and `receiver.field`, and whether the call may pause.
+    pub field_calls: BTreeMap<(usize, String), bool>,
+    /// **Calls of a kept function value by name**, `step(5)` where `step` is
+    /// a `let`, by statement and name: whether it may pause, and fail.
+    pub kept_calls: BTreeMap<(usize, String), (bool, bool)>,
+    /// **A kept value handed to a parameter the callee only runs**, by
+    /// statement and shape: lent to it as the closure it holds.
+    pub kept_args: BTreeSet<(usize, String)>,
+    /// **A named function put where a function value is kept**, by statement
+    /// and name: whether the type may pause, may fail, and how many parameters
+    /// it takes. Written below as a kept closure that calls it.
+    pub kept_functions: BTreeMap<(usize, String), (bool, bool, usize)>,
     /// The **method calls that can fail**, as the byte the statement they
     /// stand in starts at and the method's name (ADR-023 D8).
     ///
@@ -984,6 +1006,7 @@ fn walked<'a>(
         writing_index: false,
         read_a_map: false,
         hole: None,
+        run_code: BTreeSet::new(),
         last_resolved: None,
         receiver_name: None,
         caught_several: false,
@@ -1277,6 +1300,22 @@ pub fn text_key(hole: Option<&(usize, String)>, at: usize) -> usize {
     (hasher.finish() as usize) | (1 << (usize::BITS - 1))
 }
 
+/// **The call a named function stands for where a function value is kept**:
+/// `double` put in a field is `fn(__nikaia_arg0) { double(__nikaia_arg0) }`.
+/// One construction for the checker, which types it, and the emitter, which
+/// writes it, so the two agree about every key the call is looked up by.
+pub(crate) fn kept_function_call(parsed: &Parsed, name: Ident, arity: usize) -> (Vec<Ident>, Expr) {
+    let names: Vec<Ident> = (0..arity)
+        .map(|at| parsed.interner.intern_string(&format!("__nikaia_arg{at}")))
+        .collect();
+    let call = Expr::Call {
+        func: Box::new(Expr::Variable(name)),
+        args: names.iter().map(|n| Expr::Variable(*n)).collect(),
+        config: Vec::new(),
+    };
+    (names, call)
+}
+
 pub fn argument_shape(expr: &Expr) -> String {
     format!("{expr:?}")
 }
@@ -1332,6 +1371,16 @@ pub struct Propagation {
     pub owned_copies: BTreeSet<(usize, String)>,
     /// [`Checked::text_as_is`].
     pub text_as_is: BTreeSet<(usize, String)>,
+    /// [`Checked::kept_lambdas`].
+    pub kept_lambdas: BTreeMap<(usize, String), (bool, bool)>,
+    /// [`Checked::field_calls`].
+    pub field_calls: BTreeMap<(usize, String), bool>,
+    /// [`Checked::kept_calls`].
+    pub kept_calls: BTreeMap<(usize, String), (bool, bool)>,
+    /// [`Checked::kept_args`].
+    pub kept_args: BTreeSet<(usize, String)>,
+    /// [`Checked::kept_functions`].
+    pub kept_functions: BTreeMap<(usize, String), (bool, bool, usize)>,
     /// [`Checked::pausing_walks`].
     pub pausing_walks: BTreeSet<(usize, String)>,
     /// [`Checked::fallible_methods`].
@@ -1526,6 +1575,11 @@ pub fn propagation_against(
         slice_indices: checked.slice_indices,
         owned_copies: checked.owned_copies,
         text_as_is: checked.text_as_is,
+        kept_lambdas: checked.kept_lambdas,
+        field_calls: checked.field_calls,
+        kept_calls: checked.kept_calls,
+        kept_args: checked.kept_args,
+        kept_functions: checked.kept_functions,
         pausing_walks: checked.pausing_walks,
         methods: checked.fallible_methods,
         pausing_methods: checked.pausing_methods,
@@ -1631,13 +1685,18 @@ fn rust_constant_type(ty: &Ty) -> Option<String> {
 /// `crate::emit::visit_block` rather than a walk of this file's own, for the
 /// reason that function is `pub(crate)` at all: a second walk over one shape is
 /// a second thing to keep in step with the AST.
-fn walks_the_fields_of(parsed: &Parsed, body: &crate::ast::Block, parameter: &str) -> bool {
+fn walks_the_fields_of(
+    parsed: &Parsed,
+    body: &crate::ast::Block,
+    parameter: &str,
+    shape: &str,
+) -> bool {
     let mut found = false;
     crate::emit::visit_block(body, &mut |expr| {
         if let Expr::Path(segments) = expr {
             let names: Vec<&str> = segments.iter().map(|s| parsed.text(*s)).collect();
             if matches!(names.as_slice(), [ty, member]
-                if *ty == parameter && *member == FIELDS)
+                if *ty == parameter && *member == shape)
             {
                 found = true;
             }
@@ -1658,12 +1717,19 @@ pub(crate) fn specialised(function: &str, on: &str) -> String {
     format!("{function}__{on}")
 }
 
-/// The member Part II 10.3 writes, and the one this compiler answers.
-///
-/// `variants` is its neighbour in that section and is **not** built: an
-/// `enum`'s shape is a different value, and `NK1171` says so rather than
-/// pretending the two are one feature.
+/// The members Part II 10.3 writes: a `struct`'s fields under `[T: Struct]`,
+/// an `enum`'s variants under `[T: Enum]`.
 const FIELDS: &str = "fields";
+const VARIANTS: &str = "variants";
+
+/// The member a shape bound makes reachable, and the type of one element of it.
+fn shape_member(bound: &str) -> Option<(&'static str, &'static str)> {
+    match bound {
+        "Struct" => Some((FIELDS, ty::FIELD)),
+        "Enum" => Some((VARIANTS, ty::VARIANT)),
+        _ => None,
+    }
+}
 
 /// What a `&[T]` is a view of, and `None` for anything else.
 ///
@@ -2310,6 +2376,9 @@ struct Checker<'a> {
     /// The statement and the text of the f-string hole being walked, for
     /// `text_at`.
     hole: Option<(usize, String)>,
+    /// The parameters of the function being walked that are code it only
+    /// runs, which stay closure arguments below.
+    run_code: BTreeSet<String>,
     /// The ledger key the last method call resolved to, for the arm around it
     /// (ADR-215 D4).
     last_resolved: Option<String>,
@@ -2970,11 +3039,11 @@ impl<'a> Checker<'a> {
             };
             let walked = generics.iter().find_map(|g| {
                 let parameter = parsed.text(g.name).to_string();
-                let bounded = g
-                    .bounds
-                    .iter()
-                    .any(|b| parsed.text(*b) == crate::types::SHAPE_BOUNDS[0]);
-                let asked = bounded && walks_the_fields_of(parsed, body, &parameter);
+                let asked = g.bounds.iter().any(|b| {
+                    shape_member(parsed.text(*b)).is_some_and(|(member, _)| {
+                        walks_the_fields_of(parsed, body, &parameter, member)
+                    })
+                });
                 asked.then_some(parameter)
             });
             if let Some(parameter) = walked {
@@ -3646,6 +3715,18 @@ impl<'a> Checker<'a> {
         let outer = std::mem::replace(&mut self.expected, expected.clone());
         let outer_throwing = std::mem::replace(&mut self.throwing, *throws);
 
+        let keeps: Vec<String> = self
+            .current
+            .as_ref()
+            .and_then(|key| self.own.functions.get(key))
+            .map(|contract| contract.keeps.clone())
+            .unwrap_or_default();
+        let run_code: BTreeSet<String> = frame
+            .iter()
+            .filter(|local| matches!(local.ty, Ty::Fn { .. }) && !keeps.contains(&local.name))
+            .map(|local| local.name.clone())
+            .collect();
+        let outer_run_code = std::mem::replace(&mut self.run_code, run_code);
         self.scope.push(frame);
         let tail_span = body.stmts.last().map(|s| s.span.clone());
         let outer_lists = std::mem::take(&mut self.empty_lists);
@@ -3726,6 +3807,7 @@ impl<'a> Checker<'a> {
         self.borrowing_self = outer_borrowing;
         self.current = outer_current;
         self.inside_a_sync_function = outer_sync;
+        self.run_code = outer_run_code;
     }
 
     /// Whether a conversion narrows, recorded for the emitter (ADR-043 D4).
@@ -6037,6 +6119,9 @@ impl<'a> Checker<'a> {
                 // assigned to a `String` place - a name, a field, a map's or a
                 // list's slot - is built into text of its own there, as it is at
                 // every other place that keeps it (ADR-207 D1, ADR-213 D2).
+                if op.is_none() {
+                    self.a_kept_lambda(&into, value, span);
+                }
                 let found = match op {
                     None => self.text_literal(&into, value, true).unwrap_or(found),
                     Some(_) => found,
@@ -6272,13 +6357,14 @@ impl<'a> Checker<'a> {
                     // the `for` this checker already reads — D4's *one loop*,
                     // arrived at rather than added.
                     [ty, member]
-                        if *member == FIELDS
-                            && self.walks_fields.values().any(|p| p == ty)
-                            && self.type_parameters.contains_key(*ty) =>
+                        if self.walks_fields.values().any(|p| p == ty)
+                            && self.shape_element(ty, member).is_some() =>
                     {
                         Ty::Named {
                             name: "Vec".to_string(),
-                            args: vec![Ty::named(ty::FIELD)],
+                            args: vec![Ty::named(
+                                self.shape_element(ty, member).unwrap_or_default(),
+                            )],
                             view: false,
                         }
                     }
@@ -6578,6 +6664,23 @@ impl<'a> Checker<'a> {
                 // wrong at one unrolled copy and right at the others (D5), and
                 // saying so from the generic walk would be saying it about all
                 // of them.
+                // **`variant.is(value)`, the one method a reflected variant
+                // has**: whether the value is that variant. A `bool` on every
+                // turn, so the generic walk and the unrolled one agree.
+                if matches!(&on, Ty::Named { name, .. } if name == ty::VARIANT) {
+                    args.iter().for_each(|a| {
+                        self.expr(a, span);
+                    });
+                    if let Some(at) = witness {
+                        self.expr(&config[at].value, span);
+                    }
+                    let named = self.parsed.text(*method).to_string();
+                    if named != "is" || args.len() != 1 {
+                        self.a_reflected_variant_has_two_members(&format!("{named}(…)"), span);
+                        return Ty::Unknown;
+                    }
+                    return Ty::named("bool");
+                }
                 if matches!(&on, Ty::Named { name, .. } if name == ty::FIELD) {
                     args.iter().for_each(|a| {
                         self.expr(a, span);
@@ -6740,6 +6843,39 @@ impl<'a> Checker<'a> {
                     self.at_a_write_door = outer_door;
                     self.inside_a_door = outer_inside;
                     return on;
+                }
+                // **A field that holds a function is called as one**:
+                // `button.on_click(4)`, where `on_click` is a field and no
+                // method has the name.
+                if let Some(Ty::Fn {
+                    params,
+                    result,
+                    is_sync,
+                    throws,
+                }) = self.a_field_that_is_code(&on, *method)
+                {
+                    self.arguments_given(args, &params, false, None, span);
+                    self.kept_arguments_are_its_own(args, &params);
+                    self.checked.field_calls.insert(
+                        (
+                            span.start,
+                            format!("{}.{}", argument_shape(receiver), self.parsed.text(*method)),
+                        ),
+                        !is_sync,
+                    );
+                    if let Some(current) = &self.current {
+                        let entry = self.checked.methods.entry(current.clone()).or_default();
+                        entry.code_pauses |= !is_sync;
+                        entry.code_fails |= throws;
+                    }
+                    if throws {
+                        self.fallible_methods
+                            .insert((span.start, self.parsed.text(*method).to_string()));
+                    }
+                    self.receiver_name = outer_named;
+                    self.at_a_write_door = outer_door;
+                    self.inside_a_door = outer_inside;
+                    return result.map(|r| *r).unwrap_or_else(|| Ty::named("()"));
                 }
                 // **A copy of a slice is a list** (ADR-216 D2): `to_owned`
                 // below, where `.clone()` would copy the reference.
@@ -6925,6 +7061,14 @@ impl<'a> Checker<'a> {
                 // **A reflected field answers two members and no others**
                 // ([ADR-088](../../docs/specification/adr/adr-088.md) D2):
                 // `.name` here, and `.of(value)` where a method is called.
+                if ty == ty::VARIANT {
+                    if field == "name" {
+                        return Ty::view("str");
+                    }
+                    let held = field.clone();
+                    self.a_reflected_variant_has_two_members(&held, span);
+                    return Ty::Unknown;
+                }
                 if ty == ty::FIELD {
                     if field == "name" {
                         return Ty::Named {
@@ -8556,6 +8700,31 @@ impl<'a> Checker<'a> {
                 return Ty::Unknown;
             }
         };
+
+        // **A kept function value called by name**: a `let`, or a parameter
+        // the function keeps. What its type says is what the call does.
+        if matches!(func, Expr::Variable(_)) && !self.run_code.contains(&name) {
+            if let Some(Ty::Fn {
+                params,
+                result,
+                is_sync,
+                throws,
+            }) = self.lookup(&name)
+            {
+                self.read_at.push((name.clone(), span.start));
+                self.arguments_given(args, &params, false, None, span);
+                self.kept_arguments_are_its_own(args, &params);
+                self.checked
+                    .kept_calls
+                    .insert((span.start, name), (!is_sync, throws));
+                if let Some(current) = &self.current {
+                    let entry = self.checked.methods.entry(current.clone()).or_default();
+                    entry.code_pauses |= !is_sync;
+                    entry.code_fails |= throws;
+                }
+                return result.map(|r| *r).unwrap_or_else(|| Ty::named("()"));
+            }
+        }
 
         // **A call to an `extern` name is written inside `unsafe { … }`**
         // ([ADR-124](../../docs/specification/adr/adr-124.md) D3), and this is
@@ -12198,9 +12367,77 @@ impl<'a> Checker<'a> {
     /// One entry for every position that is a use, so a position cannot ask
     /// one of the two questions and forget the other.
     fn literal_by_use(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) -> Option<Ty> {
+        self.a_kept_lambda(want, value, span);
         self.array_literal(found, want, value, span)
             .or_else(|| self.text_literal(want, value, true))
             .or_else(|| self.tuple_literal(found, want, value))
+    }
+
+    /// **A lambda where a function value is kept** is one shared closure
+    /// below, and one that may pause hands back a boxed future.
+    fn a_kept_lambda(&mut self, want: &Ty, value: &Expr, span: &Span) {
+        let want = match want {
+            Ty::Nullable(inner) => inner.as_ref(),
+            other => other,
+        };
+        if let (
+            Ty::Fn {
+                is_sync, throws, ..
+            },
+            Expr::Closure { .. },
+        ) = (want, value)
+        {
+            self.checked
+                .kept_lambdas
+                .insert((span.start, argument_shape(value)), (!is_sync, *throws));
+            self.a_lambdas_text_is_its_own(want, value);
+        }
+        // **A function of this program, named**, is the closure that calls it:
+        // the call is typed here so that it is lowered as a written one is.
+        if let (
+            Ty::Fn {
+                params,
+                is_sync,
+                throws,
+                ..
+            },
+            Expr::Variable(name),
+        ) = (want, value)
+        {
+            let named = self.parsed.text(*name).to_string();
+            if self.lookup(&named).is_none() && self.own.functions.contains_key(&named) {
+                self.checked
+                    .kept_functions
+                    .insert((span.start, named), (!is_sync, *throws, params.len()));
+                let (names, call) = kept_function_call(self.parsed, *name, params.len());
+                let frame = names
+                    .iter()
+                    .zip(params)
+                    .map(|(n, ty)| Local::free(self.parsed.text(*n).to_string(), ty.clone()))
+                    .collect();
+                self.scope.push(frame);
+                self.expr(&call, span);
+                self.scope.pop();
+            }
+        }
+    }
+
+    /// **A lambda's text literal is built where its type keeps text**: the
+    /// value a lambda ends in is handed to whoever calls it, as a function's
+    /// is (ADR-207 D2).
+    fn a_lambdas_text_is_its_own(&mut self, want: &Ty, value: &Expr) {
+        if let (
+            Ty::Fn {
+                result: Some(result),
+                ..
+            },
+            Expr::Closure { body, .. },
+        ) = (want, value)
+        {
+            if let Some(tail) = tail_of(body) {
+                self.text_literal(result, tail, true);
+            }
+        }
     }
 
     /// **A tuple's text literals are built where the tuple is kept**, part by
@@ -12253,6 +12490,23 @@ impl<'a> Checker<'a> {
     /// and through a list literal where a `Vec[String]` is wanted, element by
     /// element - but only where **every** element is a text literal, so a list
     /// that mixes in a view keeps the refusal it had.
+    /// The function type of `on`'s field called `method`, where `on` is a
+    /// struct with such a field and no method of that name.
+    fn a_field_that_is_code(&self, on: &Ty, method: Ident) -> Option<Ty> {
+        let Ty::Named { name, .. } = on else {
+            return None;
+        };
+        let method = self.parsed.text(method);
+        if self.resolve(&format!("{name}::{method}")).is_some() {
+            return None;
+        }
+        self.fields_of(name)?
+            .into_iter()
+            .find(|field| field.name == method)
+            .map(|field| field.ty)
+            .filter(|ty| matches!(ty, Ty::Fn { .. }))
+    }
+
     fn text_at(&self, at: usize) -> usize {
         text_key(self.hole.as_ref(), at)
     }
@@ -13364,64 +13618,37 @@ impl<'a> Checker<'a> {
         });
     }
 
-    /// **`NK1171`, for the one member Part II 10.3 names and nothing has**
-    /// ([ADR-088](../../docs/specification/adr/adr-088.md) §5).
+    /// **`NK1171`, for a shape member written where no bound reaches it.**
     ///
-    /// A reader who writes `T::fields` has read the specification, so *`Point`
-    /// has nothing called `fields`* would send them looking for a spelling that
-    /// does not exist. [Part III
-    /// C.2](../../docs/specification/30-nikaia-tooling.md) asks for a way out
-    /// that can be taken, and here there is exactly one — write the fields out
-    /// — so that is what it offers rather than a rewrite of the same line.
+    /// `T::fields` is reached under `[T: Struct]` and `T::variants` under
+    /// `[T: Enum]` (Part II 10.3). A reader who writes either has read that
+    /// section, so the message names the bound that makes it reachable rather
+    /// than saying the type has no such member.
     fn a_shape_that_is_not_reachable_yet(&mut self, ty: &str, member: &str, span: &Span) {
-        let parameter = self.type_parameters.get(ty);
-        let under_a_bound = parameter
-            .is_some_and(|bounds| bounds.iter().any(|b| SHAPE_BOUNDS.contains(&b.as_str())));
-        let note = if under_a_bound {
-            // **`fields` is built and `variants` is not**, which is the honest
-            // half-built state since 0.0.129
-            // ([ADR-181](../../docs/specification/adr/adr-181.md)): a `struct`'s
-            // shape is a list of fields and an `enum`'s is a list of variants,
-            // and only the first is a value this compiler makes.
-            format!(
-                "`[{ty}: Struct]` and `{ty}::fields` are built (ADR-181): the loop is \
-                 unrolled, the body is checked once per turn and the diagnostic names the \
-                 field. **`variants` is not** - an `enum`'s shape is a different value, \
-                 and a variant carries a payload where a field carries a type, so the two \
-                 are one feature only on the page"
-            )
-        } else if parameter.is_some() {
-            format!(
-                "Part II 10.3 reads a type's shape as ordinary data, and the **bound** is what \
-                 makes it reachable - `for field in {ty}::fields` under a `[{ty}: Struct]` \
-                 (ADR-088 D2, built by ADR-181). Without the bound this parameter is a type \
-                 nothing describes, so writing `[{ty}: Struct]` is what this line needs"
-            )
-        } else {
-            // A type written by name, which is not what 10.3 writes at all: the
-            // shape is reached through a **bound**, so the sentence says that
-            // rather than suggest `[Point: Struct]`, which nobody can write.
-            format!(
-                "Part II 10.3 reads a type's shape through a **bound** rather than by name - \
-                 `fn describe[T: Struct](value: T)`, and then `T::{member}` inside it \
-                 (ADR-088 D2, built by ADR-181). A type named outright has its fields \
-                 written down already, so there is nothing for a shape to tell you here"
-            )
+        let bound = match member {
+            VARIANTS => "Enum",
+            _ => "Struct",
+        };
+        let note = match self.type_parameters.get(ty) {
+            Some(_) => format!(
+                "a type's shape is reached through a **bound**: `{ty}::{member}` needs \
+                 `[{ty}: {bound}]` (Part II 10.3)"
+            ),
+            None => format!(
+                "a type's shape is reached through a **bound** rather than by name - \
+                 `fn describe[T: {bound}](value: T)`, and then `T::{member}` inside it \
+                 (Part II 10.3)"
+            ),
         };
         self.checked.findings.push(Finding {
             severity: Severity::Error,
             span: span.clone(),
             code: "NK1171",
-            message: format!("`{ty}::{member}` is specified and this compiler does not have it"),
+            message: format!("`{ty}::{member}` is reached under a `{bound}` bound"),
             notes: vec![note],
-            help: Some(match member {
-                "variants" => "walk the variants with a `match`, which is what this language \
-                               has for an `enum`'s shape"
-                    .to_string(),
-                _ => "write `fn describe[T: Struct](value: T)` and `for field in T::fields` \
-                      inside it (Part II 10.3)"
-                    .to_string(),
-            }),
+            help: Some(format!(
+                "write `fn describe[T: {bound}](value: T)` and `for x in T::{member}` inside it"
+            )),
         });
     }
 
@@ -13704,8 +13931,12 @@ impl<'a> Checker<'a> {
                 let mut fresh: Vec<Finding> = self.checked.findings.split_off(before);
                 fresh.retain(|f| !already.contains(&(f.code, f.span.start)));
                 for found in &mut fresh {
+                    let (member, one) = match self.enums.contains_key(&on) {
+                        true => (VARIANTS, "variant"),
+                        false => (FIELDS, "field"),
+                    };
                     found.notes.push(format!(
-                        "unrolling `{}::fields` for `{on}`, at field `{}`",
+                        "unrolling `{}::{member}` for `{on}`, at {one} `{}`",
                         self.walks_fields
                             .get(&name)
                             .map(String::as_str)
@@ -13729,6 +13960,60 @@ impl<'a> Checker<'a> {
     /// ([ADR-024](../../docs/specification/adr/adr-024.md) D1) and an
     /// instantiation made from one would be a wrong answer where a missing one
     /// is right ([ADR-010](../../docs/specification/adr/adr-010.md) D1).
+    /// The element type of `T::member`, where `T` is a type parameter whose
+    /// shape bound makes that member reachable.
+    fn shape_element(&self, ty: &str, member: &str) -> Option<&'static str> {
+        self.type_parameters.get(ty)?.iter().find_map(|bound| {
+            shape_member(bound)
+                .and_then(|(reached, element)| (reached == member).then_some(element))
+        })
+    }
+
+    /// What a shape walk is unrolled over: a `struct`'s fields, or an
+    /// `enum`'s variants, each a name and nothing a turn has to type.
+    fn shape_of(&self, on: &str) -> Option<Vec<FieldContract>> {
+        if let Some(known) = self.enums.get(on) {
+            // **In the order the declaration wrote them**, which the set of
+            // names does not keep: this unit's own `enum`, else the ledger's.
+            let declared = self
+                .parsed
+                .program
+                .items
+                .iter()
+                .find_map(|item| match &item.node {
+                    Item::Enum { name, variants, .. } if self.parsed.text(*name) == on => Some(
+                        variants
+                            .iter()
+                            .map(|v| self.parsed.text(v.name).to_string())
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => None,
+                });
+            let variants = declared
+                .or_else(|| {
+                    [self.own, self.library].iter().find_map(|ledger| {
+                        ledger
+                            .types
+                            .get(on)
+                            .map(|c| c.variants.iter().map(|v| v.name.clone()).collect())
+                    })
+                })
+                .filter(|written: &Vec<String>| written.len() == known.len())
+                .unwrap_or_else(|| known.iter().cloned().collect());
+            return Some(
+                variants
+                    .iter()
+                    .map(|variant| FieldContract {
+                        name: variant.clone(),
+                        ty: Ty::named(ty::VARIANT),
+                        public: true,
+                    })
+                    .collect(),
+            );
+        }
+        self.fields_of(on)
+    }
+
     fn an_instantiation(&mut self, name: &str, args: &[Expr], span: &Span) {
         if !self.walks_fields.contains_key(name) {
             return;
@@ -13745,7 +14030,7 @@ impl<'a> Checker<'a> {
         let Ty::Named { name: on, .. } = &given else {
             return;
         };
-        let Some(fields) = self.fields_of(on) else {
+        let Some(fields) = self.shape_of(on) else {
             return;
         };
         let (on, name) = (on.clone(), name.to_string());
@@ -13875,6 +14160,26 @@ impl<'a> Checker<'a> {
     /// The two are the whole of what Part II 10.3 gives one, and the list is
     /// short enough to print — which is what makes this a misspelling rather
     /// than something nobody has told the compiler about.
+    /// **`NK1180` for a variant**: a reflected variant answers `.name` and
+    /// `.is(value)`.
+    fn a_reflected_variant_has_two_members(&mut self, member: &str, span: &Span) {
+        self.checked.findings.push(Finding {
+            severity: Severity::Error,
+            span: span.clone(),
+            code: "NK1180",
+            message: format!("a variant of `T::variants` has no `{member}`"),
+            notes: vec![
+                "what a reflected variant answers is `.name`, the variant's own name as text, \
+                 and `.is(value)`, whether a value is that variant (Part II 10.3)"
+                    .to_string(),
+            ],
+            help: Some(
+                "write `.name` or `.is(value)`; what a variant carries is read with a `match`"
+                    .to_string(),
+            ),
+        });
+    }
+
     fn a_reflected_field_has_two_members(&mut self, member: &str, span: &Span) {
         self.checked.findings.push(Finding {
             severity: Severity::Error,
@@ -14359,6 +14664,16 @@ impl<'a> Checker<'a> {
                             self.checked.run_lambdas.insert((span.start, at));
                         }
                     }
+                    // **A parameter the callee keeps is a kept function
+                    // value**, `sync` or not: the callee stores it.
+                    if declared_here && !self.runs_the_parameter(callee, at) {
+                        self.checked
+                            .kept_lambdas
+                            .insert((span.start, argument_shape(arg)), (!is_sync, *throws));
+                    }
+                    if let Some(want) = expected.get(at) {
+                        self.a_lambdas_text_is_its_own(want, arg);
+                    }
                     let came_to = self.lambda(
                         params,
                         mutable,
@@ -14389,10 +14704,48 @@ impl<'a> Checker<'a> {
                 }
                 _ => {
                     self.a_field_of_a_borrowed_subject(arg, span, "passed");
-                    self.expr(arg, span)
+                    let found = self.expr(arg, span);
+                    // **A kept value handed to a parameter that only runs
+                    // it** is lent as the closure it holds.
+                    if declared_here
+                        && matches!(expected.get(at), Some(Ty::Fn { .. }))
+                        && matches!(found, Ty::Fn { .. })
+                        && self.runs_the_parameter(callee, at)
+                        && !self.a_run_parameter(arg)
+                    {
+                        self.checked
+                            .kept_args
+                            .insert((span.start, argument_shape(arg)));
+                    }
+                    found
                 }
             })
             .collect()
+    }
+
+    /// **A kept function takes its arguments by value**, so a text literal
+    /// handed to one where it keeps text is built there (ADR-207 D2).
+    fn kept_arguments_are_its_own(&mut self, args: &[Expr], params: &[Ty]) {
+        for (arg, want) in args.iter().zip(params) {
+            self.text_literal(want, arg, true);
+        }
+    }
+
+    /// Whether `expr` names a parameter of the function being walked that is
+    /// code it only runs: a closure argument below, not a kept value.
+    fn a_run_parameter(&self, expr: &Expr) -> bool {
+        matches!(expr, Expr::Variable(name) if self.run_code.contains(self.parsed.text(*name)))
+    }
+
+    /// Whether the callee only **runs** its `at`th parameter: the absence of
+    /// `keeps`, and run where no contract was resolved.
+    fn runs_the_parameter(&self, callee: Option<&FnContract>, at: usize) -> bool {
+        callee.is_none_or(|c| {
+            c.signature
+                .as_ref()
+                .and_then(|s| s.arguments().get(at).cloned())
+                .is_none_or(|(name, _)| !c.keeps.contains(&name))
+        })
     }
 
     /// A lambda whose parameters have types, because the callee said so.
