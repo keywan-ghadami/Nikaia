@@ -1,4 +1,4 @@
-name: Nikaia Vibe Experiment
+name: Nikaia
 
 on: [push, pull_request, workflow_dispatch]
 
