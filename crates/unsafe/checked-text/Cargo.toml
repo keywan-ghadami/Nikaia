@@ -1,0 +1,21 @@
+[package]
+name = "checked-text"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "Bytes checked as UTF-8 once - in parallel chunks for large inputs - and handed out as text without checking again; optionally a mapped file."
+publish = false
+
+[features]
+default = []
+# Check a large input in chunks across the rayon pool.
+rayon = ["dep:rayon"]
+# Map a file and check it as text.
+map = ["dep:memmap2"]
+
+[dependencies]
+rayon = { version = "1.10", optional = true }
+memmap2 = { version = "0.9", optional = true }
+
+[workspace]

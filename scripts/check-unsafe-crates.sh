@@ -8,9 +8,13 @@ for dir in crates/unsafe/*/; do
     (
         cd "$dir"
         cargo fmt --check
+        # Without features and with all of them, since a feature may carry
+        # an `unsafe` of its own.
         cargo test --quiet
+        cargo test --quiet --all-features
         cargo clippy --quiet --all-targets -- -D warnings
-        cargo +nightly miri test --quiet
-        MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --quiet
+        cargo clippy --quiet --all-features --all-targets -- -D warnings
+        cargo +nightly miri test --quiet --all-features
+        MIRIFLAGS=-Zmiri-tree-borrows cargo +nightly miri test --quiet --all-features
     )
 done

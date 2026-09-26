@@ -621,7 +621,7 @@ fn returned_text_is_copied_by_std() {
     // ([ADR-155](../../../docs/specification/adr/adr-155.md) D3). The copy is a
     // `std` call with no `unsafe` of the program's own around it.
     assert!(
-        rust.contains("fn getenv(name: *const u8) -> *mut core::ffi::c_char;"),
+        rust.contains("fn getenv(name: *const u8) -> Option<nikaia_std::foreign::CText>;"),
         "{rust}"
     );
     assert!(
@@ -720,7 +720,7 @@ fn a_handle_may_be_absent() {
     // under a handle is non-null: a null arriving in one is undefined before
     // any check could run.
     assert!(
-        rust.contains("fn getenv(name: *const u8) -> *mut core::ffi::c_char;"),
+        rust.contains("fn getenv(name: *const u8) -> Option<nikaia_std::foreign::CText>;"),
         "{rust}"
     );
 }

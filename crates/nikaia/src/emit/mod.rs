@@ -3307,6 +3307,12 @@ impl<'p> Emitter<'p> {
             // would be a lie the moment C hands back nothing: the hull under a
             // handle is non-null, so a null arriving in one is undefined
             // before any check could run.
+            // **Except text a C library owns**, which comes back as the
+            // `Option<CText>` it is: one word, `None` for `NULL`, and the
+            // declaration is where *this is a C string* is promised (ADR-218).
+            Some(ty) if foreign && base(self.text(ty.name)) == C_STRING => {
+                "Option<nikaia_std::foreign::CText>".to_string()
+            }
             Some(ty) if foreign && self.handle_named(ty).is_some() => {
                 format!("*mut {}", self.pointed_at(ty))
             }

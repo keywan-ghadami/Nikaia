@@ -333,16 +333,17 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn the_drain_is_bounded_by_its_deadline() {
-        use std::ffi::CString;
-
         let workers = Workers::start(1);
         let (reply, answer) = channel();
         let path = std::env::temp_dir().join(format!("nikaia-drain-{}", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let name = CString::new(path.to_string_lossy().as_bytes()).expect("a path with no zero");
-        // SAFETY: `name` is a zero-terminated path this test owns, and the
-        // call only creates a filesystem entry.
-        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0, "mkfifo");
+        let made = std::process::Command::new("mkfifo")
+            .arg("-m")
+            .arg("600")
+            .arg(&path)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success(), "mkfifo");
         assert!(workers.send(Op::Read {
             path: path.clone(),
             reply,

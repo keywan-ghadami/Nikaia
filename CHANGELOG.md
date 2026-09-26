@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.199] — 2026-09-26
+
+**`nikaia-std` holds no `unsafe`** — [ADR-218](docs/specification/adr/adr-218.md)
+D4, the owner's follow-up.
+
+Five more crates under `crates/unsafe/`, each with its README, its `unsafe`
+table and its checks: `ref-or-box` (an error's tail in one word), `checked-text`
+(UTF-8 checked once, chunked; a mapped file), `c-text` (a C string, returned by
+an `extern` declaration as `Option<CText>`), `polled` (a poller that owns what
+it watches), `file-ring` (`io_uring` with owned buffers, and a bell rung by
+safe writes). A test's `mkfifo` is the command. `nikaia-std` says
+`#![forbid(unsafe_code)]` and no longer depends on `libc`, `memmap2`, `polling`
+or `io-uring` directly. The emitted code's `unsafe` (`tether::hold`, `forever`)
+is what is left, as `docs/open-work.md` §2.46.
+
 ## [0.0.198] — 2026-09-26
 
 **Every `unsafe` topic is a small crate of its own** —

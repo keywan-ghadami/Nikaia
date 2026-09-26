@@ -92,10 +92,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "c-text"
+version = "0.1.0"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "checked-text"
+version = "0.1.0"
+dependencies = [
+ "memmap2",
+ "rayon",
+]
 
 [[package]]
 name = "clap"
@@ -240,6 +252,14 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "file-ring"
+version = "0.1.0"
+dependencies = [
+ "io-uring",
+ "libc",
 ]
 
 [[package]]
@@ -411,11 +431,12 @@ dependencies = [
 name = "nikaia-std"
 version = "0.1.0"
 dependencies = [
- "io-uring",
- "libc",
- "memmap2",
- "polling",
+ "c-text",
+ "checked-text",
+ "file-ring",
+ "polled",
  "rayon",
+ "ref-or-box",
  "tether",
  "winnow 0.7.15",
  "winnow-grammar",
@@ -480,6 +501,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "polled"
+version = "0.1.0"
+dependencies = [
+ "polling",
+]
+
+[[package]]
 name = "polling"
 version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -539,6 +567,10 @@ checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
 ]
+
+[[package]]
+name = "ref-or-box"
+version = "0.1.0"
 
 [[package]]
 name = "refcount-bench"

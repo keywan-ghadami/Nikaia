@@ -21,8 +21,13 @@ trace = ["winnow-grammar/trace"]
 # Views that outlive the scope that read their buffer (ADR-209); the `unsafe`
 # it takes lives there, with its own checks (ADR-218).
 tether = { path = "../unsafe/tether" }
-# `fs::map` maps the file (Part III, 17.1); this is the mapping.
-memmap2 = "0.9"
+# Bytes checked as text once, in chunks across the pool, and a file mapped and
+# checked (Part III 17.1).
+checked-text = { path = "../unsafe/checked-text", features = ["rayon", "map"] }
+# Text a C library owns, copied out (ADR-147 D4).
+c-text = { path = "../unsafe/c-text" }
+# An error's site in one word, or its cold part boxed (ADR-211 D1).
+ref-or-box = { path = "../unsafe/ref-or-box" }
 # The parser backend every generated program runs on. Declared here, on the
 # runtime, so that a program's `std` and its parser are one dependency - and
 # so that the tests can find the parser's rlib by reading this crate's
@@ -41,20 +46,16 @@ rayon = "1.10"
 # executor, no task model, no opinion about what the program does when a socket
 # is ready - which is what keeps D1's and D3's decisions from being remade by a
 # dependency.
-polling = "3.11"
+polled = { path = "../unsafe/polled" }
 
 # ADR-038 D3's completion half. A *target* gate and not a feature gate: the
 # bindings do not exist off Linux at all. On Linux whether the ring is used is
 # decided at **run time** (`rt::config::Method::Auto` probes the kernel), so a
 # binary built on a machine with io_uring still runs on one without it.
 [target.'cfg(target_os = "linux")'.dependencies]
-io-uring = "0.7"
-# ADR-121 D1's bell: an `eventfd` on the ring, which is three calls - make it,
-# write a one to it, read it back to zero. **No package is added by this line**:
-# `io-uring` above resolves `libc` already, so what this declares is that `std`
-# names it directly rather than reaching it by accident. Linux-only for the same
-# reason the ring is: off Linux there is no ring to hang a bell on.
-libc = "0.2"
+# ADR-038 D3's completion half, with the bell ADR-121 D1 hangs on it: the ring
+# and the `unsafe` it takes live in their own crate (ADR-218).
+file-ring = { path = "../unsafe/file-ring" }
 
 # **No build dependencies, and that is the point** (ADR-002 D4). This crate used
 # to build the Stage 0 compiler to lower its own `src/*.nika`, which meant Cargo

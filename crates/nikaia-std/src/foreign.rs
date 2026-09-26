@@ -37,60 +37,51 @@ pub fn nothing_came_back(declaration: &str) -> ! {
     )
 }
 
+/// What an `extern` declaration that says `-> foreign::CStr` returns: the
+/// address C handed back, or `None` for C's `NULL`. The crate `c-text` holds
+/// the one `unsafe` reading it takes (ADR-218), and the declaration is where
+/// the promise *this is a C string* is made.
+pub use c_text::CText;
+
 /// **Text a C library owns** (D4): an address, and a zero byte somewhere after
 /// it.
 ///
-/// `#[repr(transparent)]` for D3's reason one type over: the handle *is* the
-/// address, so a declaration that hands one back is handed the pointer C
-/// returns and nothing is wrapped on the way.
+/// `#[repr(transparent)]` over [`CText`], which is over the address, so a
+/// declaration may take or hand back one where C passes a `char *` - an
+/// out-parameter included.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
-pub struct CStr(core::ptr::NonNull<core::ffi::c_char>);
+pub struct CStr(CText);
 
 impl CStr {
     /// What a declaration that says `-> CStr` hands back
-    /// ([ADR-155](../../../docs/specification/adr/adr-155.md) D3): the address,
-    /// or an abort naming the declaration that claimed it would be one.
+    /// ([ADR-155](../../../docs/specification/adr/adr-155.md) D3): the text,
+    /// or an abort naming the declaration that claimed there would be one.
     #[track_caller]
-    pub fn from_c(declaration: &str, address: *mut core::ffi::c_char) -> CStr {
-        match core::ptr::NonNull::new(address) {
-            Some(address) => CStr(address),
+    pub fn from_c(declaration: &str, text: Option<CText>) -> CStr {
+        match text {
+            Some(text) => CStr(text),
             None => nothing_came_back(declaration),
         }
     }
 
     /// The same, where the declaration **does** say `?` (D1). `None` is C's
     /// `NULL`, which is the whole of D2: the two are one machine word.
-    pub fn maybe(address: *mut core::ffi::c_char) -> Option<CStr> {
-        core::ptr::NonNull::new(address).map(CStr)
+    pub fn maybe(text: Option<CText>) -> Option<CStr> {
+        text.map(CStr)
     }
 
     /// A copy of the text, owned by whoever asked for it.
     ///
     /// **It fails in one way**, and only one: the bytes may not be UTF-8, which
     /// text in this language is — the same failure `fs::read_to_string` has, for
-    /// the same reason. *There is no text* used to be the other one and is a
-    /// **value** now ([ADR-155](../../../docs/specification/adr/adr-155.md) D4):
-    /// a declaration says `-> CStr?` where the library may find nothing, and the
-    /// program writes `?? ""`.
-    ///
-    /// **The `unsafe` is here and nowhere else**, which is the whole of D4: the
-    /// walk to the zero byte is the one thing a program must not have to write,
-    /// and it is written once.
+    /// the same reason. *There is no text* is a **value**
+    /// ([ADR-155](../../../docs/specification/adr/adr-155.md) D4): a declaration
+    /// says `-> CStr?` where the library may find nothing, and the program
+    /// writes `?? ""`.
     pub fn to_string(self) -> Result<String, crate::io::IoError> {
-        // SAFETY: the address is not null by construction (D2's hull), and D4's
-        // contract with the caller is that what a C function handed back is a C
-        // string - an address with a zero byte after it. Nothing else in this
-        // language can make one.
-        let bytes = unsafe { core::ffi::CStr::from_ptr(self.0.as_ptr()) };
-        match bytes.to_str() {
-            Ok(text) => Ok(text.to_string()),
-            // **The same failure `fs::read_to_string` has**, which this doc has
-            // always said and which now has the name to say it with
-            // ([ADR-158](../../../docs/specification/adr/adr-158.md) D1).
-            Err(_) => Err(crate::io::IoError::NotText(
-                "a C string this program was handed".to_string(),
-            )),
-        }
+        self.0.to_string().map_err(|_| {
+            crate::io::IoError::NotText("a C string this program was handed".to_string())
+        })
     }
 }

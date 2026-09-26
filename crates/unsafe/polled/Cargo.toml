@@ -1,0 +1,13 @@
+[package]
+name = "polled"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "A readiness poller that owns every descriptor it watches, so a registration can never outlive what it registered."
+publish = false
+
+[dependencies]
+polling = "3.11"
+
+[workspace]

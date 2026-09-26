@@ -29,7 +29,7 @@
 //!
 //! ## The shape
 //!
-//! One [`polling::Poller`] for the process and one thread inside its `wait`.
+//! One [`polled::Poller`] for the process and one thread inside its `wait`.
 //! Arming is an `epoll_ctl` on the **calling** thread — it does not block, so
 //! there is nothing to hand to anybody. When the kernel answers, the thread
 //! fills the slot, wakes the waker, and rings the bell
@@ -39,12 +39,12 @@
 
 use std::collections::BTreeMap;
 use std::io::{Error, Result};
-use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::os::fd::AsFd;
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::task::Waker;
 use std::time::{Duration, Instant};
 
-use polling::{Event, Events, Poller};
+use polled::{Event, Events, Poller};
 
 use super::Interest;
 
@@ -64,11 +64,11 @@ struct Slots {
     open: BTreeMap<usize, Slot>,
 }
 
+/// A registration's state. The descriptor itself - a **duplicate** of the
+/// caller's, so the registration holds the kernel object open whatever the
+/// caller does with its own copy - is held by the poller under the slot's key,
+/// which is what keeps it open for exactly as long as it is registered.
 struct Slot {
-    /// A **duplicate** of the caller's descriptor, so the registration holds
-    /// the kernel object open whatever the caller does with its own copy. It is
-    /// deleted from the poller before this is dropped.
-    fd: OwnedFd,
     deadline: Option<Instant>,
     waker: Option<Waker>,
     /// `Some` once the answer is in: `true` ready, `false` the deadline.
@@ -111,7 +111,6 @@ impl Registry {
     ) -> Result<usize> {
         answering();
         let fd = socket.as_fd().try_clone_to_owned()?;
-        let raw = std::os::fd::AsRawFd::as_raw_fd(&fd);
         let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
         slots.next += 1;
         let key = slots.next;
@@ -119,13 +118,10 @@ impl Registry {
             Interest::Readable => Event::readable(key),
             Interest::Writable => Event::writable(key),
         };
-        // SAFETY: `fd` is the duplicate this slot owns, so it stays open until
-        // the registration is deleted in `finish` or `forget` below.
-        unsafe { self.poller.add(raw, event)? };
+        self.poller.add(fd, event)?;
         slots.open.insert(
             key,
             Slot {
-                fd,
                 deadline: timeout.map(|limit| Instant::now() + limit),
                 waker: None,
                 answer: None,
@@ -145,7 +141,7 @@ impl Registry {
         let slot = slots.open.get_mut(&key)?;
         if slot.answer.is_some() {
             let slot = slots.open.remove(&key).expect("looked at just above");
-            self.deregister(&slot);
+            self.deregister(key);
             return slot.answer;
         }
         if let Some(waker) = waker {
@@ -162,7 +158,7 @@ impl Registry {
                 None => return Err(Error::other("the readiness registration went away")),
                 Some(slot) if slot.answer.is_some() => {
                     let slot = slots.open.remove(&key).expect("looked at just above");
-                    self.deregister(&slot);
+                    self.deregister(key);
                     return slot.answer.expect("checked just above");
                 }
                 Some(_) => {
@@ -177,18 +173,15 @@ impl Registry {
     /// caring about.
     fn forget(&self, key: usize) {
         let mut slots = self.slots.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(slot) = slots.open.remove(&key) {
-            self.deregister(&slot);
+        if slots.open.remove(&key).is_some() {
+            self.deregister(key);
         }
     }
 
-    /// Take the descriptor out of the poller. Always before the duplicate is
-    /// closed, which is what the `unsafe` in [`Self::arm`] promises.
-    fn deregister(&self, slot: &Slot) {
-        let raw = std::os::fd::AsRawFd::as_raw_fd(&slot.fd);
-        // SAFETY: the descriptor is this slot's own duplicate and is still
-        // open — the slot holds it, and is dropped after this returns.
-        let _ = self.poller.delete(unsafe { BorrowedFd::borrow_raw(raw) });
+    /// Take the descriptor out of the poller, which closes the duplicate once
+    /// it is no longer registered.
+    fn deregister(&self, key: usize) {
+        drop(self.poller.remove(key));
         // **And tell whoever is waiting for the set to empty.** A slot leaving
         // is as much a change as an answer arriving, and [`Self::drain`] is
         // asleep on exactly that question. Without this a drain slept out its

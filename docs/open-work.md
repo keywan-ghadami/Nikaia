@@ -1135,26 +1135,15 @@ word today is `crates/nikaia/tests/borrowed_subject.rs`'s
 a spelling — `b` — so no correct program is refused. What is open is a language
 with two ways to say one thing.
 
-### 2.46. Every `unsafe` topic in a crate of its own — the rest of the order
+### 2.46. The emitted code writes no `unsafe`
 
-[ADR-218](specification/adr/adr-218.md) D4. `tether` and the wakers are done;
-in order, what is left:
-
-1. **The emitted code writes no `unsafe`.** Generated code still calls
-   `tether::hold` and `tether::forever` inside `unsafe { … }`
-   (`crates/nikaia/src/emit/mod.rs`, the per-view handle and a task's keep).
-   The lowering moves onto an API that takes the handle and builds the view
-   inside it, as `Holding::new` does.
-2. **The error tail**: `nikaia-std/src/error.rs`, a one-word tagged pointer
-   with a boxed cold half (`unsafe impl Send/Sync`, casts, `Box::from_raw`).
-3. **Files**: `nikaia-std/src/fs.rs`, the mapping (`memmap2::Mmap::map`) and
-   two UTF-8 conversions that skip a second check.
-4. **The I/O ring**: `nikaia-std/src/rt/uring.rs` and `rt/readiness.rs` —
-   submissions, `eventfd`, descriptors borrowed from raw.
-5. **The C boundary**: `nikaia-std/src/foreign.rs`, text read from a C pointer.
-
-Then `nikaia-std` says `#![forbid(unsafe_code)]`. Evidence: `grep -n unsafe
-crates/nikaia-std/src -r`.
+[ADR-218](specification/adr/adr-218.md) D4's last step. `nikaia-std` holds no
+`unsafe` (`#![forbid(unsafe_code)]`), but generated programs still call
+`tether::hold` and `tether::forever` inside `unsafe { … }`
+(`crates/nikaia/src/emit/mod.rs`: the per-view handle, and a task's keep). The
+lowering moves onto an API that takes the handle and builds the view inside
+it, as `tether::Holding::new` does. Evidence: `grep -n 'unsafe {{' 
+crates/nikaia/src/emit/mod.rs`.
 
 ## 3. Upkeep
 

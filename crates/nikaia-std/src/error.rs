@@ -20,9 +20,9 @@
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::error::Error;
 use std::fmt;
-use std::marker::PhantomData;
-use std::ptr::NonNull;
 use std::sync::OnceLock;
+
+use ref_or_box::{Either, RefOrBox};
 
 /// Whether this process captures a trace when an error is raised.
 ///
@@ -59,8 +59,7 @@ pub type Origin = &'static &'static str;
 /// envelope finds its niche **here**, whatever the author's error type looks
 /// like (D2).
 struct Tail<S> {
-    word: NonNull<()>,
-    _cold: PhantomData<Box<Cold<S>>>,
+    word: RefOrBox<&'static str, Cold<S>>,
 }
 
 /// The part of the envelope only the special cases need
@@ -79,31 +78,18 @@ struct Cold<S> {
     secondary: Vec<S>,
 }
 
-// SAFETY: a `Tail` owns at most one `Cold<S>` and otherwise points only at
-// `'static` text, so it may cross a thread or be shared exactly when that box
-// could be - which is what the `PhantomData` would have said, had the word been
-// the box.
-unsafe impl<S: Send> Send for Tail<S> {}
-unsafe impl<S: Sync> Sync for Tail<S> {}
-
-/// The tag: the word holds the site and nothing else.
-const SITE_ONLY: usize = 1;
-
 impl<S> Tail<S> {
     /// The site alone, in the word itself. No allocation.
     fn site(origin: Origin) -> Tail<S> {
-        let at = NonNull::from(origin).cast::<()>();
         Tail {
-            word: at.map_addr(|a| a | SITE_ONLY),
-            _cold: PhantomData,
+            word: RefOrBox::from_ref(origin),
         }
     }
 
     /// The cold part, boxed, with the box's address as the word.
     fn cold(cold: Cold<S>) -> Tail<S> {
         Tail {
-            word: NonNull::from(Box::leak(Box::new(cold))).cast::<()>(),
-            _cold: PhantomData,
+            word: RefOrBox::from_box(Box::new(cold)),
         }
     }
 
@@ -127,28 +113,20 @@ impl<S> Tail<S> {
     }
 
     fn is_site_only(&self) -> bool {
-        self.word.addr().get() & SITE_ONLY != 0
+        self.as_cold().is_none()
     }
 
     fn as_cold(&self) -> Option<&Cold<S>> {
-        match self.is_site_only() {
-            true => None,
-            // SAFETY: an even word is the address `Tail::cold` took from the
-            // box this tail owns, and it is borrowed here through `&self`.
-            false => Some(unsafe { self.word.cast::<Cold<S>>().as_ref() }),
+        match self.word.get() {
+            Either::Ref(_) => None,
+            Either::Boxed(cold) => Some(cold),
         }
     }
 
     fn origin(&self) -> &'static str {
-        match self.as_cold() {
-            Some(cold) => cold.origin,
-            None => {
-                let at = self.word.as_ptr().map_addr(|a| a & !SITE_ONLY);
-                // SAFETY: an odd word is the address of an `Origin`'s target,
-                // a `&'static str` that lives for the whole program, with the
-                // tag set; clearing the tag gives that address back.
-                unsafe { *at.cast::<&'static str>() }
-            }
+        match self.word.get() {
+            Either::Ref(origin) => origin,
+            Either::Boxed(cold) => cold.origin,
         }
     }
 
@@ -170,18 +148,9 @@ impl<S> Tail<S> {
                 secondary: Vec::new(),
             });
         }
-        // SAFETY: the word is even now, the address of the box this tail
-        // owns, and it is borrowed here through `&mut self`.
-        unsafe { self.word.cast::<Cold<S>>().as_mut() }
-    }
-}
-
-impl<S> Drop for Tail<S> {
-    fn drop(&mut self) {
-        if !self.is_site_only() {
-            // SAFETY: an even word came from `Box::leak` in `Tail::cold`, and
-            // this tail is the only thing that holds it.
-            drop(unsafe { Box::from_raw(self.word.cast::<Cold<S>>().as_ptr()) });
+        match self.word.boxed_mut() {
+            Some(cold) => cold,
+            None => unreachable!("the tail was given its cold part just above"),
         }
     }
 }

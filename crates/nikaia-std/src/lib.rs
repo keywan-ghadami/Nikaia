@@ -18,6 +18,11 @@
 //! and `crates/nikaia/tests/sysroot.rs` fails if what is committed has drifted
 //! from what the compiler produces.
 
+// **No `unsafe` here** (ADR-218): what safe Rust cannot say lives in a small
+// crate of its own under `crates/unsafe/`, with its argument and its own
+// checks, and this crate uses it through a safe API.
+#![forbid(unsafe_code)]
+
 pub mod abort;
 pub mod bytes;
 pub mod channel;

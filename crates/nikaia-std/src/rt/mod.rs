@@ -57,7 +57,7 @@ pub mod timer;
 pub mod worker;
 
 #[cfg(target_os = "linux")]
-mod uring;
+use file_ring as uring;
 
 pub use config::{Config, Method};
 pub use worker::Interest;
@@ -111,8 +111,8 @@ pub struct Runtime {
     workers: worker::Workers,
     #[cfg(target_os = "linux")]
     ring: Option<Mutex<uring::Ring>>,
-    /// **The descriptor a worker rings to wake a park on `ring`**
-    /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D1), or `-1`
+    /// **The bell a worker rings to wake a park on `ring`**
+    /// ([ADR-121](../../../docs/specification/adr/adr-121.md) D1), or `None`
     /// where this runtime has no ring.
     ///
     /// Beside the lock and not inside it, because the thread that rings cannot
@@ -122,7 +122,7 @@ pub struct Runtime {
     /// publishing that one as *the* bell left the process's own park deaf. Found
     /// by `the_compilers_pair_answers_the_same_either_way` hanging.
     #[cfg(target_os = "linux")]
-    bell: std::os::fd::RawFd,
+    bell: Option<uring::Bell>,
     /// The executor for user tasks, at `user_parallelism = yes` and not
     /// otherwise.
     ///
@@ -184,7 +184,9 @@ pub(crate) fn ring_the_bell() {
     // still being filled has nothing parked on a ring to wake.
     #[cfg(target_os = "linux")]
     if let Some(runtime) = RUNTIME.get() {
-        uring::ring_the_eventfd(runtime.bell);
+        if let Some(bell) = &runtime.bell {
+            bell.ring();
+        }
     }
 }
 
@@ -341,10 +343,9 @@ impl Runtime {
         // Read out of the ring before the lock closes over it: a `write` may
         // not wait for a park (D1), so the number lives beside the lock.
         #[cfg(target_os = "linux")]
-        let bell = match ring.as_ref() {
-            Some(ring) => ring.lock().unwrap_or_else(|e| e.into_inner()).bell(),
-            None => -1,
-        };
+        let bell = ring
+            .as_ref()
+            .map(|ring| ring.lock().unwrap_or_else(|e| e.into_inner()).bell());
 
         Runtime {
             config,
@@ -848,7 +849,9 @@ pub mod io {
             // one coming, because D2 keeps the bell out of its job count - so
             // the worker count is read here and handed down.
             Files::Completion => runtime
-                .with_ring(|ring| ring.park(since, runtime.pending() > 0, limit))
+                .with_ring(|ring| {
+                    ring.park(since, runtime.pending() > 0, limit, super::io::generation)
+                })
                 .expect("`Files::Completion` means there is a ring"),
             #[cfg(not(target_os = "linux"))]
             Files::Completion => unreachable!("no completion queue off Linux"),

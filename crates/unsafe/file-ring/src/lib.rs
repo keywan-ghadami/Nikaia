@@ -1,10 +1,16 @@
-//! Files, completed by the kernel
-//! ([ADR-038](../../../../docs/specification/adr/adr-038.md) D3).
+//! Files read and written by the kernel through `io_uring`, and the bell that
+//! wakes a thread parked on the ring. Linux only.
+//!
+//! Every `unsafe` in this crate, and the argument for it, is listed in
+//! `README.md`; the soundness rule for the buffers is below.
+//!
+//! ## Files, completed by the kernel
+//! (Nikaia ADR-038 D3).
 //!
 //! `epoll` cannot read a file at all: a regular file is always "ready" and the
 //! read blocks in the kernel anyway, which is why every readiness-based
 //! runtime serves file I/O from a thread pool - and that pool *is*
-//! [ADR-033](../../../../docs/specification/adr/adr-033.md) §8.4's 46 µs.
+//! Nikaia ADR-033 §8.4's 46 µs.
 //! `io_uring` removes it, not by being a faster pool but because no thread is
 //! involved: the kernel performs the read and reports when it is done.
 //!
@@ -20,7 +26,7 @@
 //!
 //! 1. **The buffers are not on any caller's stack.** A [`Job`] lives in
 //!    `Ring::jobs`, and the `Ring` lives in the process-global runtime
-//!    ([`crate::rt`]), which outlives every frame in the program. An unwind
+//!    (the runtime that owns the `Ring`), which outlives every frame in the program. An unwind
 //!    through `read_many` therefore cannot drop a buffer the kernel holds -
 //!    there is nothing on that stack to drop.
 //! 2. **A slot is released on a count, not on a return.** `Job::outstanding`
@@ -38,8 +44,8 @@
 //! and moves the finished bytes out again - and `fs::map`, the one function
 //! here that hands back memory it does not own, is a mapping and never
 //! reaches the ring. Ownership is what
-//! [ADR-005](../../../../docs/specification/adr/adr-005.md) and
-//! [ADR-008](../../../../docs/specification/adr/adr-008.md)'s tether lattice
+//! Nikaia ADR-005 and
+//! Nikaia ADR-008's tether lattice
 //! infer, and it is what the kernel is handed.
 //!
 //! ## What is *not* completed here
@@ -50,11 +56,16 @@
 //! thread. The *read* is what ADR-033 §8.4 priced, and the read is what
 //! completes.
 
+#![cfg(target_os = "linux")]
+#![deny(unsafe_op_in_unsafe_fn)]
+
 use std::fs::File;
 use std::io;
-use std::os::fd::{FromRawFd, OwnedFd, RawFd};
+use std::io::{Read, Write};
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
+use std::sync::Arc;
 
 use io_uring::{opcode, types, IoUring};
 
@@ -63,7 +74,7 @@ use io_uring::{opcode, types, IoUring};
 const ENTRIES: u32 = 64;
 
 /// **The user data the bell's poll carries**
-/// ([ADR-121](../../../../docs/specification/adr/adr-121.md) D2).
+/// (Nikaia ADR-121 D2).
 ///
 /// Every other submission carries a slot index, and a slot index is a position
 /// in [`Ring::jobs`] - so `u64::MAX` is a number no operation can wear, on a
@@ -72,39 +83,38 @@ const ENTRIES: u32 = 64;
 /// how it is told apart.
 const BELL: u64 = u64::MAX;
 
-/// **Ring the bell the ring's park is listening to**
-/// ([ADR-121](../../../../docs/specification/adr/adr-121.md) D1).
+/// **The bell the ring's park is listening to**: an `eventfd`
+/// (Nikaia ADR-121 D1), shared between the [`Ring`] that polls it and whoever
+/// rings it.
 ///
-/// Called by [`crate::rt::ring_the_bell`] after it has bumped the count the
-/// fallback park watches. Both are rung, always: which park a process has is a
-/// run-time answer, a program may have waiters of both kinds at once, and a
-/// write to a descriptor nobody is polling costs one syscall.
-///
-/// **The descriptor arrives as a number rather than as the [`Ring`] it belongs
-/// to**, and that is the whole shape of D1. The thread that parks is inside
-/// `io_uring_enter` holding the ring's own lock, and the thread that rings is
-/// an I/O worker: a worker that had to take that lock to ring could not ring at
-/// all, because it would be waiting for the very thread it is trying to wake.
-/// A `write` to a descriptor takes no lock, so the runtime keeps the number
-/// beside the ring and hands it over here.
-///
-/// A negative `fd` is *no ring in this process*: every non-Linux target, and
-/// every Linux one whose probe turned the ring down (`Files::Blocking`), where
-/// the bell the fallback park watches is the whole mechanism.
-pub(crate) fn ring_the_eventfd(fd: RawFd) {
-    if fd < 0 {
-        return;
+/// **Rung without the ring's lock**, and that is the whole shape of it. The
+/// thread that parks is inside `io_uring_enter` holding the ring's own lock,
+/// and the thread that rings is an I/O worker: a worker that had to take that
+/// lock to ring could not ring at all, because it would be waiting for the very
+/// thread it is trying to wake. A `write` to a descriptor takes no lock, so the
+/// runtime keeps a clone of the bell beside the ring and rings it directly.
+#[derive(Clone, Debug)]
+pub struct Bell(Arc<File>);
+
+impl Bell {
+    /// Ring it. Nothing is reported: a short write cannot happen for eight
+    /// bytes, and `EAGAIN` means the counter is at its maximum, which is
+    /// 2^64-2 rings nobody has read. The bell says *something moved*; it is
+    /// not a queue and has nothing to lose.
+    pub fn ring(&self) {
+        let _ = (&*self.0).write(&1u64.to_ne_bytes());
     }
-    let one: u64 = 1;
-    // SAFETY: `fd` is an `eventfd` the runtime made and never closes - the
-    // `Ring` that owns it is inside a `OnceLock` that outlives the process's
-    // last thread - and the buffer is the eight bytes an `eventfd` write takes,
-    // on this stack for the duration of the call. Nothing is reported: a short
-    // write cannot happen for eight bytes, and `EAGAIN` means the counter is at
-    // its maximum, which is 2^64-2 rings nobody has read. The bell says
-    // *something moved*; it is not a queue and has nothing to lose.
-    unsafe {
-        let _ = libc::write(fd, std::ptr::addr_of!(one).cast(), 8);
+
+    /// Take the counter back to zero, so the next ring is a new poll. The
+    /// descriptor is `EFD_NONBLOCK`, so a counter already at zero is `EAGAIN`
+    /// and not a wait - and a zero counter means somebody else got here first.
+    fn drain(&self) {
+        let mut seen = [0u8; 8];
+        let _ = (&*self.0).read(&mut seen);
+    }
+
+    fn fd(&self) -> std::os::fd::RawFd {
+        self.0.as_raw_fd()
     }
 }
 
@@ -163,7 +173,7 @@ enum Kind {
 /// one submission queue is not sound and no lock-free trick here would be
 /// worth the reasoning - and at `user_parallelism = no` there is exactly one
 /// user thread, so the lock is uncontended by construction
-/// ([ADR-037](../../../../docs/specification/adr/adr-037.md) D2).
+/// (Nikaia ADR-037 D2).
 pub struct Ring {
     ring: IoUring,
     /// Slot index is the `user_data` the kernel reports back.
@@ -171,14 +181,14 @@ pub struct Ring {
     /// Completions submitted and not yet reaped, over all slots.
     ///
     /// **The bell is not one of them**
-    /// ([ADR-121](../../../../docs/specification/adr/adr-121.md) D2): a park
+    /// (Nikaia ADR-121 D2): a park
     /// with only the bell armed has nothing to wait for and still sleeps, which
     /// is what keeps D1 from turning every park into a wait for a bell nobody
     /// is going to ring.
     unreaped: usize,
-    /// The bell's `eventfd`, kept alive here (D1). [`ring_the_eventfd`] says why
-    /// its number is also kept beside the lock.
-    bell: OwnedFd,
+    /// The bell's `eventfd` (D1). [`Bell`] says why a clone of it is also kept
+    /// beside the lock.
+    bell: Bell,
     /// Whether the bell's poll is on the ring. Re-armed by [`Ring::reap`] the
     /// moment it completes, which is D2's *answered by re-arming it*.
     bell_armed: bool,
@@ -215,7 +225,7 @@ impl Ring {
             unreaped: 0,
             // SAFETY: a descriptor `eventfd` just made, which nothing else in
             // this process holds or will close.
-            bell: unsafe { OwnedFd::from_raw_fd(fd) },
+            bell: Bell(Arc::new(File::from(unsafe { OwnedFd::from_raw_fd(fd) }))),
             bell_armed: false,
             moved: 0,
         };
@@ -223,14 +233,10 @@ impl Ring {
         Ok(ring)
     }
 
-    /// The bell's descriptor, for the runtime to keep beside the lock.
-    ///
-    /// [`ring_the_eventfd`] says why a number and not a `&Ring`. It belongs to
-    /// **this** ring: a second `Runtime` built in a test has a ring of its own
-    /// and a bell of its own, and the process's runtime is rung through the
-    /// number the process's runtime kept.
-    pub fn bell(&self) -> RawFd {
-        self.bell.as_raw_fd()
+    /// The bell, for the runtime to keep beside the lock. It belongs to
+    /// **this** ring: a second ring has a bell of its own.
+    pub fn bell(&self) -> Bell {
+        self.bell.clone()
     }
 
     /// Read every one of `paths` whole, with all of them in flight at once.
@@ -284,7 +290,7 @@ impl Ring {
     /// The slot is the handle: [`Ring::poll_slot`] asks whether it has
     /// finished, and nothing on this path blocks. That is what makes a file
     /// read a suspension point rather than a wait
-    /// ([ADR-055](../../../../docs/specification/adr/adr-055.md) §6 step 3) -
+    /// (Nikaia ADR-055 §6 step 3) -
     /// `read_many` above is the same operation for a caller that is going to
     /// wait for it anyway, and both are here because the ring is the same ring.
     pub fn begin_read(&mut self, path: &Path) -> io::Result<usize> {
@@ -359,7 +365,7 @@ impl Ring {
     /// waiting would be waiting forever.
     ///
     /// **`elsewhere` is a worker operation in flight**
-    /// ([ADR-121](../../../../docs/specification/adr/adr-121.md) D1). The bell
+    /// (Nikaia ADR-121 D1). The bell
     /// is armed on this ring, so a worker's reply *does* post a completion here
     /// and a park entered for one returns - but `unreaped` deliberately does
     /// not count the bell (D2), so without this the hook would answer *nothing
@@ -371,11 +377,16 @@ impl Ring {
     /// already on the ring is readable and `submit_and_wait` returns at once.
     /// That is the same ordering the fallback's generation gives, bought with a
     /// counter the kernel keeps instead of one this program does.
+    ///
+    /// `generation` is the caller's count of finished operations - read here,
+    /// inside the lock, which is what keeps a ring between a poll and a park
+    /// from being lost.
     pub fn park(
         &mut self,
         since: u64,
         elsewhere: bool,
         limit: Option<std::time::Duration>,
+        generation: impl Fn() -> u64,
     ) -> bool {
         self.arm_bell();
         // **A bell already answered is not waited for**, which is D3's *a hang
@@ -403,7 +414,7 @@ impl Ring {
         // panicked about a waker nobody arranged or spun out its
         // `cleanup-deadline` and abandoned the task. The count is the thing
         // that remembers; it has to be read first.
-        if super::io::generation() > since {
+        if generation() > since {
             self.reap();
             return true;
         }
@@ -451,7 +462,7 @@ impl Ring {
         if self.bell_armed {
             return;
         }
-        let entry = opcode::PollAdd::new(types::Fd(self.bell.as_raw_fd()), libc::POLLIN as u32)
+        let entry = opcode::PollAdd::new(types::Fd(self.bell.fd()), libc::POLLIN as u32)
             .build()
             .user_data(BELL);
         // SAFETY: a poll submission borrows nothing. The descriptor belongs to
@@ -465,15 +476,7 @@ impl Ring {
 
     /// Take the bell's counter back to zero, so the next ring is a new poll.
     fn drain_bell(&self) {
-        let mut seen = [0u8; 8];
-        // SAFETY: eight bytes of this frame, which is exactly what an `eventfd`
-        // read moves, on a descriptor this `Ring` owns. The descriptor is
-        // `EFD_NONBLOCK`, so a counter that is already zero is `EAGAIN` and not
-        // a wait - and a zero counter means somebody else got here first, which
-        // is nothing to report.
-        unsafe {
-            let _ = libc::read(self.bell.as_raw_fd(), seen.as_mut_ptr().cast(), 8);
-        }
+        self.bell.drain();
     }
 
     /// Say that a handle holds `slot` and will take its answer ([`Job::owned`]).
@@ -671,7 +674,7 @@ impl Ring {
         let mut rang = false;
         for (data, result) in done {
             // **The bell's completion is not an operation's**
-            // ([ADR-121](../../../../docs/specification/adr/adr-121.md) D2): it
+            // (Nikaia ADR-121 D2): it
             // is answered by re-arming the poll below, it is never handed to a
             // future as a result, and it is not subtracted from `unreaped`
             // because it was never added to it.
@@ -783,7 +786,7 @@ impl Ring {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod tests {
     use super::*;
 
