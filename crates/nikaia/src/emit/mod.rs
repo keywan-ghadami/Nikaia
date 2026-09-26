@@ -3538,9 +3538,49 @@ impl<'p> Emitter<'p> {
         // its views leave through with the keep's lifetime, so `rustc` holds
         // the body to exactly what the plan says.
         let kept = self.kept_lifetimes(&key, lifetimes);
+        // **A view handed back out of a parameter that holds views**
+        // ([ADR-226](../../docs/specification/adr/adr-226.md) D1):
+        // `fn first(xs: Vec[ref String]) -> ref String` lends `xs`, and the
+        // result is one of the views inside it, not a borrow of the list. Two
+        // lifetimes are in that parameter - the loan and the buffer - and the
+        // result's is the buffer's, so it is named: `fn first<'a>(xs:
+        // &Vec<&'a str>) -> &'a str`. Only where that one parameter is all
+        // there is to borrow from; with two, which buffer is ADR-209's
+        // question and already its refusal.
+        let inner_views = match (lifetimes, receiver, kept, ret_type) {
+            (Lifetimes::ELIDED, None, None, Some(ty))
+                if self.carries_a_view(ty) && carries_input.is_none_or(|set| set.is_empty()) =>
+            {
+                let carrying: Vec<_> = args
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, a)| self.carries_a_view(&a.ty))
+                    .collect();
+                // **Lent**, by the declaration's own test below: a parameter
+                // handed over is one lifetime, which the elision names.
+                let lent = |at: usize| {
+                    self.own_contracts.functions.get(&key).is_some_and(|c| {
+                        crate::contracts::keeps::lends(c, at)
+                            && !c
+                                .signature
+                                .as_ref()
+                                .and_then(|s| s.params.get(at))
+                                .is_some_and(|(_, ty)| ty.is_a_view())
+                    })
+                };
+                match carrying.as_slice() {
+                    [(at, one)] if !one.ty.is_view && !one.ty.either && lent(*at) => Some(one.name),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
         let how = |name: Symbol| {
             if let Some(kept) = kept.filter(|_| self.tethered_position(&key, self.text(name))) {
                 return kept;
+            }
+            if inner_views == Some(name) {
+                return Lifetimes::NAMED;
             }
             let viewed = args.iter().any(|a| a.name == name && a.ty.is_view);
             match (carries_input.is_some_and(|set| set.contains(&name)), viewed) {
@@ -3741,7 +3781,7 @@ impl<'p> Emitter<'p> {
         // **The buffer a struct parameter carries is named on the function**
         // where no `impl` names it already.
         let declared: Vec<String> = match lifetimes == Lifetimes::ELIDED
-            && carries_input.is_some_and(|set| !set.is_empty())
+            && (carries_input.is_some_and(|set| !set.is_empty()) || inner_views.is_some())
         {
             true => std::iter::once("'a".to_string()).chain(declared).collect(),
             false => declared,
@@ -3818,6 +3858,7 @@ impl<'p> Emitter<'p> {
                         kept
                     }
                     (true, _) => Lifetimes::STATIC,
+                    (false, _) if inner_views.is_some() => Lifetimes::NAMED,
                     (false, _) => lifetimes,
                 };
                 self.ty_counted(ty, result, self.count_at(&key, SHARED_RESULT))
@@ -4833,19 +4874,15 @@ impl<'p> Emitter<'p> {
         // Written where the name is read rather than at every position that
         // takes a type, so that a `Vec[Seen[i64]]` and a `Seen[i64]?` come out
         // right for the same reason `Shared` does one paragraph down.
-        if self.text(ty.name) == crate::contracts::ty::SEEN {
-            let inner = ty.generics.first().cloned().unwrap_or_else(|| Type {
-                name: ty.name,
-                generics: Vec::new(),
-                is_view: false,
-                is_nullable: false,
-                is_tuple: false,
-                code: None,
-                count: None,
-                is_mut: false,
-                is_slice: false,
-                either: false,
-            });
+        //
+        // **Only with its argument.** A bare `Seen` is not the stamp - the stamp
+        // always says what it stamps - and a program may declare a type of that
+        // name; erasing it to itself recursed until the compiler's stack ran
+        // out, on `struct Seen { … }` and a parameter of it.
+        if self.text(ty.name) == crate::contracts::ty::SEEN
+            && let [inner] = ty.generics.as_slice()
+        {
+            let inner = inner.clone();
             let inner = Type {
                 is_nullable: ty.is_nullable || inner.is_nullable,
                 is_view: ty.is_view || inner.is_view,

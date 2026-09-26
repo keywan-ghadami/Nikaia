@@ -4,6 +4,21 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.209] — 2026-09-26
+
+**A view handed back out of a parameter that holds views is the buffer's** —
+[ADR-226](docs/specification/adr/adr-226.md), closing ADR-222 §3's last row.
+
+- `fn first(xs: Vec[String]) -> String { return xs[0] }` over a list of views,
+  a view field of a struct handed back, and a field both kinds flow into handed
+  back all failed in `rustc` with *missing lifetime specifier*. The first two
+  name the buffer's lifetime on the parameter and the result (`fn first<'a>(xs:
+  &Vec<&'a str>) -> &'a str`); the third takes its struct, as a `String` field
+  does, because `EitherText` cannot leave a loan without an allocation.
+- **A program's own `struct Seen` overflowed the compiler's stack**: the
+  lock's stamp `Seen[T]` was erased even with no argument, to itself. The stamp
+  now needs its argument, and a bare `Seen` is the program's type.
+
 ## [0.0.208] — 2026-09-26
 
 **A view cut from text is typed as one** —
