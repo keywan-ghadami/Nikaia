@@ -4,6 +4,14 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.197] — 2026-09-26
+
+**The open question about structs of views names its crate.** Option 3 on
+`docs/open-decisions.md` — one handle per element — is built on `self_cell`,
+which keeps `unsafe` out of the emitted code at the cost of one dependency with
+none of its own. Tried by hand on the entry's own program; `yoke` compared and
+not chosen.
+
 ## [0.0.196] — 2026-09-26
 
 **The open lists say what is open** — the owner's request.

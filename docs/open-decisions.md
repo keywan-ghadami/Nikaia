@@ -51,15 +51,24 @@ it.
 2. **A per-view handle in every view field**: a struct used this way is lowered
    a second time with `Held` fields. Reads work through `Held`'s deref, but
    every method and construction site of the struct needs the second form too.
-3. **One handle per element** (ADR-209 D3's packed handle, generalised): the
-   container holds the struct beside a handle on its buffer, and every read of
-   an element goes through `.get()`, which hands out the struct over a lifetime
-   no longer than the read. The struct is lowered once; the emitter's
-   *shortened* lifetime for tethered task bindings is the same mechanism.
+3. **One handle per element**: the container holds each struct together with
+   the buffer it points into, and a read goes through a getter that hands out
+   the struct over a lifetime no longer than the read. Built on the crate
+   **`self_cell`** (1.3), so the emitted code holds no `unsafe`: no dependency
+   of its own, no proc macro, licensed Apache-2.0 (or GPL-2.0). An element is
+   `self_cell!(struct Element { owner: Arc<str>, #[covariant] dependent:
+   Record })`; the struct literal is emitted inside `Element::new(buffer,
+   |text| Record { name: text.trim(), … })` with the buffer's name bound to the
+   owner, and a read is `element.borrow_dependent()`. Measured: the program
+   above, lowered by hand this way, builds with `self_cell` as the only entry
+   in `Cargo.lock` besides itself and runs.
 
-**Recommendation: 3.** One lowering of the struct, one handle per element, and
-the read path already exists for tasks. It frees a buffer when its last element
-leaves, which is what D4 does for text.
+**Recommendation: 3**, with `self_cell`. One lowering of the struct, a buffer
+freed when its last element leaves (what D4 does for text), and no `unsafe` in
+what the compiler writes. `yoke` does the same and was not chosen: it brings
+`stable_deref_trait` and `zerofrom`, and without its `derive` feature (which
+adds `syn`, `quote`, `proc-macro2` and `synstructure`) its trait `Yokeable` is
+an `unsafe` one the emitted code would implement.
 
 **What it costs if wrong.**
 
@@ -67,6 +76,8 @@ leaves, which is what D4 does for text.
   language whose promise is that a copy is written and never needed for safety.
 * **2:** each such struct's code is emitted twice, and a method written for one
   form must be written for the other.
-* **3:** the emitted Rust extends a lifetime behind `unsafe`, as `Held` does.
-  A read path that forgets `.get()` is a `rustc` error rather than unsoundness,
-  as long as the element's inner struct is reachable only through `.get()`.
+* **3:** one dependency in the emitted code, and a struct whose lifetime is not
+  covariant cannot be held this way (`#[covariant]` is checked by `self_cell`
+  and refused by `rustc`). Every struct of views this language declares holds
+  only `&str` fields and is covariant. A read path the emitter forgets is a
+  `rustc` error, not unsoundness.
