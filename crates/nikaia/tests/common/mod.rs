@@ -314,9 +314,9 @@ pub fn undescribed_call(receiver: &str) -> String {
 /// a *value* the checker cannot type rather than a statement it cannot type.
 ///
 /// `insert_str` above yields nothing, so it cannot stand where a value is
-/// wanted. `String::repeat` is absent from the ledger while `str::repeat` is
-/// there — so a call on a `String` receiver is `?` and still compiles, which is
-/// what a test that lowers *and* runs needs.
+/// wanted. `to_ascii_uppercase` is in neither `String`'s entries nor `str`'s,
+/// so a call on a `String` receiver is `?` and still compiles, which is what a
+/// test that lowers *and* runs needs.
 ///
 /// **Here rather than written into a test**, for the reason the constant above
 /// is: five tests have broken on a name somebody wrote down, and the fifth was
@@ -325,10 +325,12 @@ pub fn undescribed_call(receiver: &str) -> String {
 /// [ADR-083](../../../../docs/specification/adr/adr-083.md) put `String::clone`
 /// in the ledger because `NK1131`'s advice needed it. That is the ledger getting
 /// better and a test measuring the wrong thing, which is exactly the pair this
-/// file exists to keep apart.
-pub const UNDESCRIBED_VALUE_METHOD: &str = "repeat";
+/// file exists to keep apart. The sixth was `repeat`: it was `str`'s only, until
+/// [ADR-225](../../../../docs/specification/adr/adr-225.md) D1 let a `String`
+/// receiver find `str`'s entries.
+pub const UNDESCRIBED_VALUE_METHOD: &str = "to_ascii_uppercase";
 
-/// `s.repeat(1)` — an undescribed call that yields a `String`.
+/// `s.to_ascii_uppercase()` — an undescribed call that yields a `String`.
 pub fn undescribed_value(receiver: &str) -> String {
-    format!("{receiver}.{UNDESCRIBED_VALUE_METHOD}(1)")
+    format!("{receiver}.{UNDESCRIBED_VALUE_METHOD}()")
 }

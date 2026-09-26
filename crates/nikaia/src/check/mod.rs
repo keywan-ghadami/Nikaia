@@ -1322,6 +1322,12 @@ pub fn argument_shape(expr: &Expr) -> String {
     format!("{expr:?}")
 }
 
+/// A view of text going into text of its own, present or absent.
+fn views_into_text(found: &Ty, want: &Ty) -> bool {
+    (*found == Ty::view("str") && *want == Ty::named("String"))
+        || views_into_nullable_text(found, want)
+}
+
 /// A view of text, present or absent, going into a `String?`
 /// ([ADR-224](../../../docs/specification/adr/adr-224.md) D1).
 fn views_into_nullable_text(found: &Ty, want: &Ty) -> bool {
@@ -5056,6 +5062,13 @@ impl<'a> Checker<'a> {
         let found = self.method(&key).or_else(|| match &on {
             // D3's *otherwise `Par[T]` has `Seq[T]`'s surface*.
             Ty::Seq { parallel: true, .. } => self.method(&format!("{}::{entry}", ty::SEQ)),
+            // **Text of its own lends itself as a view**
+            // ([ADR-225](../../docs/specification/adr/adr-225.md) D1), so a
+            // method of a view is a method of a `String` too - which is how
+            // the language below has it.
+            Ty::Named { name, args, .. } if name == "String" && args.is_empty() => {
+                self.method(&format!("str::{entry}"))
+            }
             _ => None,
         });
         let Some((key, contract)) = found else {
@@ -5204,6 +5217,9 @@ impl<'a> Checker<'a> {
         // `set`, which is the word on the page.
         let written = self.parsed.text(method).to_string();
         let result = self.arguments(&key, &written, contract, args, &found, &[], span);
+        self.a_view_kept_where_the_receiver_says_text(
+            &key, contract, args, &found, &expected, span,
+        );
         // The receiver first (ADR-031), then whatever the arguments can still
         // say (ADR-074 D2) - `or_insert` on a map that bound `$V` already has
         // its answer, and `bind` does not overwrite one.
@@ -6688,17 +6704,47 @@ impl<'a> Checker<'a> {
                 // absent-or-present whatever the value was, so no wrap is
                 // written around it; before a `collect`, `either_items()`,
                 // which is the same items.
-                match self.parsed.text(*method) {
-                    "into_either" | "either_items" if args.is_empty() && config.is_empty() => {
-                        return on;
+                // What goes in is `EitherText`, which reads as text of its
+                // own (ADR-223 D3): a view handed over this way is not a view
+                // kept.
+                let own = |ty: Ty| match ty {
+                    ty if ty == Ty::view("str") => Ty::named("String"),
+                    Ty::Nullable(inner) if *inner == Ty::view("str") => {
+                        Ty::Nullable(Box::new(Ty::named("String")))
                     }
-                    "into_either_maybe" if args.is_empty() && config.is_empty() => {
-                        return match on {
-                            Ty::Nullable(_) => on,
-                            other => Ty::Nullable(Box::new(other)),
-                        };
+                    ty => ty,
+                };
+                if args.is_empty() && config.is_empty() {
+                    match self.parsed.text(*method) {
+                        "into_either" => return own(on),
+                        "into_either_maybe" => {
+                            return match own(on) {
+                                Ty::Nullable(inner) => Ty::Nullable(inner),
+                                other => Ty::Nullable(Box::new(other)),
+                            };
+                        }
+                        "either_items" => {
+                            return match on {
+                                Ty::Seq {
+                                    item,
+                                    is_sync,
+                                    pauses,
+                                    throws,
+                                    parallel,
+                                    shape,
+                                } => Ty::Seq {
+                                    item: Box::new(own(*item)),
+                                    is_sync,
+                                    pauses,
+                                    throws,
+                                    parallel,
+                                    shape,
+                                },
+                                other => other,
+                            };
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
                 // **`field.of(value)`, the one method a reflected field has**
                 // ([ADR-088](../../docs/specification/adr/adr-088.md) D2).
@@ -9157,6 +9203,12 @@ impl<'a> Checker<'a> {
             {
                 continue;
             }
+            // **A view handed to a parameter both kinds flow into** is
+            // borrowed as it is ([ADR-223](../../docs/specification/adr/adr-223.md)
+            // D2): the emitter hands it over, as it does into a mixed field.
+            if views_into_text(found, want) && self.either_param(key, at) {
+                continue;
+            }
             // **A `usize` at the C boundary takes this language's own integer**
             // ([ADR-147](../../docs/specification/adr/adr-147.md) D2,
             // [ADR-048](../../docs/specification/adr/adr-048.md) D1). A length
@@ -9372,6 +9424,87 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// **A view kept where the receiver says text of its own**
+    /// ([ADR-225](../../docs/specification/adr/adr-225.md) D2):
+    /// `names.push(line.trim())` on a `Vec[String]`. The signature says `$T`,
+    /// which a view fits; the receiver binds `$T` to `String`, and that is the
+    /// question - the one [`Checker::arguments`] asks of a parameter that says
+    /// `String` itself. A position the tier pass made a view is `ref String`
+    /// here and fits; one it made mixed is handed `value.into_either()`, which
+    /// reads as text of its own.
+    fn a_view_kept_where_the_receiver_says_text(
+        &mut self,
+        key: &str,
+        contract: &FnContract,
+        given: &[Expr],
+        found: &[Ty],
+        expected: &[Ty],
+        span: &Span,
+    ) {
+        let Some(signature) = contract.signature.as_ref() else {
+            return;
+        };
+        let arguments = signature.arguments();
+        for (at, ((name, declared), want)) in arguments.iter().zip(expected).enumerate() {
+            let generic = matches!(declared, Ty::Var { .. });
+            let kept = !crate::contracts::keeps::lends(
+                contract,
+                at + usize::from(signature.takes_a_receiver()),
+            );
+            let Some(found) = found.get(at) else { continue };
+            if !generic || !kept || !views_into_text(found, want) {
+                continue;
+            }
+            // A literal is built into text where it is kept (ADR-207 D2),
+            // which the caller has already recorded.
+            let literal = given.get(at).and_then(|g| self.text_literal(want, g, true));
+            let found = literal.as_ref().unwrap_or(found);
+            if !views_into_text(found, want) {
+                continue;
+            }
+            let keeper = format!("`{key}` keeps its `{name}` after the call returns");
+            let (key, name) = (key.to_string(), name.clone());
+            self.expect_kept(
+                found,
+                want,
+                given.get(at),
+                &keeper,
+                span.clone(),
+                "argument",
+                move |found, want| {
+                    format!("`{key}` takes `{name}: {want}` here, and this call passes `{found}`")
+                },
+            );
+        }
+    }
+
+    /// Whether parameter `at` of a function this program declares is text both
+    /// kinds of which flow into (ADR-223 D2): by its key, `f` or `Type::m`.
+    fn either_param(&self, key: &str, at: usize) -> bool {
+        let (target, own) = match key.rsplit_once("::") {
+            Some((target, own)) => (Some(target.rsplit("::").next().unwrap_or(target)), own),
+            None => (None, key),
+        };
+        let either = |item: &Item| {
+            matches!(item, Item::Fn { name: Some(n), args, .. }
+                if self.parsed.text(*n) == own && args.get(at).is_some_and(|a| a.ty.either))
+        };
+        self.parsed
+            .program
+            .items
+            .iter()
+            .any(|item| match (&item.node, target) {
+                (
+                    Item::Impl {
+                        target: t, methods, ..
+                    },
+                    Some(target),
+                ) if self.parsed.text(t.name) == target => methods.iter().any(|m| either(&m.node)),
+                (node, None) => either(node),
+                _ => false,
+            })
+    }
+
     /// Whether a struct's field is text both kinds of which flow into
     /// ([ADR-222](../../docs/specification/adr/adr-222.md) D3).
     fn either_field(&self, owner: &str, field: &str) -> bool {
@@ -9497,6 +9630,9 @@ impl<'a> Checker<'a> {
             "returns" => "NK1104",
             "assign" => "NK1105",
             "field" => "NK1106",
+            // An argument a method's receiver types (ADR-225 D2), which is
+            // the code `arguments` gives one its signature types.
+            "argument" => "NK1102",
             // **`NK1166`, and it used to be an `unreachable!`.** A `comptime`
             // whose value disagrees with its declared type reached `expect`
             // with a word that had no code, and the compiler **panicked** -

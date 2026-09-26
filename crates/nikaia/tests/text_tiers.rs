@@ -536,3 +536,68 @@ fn a_list_going_in_whole_is_handed_over_item_by_item_or_is_the_list_it_came_from
         "{rust}"
     );
 }
+
+/// **A view cut from text is typed as one** ([ADR-225](../../../docs/specification/adr/adr-225.md)
+/// D1): `trim` on text of its own, `lines`, `split` hand back views, so a view
+/// handed straight to a parameter both kinds flow into is borrowed there.
+const VIEWS_TYPED: &str = r##"use std::fs
+
+struct Tag {
+    s: String,
+}
+
+fn tag(s: String) -> Tag {
+    return Tag { s: s }
+}
+
+fn main() throws {
+    let text = fs::read_to_string("app.conf", fs::Root::Anywhere)
+    let a = tag(text.lines().next() ?? "")
+    let b = tag(f"own")
+    let mut all: Vec[Tag] = Vec()
+    for line in text.lines() {
+        for word in line.split(" ") {
+            all.push(tag(word.trim()))
+        }
+    }
+    println(f"{a.s} {b.s} {all.len()} {all[1].s}")
+}
+"##;
+
+#[test]
+fn a_view_cut_from_text_goes_into_a_mixed_parameter_as_it_is() {
+    runs("views-typed", VIEWS_TYPED, "# settings own 11 settings");
+}
+
+/// **And where it cannot go as it is, it is refused** (ADR-225 D2): a list a
+/// published function hands back is text of its own (ADR-223 D4), so a view
+/// pushed into it is kept, and the checker says so - where before the
+/// `rustc` of the file below did.
+#[test]
+fn a_view_pushed_into_a_published_list_is_refused_with_the_copy_named() {
+    let found = findings(
+        r##"use std::fs
+
+pub fn names() -> Vec[String] {
+    let mut out: Vec[String] = Vec()
+    out.push(f"a")
+    return out
+}
+
+fn main() throws {
+    let text = fs::read_to_string("app.conf", fs::Root::Anywhere)
+    let mut c = names()
+    for line in text.lines() {
+        c.push(line.trim())
+    }
+    println(f"{c.len()}")
+}
+"##,
+    );
+    assert!(
+        found.iter().any(|f| f.code == "NK1102"
+            && f.message.contains("`Vec::push` takes `value: String`")
+            && f.help.iter().any(|h| h.contains(".clone()"))),
+        "{found:#?}"
+    );
+}

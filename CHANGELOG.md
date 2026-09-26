@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.208] — 2026-09-26
+
+**A view cut from text is typed as one** —
+[ADR-225](docs/specification/adr/adr-225.md), closing `open-work.md` §1's *a
+view pushed into a list a published function handed back reaches `rustc`*.
+
+- `lines`, `split`, `split_whitespace`, `trim_start` and `trim_end` are in
+  `std.contracts`, handing back views of the text they are called on, and a
+  `String` receiver finds `str`'s methods. They were `?` to the checker, which
+  fits anything, so no question about a view cut from text was ever asked.
+- A kept argument is measured against what the receiver binds: `Vec::push`
+  says `value: $T`, and a view pushed into a `Vec[String]` that has to stay
+  text of its own - a list a published function hands back - is `NK1102` with
+  ADR-208's explanation and `.clone()` named, where it was `rustc`'s error.
+- What the tier pass hands over (`into_either()`) reads as text of its own, and
+  a view handed to a parameter both kinds flow into is let through, as into a
+  mixed field.
+- The tests' stand-in for *a method nothing describes* moved from `repeat` to
+  `to_ascii_uppercase`, since `String` now finds `str::repeat`.
+
 ## [0.0.207] — 2026-09-26
 
 **The rest of the text wall** — [ADR-224](docs/specification/adr/adr-224.md),

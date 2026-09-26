@@ -1032,7 +1032,7 @@ sync = true
 mutates = true
 touches = []
 keeps = ["value"]
-signature = "(ref Vec[$T], value: ?)"
+signature = "(ref Vec[$T], value: $T)"
 doc = "Add a value to the end of the list.\n\nThe list **keeps** the value, so what is handed over is given away rather\nthan lent."
 
 [fn."Vec::sort"]
@@ -1320,6 +1320,50 @@ touches = []
 returns = "borrows(self)"
 signature = "(ref String) -> ref String"
 doc = "The same text with the white space at both ends left off.\n\nWhat comes back is a **view** into the text it was given, so it costs no\nallocation and lives as long as that text does."
+
+# **What cuts text into views says so** ([ADR-225](../../docs/specification/adr/adr-225.md)
+# D1). Each hands back views into the text it is called on, which is what lets
+# the checker ask whether one is kept where text of its own is wanted. A
+# `String` receiver finds these as well: text of its own lends itself as a view.
+[fn."str::trim_start"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref String) -> ref String"
+doc = "The same text with the white space at the start left off, as a view into it."
+
+[fn."str::trim_end"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref String) -> ref String"
+doc = "The same text with the white space at the end left off, as a view into it."
+
+[fn."str::lines"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref String) -> Seq[ref String] sync ends"
+doc = "The lines of the text, each a view into it, without its line ending.\n\nNothing is copied: a line lives as long as the text does."
+
+[fn."str::split"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref String, sep: ?) -> Seq[ref String] sync ends"
+doc = "The pieces of the text between each `sep`, each a view into it."
+
+[fn."str::split_whitespace"]
+pub = true
+sync = true
+touches = []
+returns = "borrows(self)"
+signature = "(ref String) -> Seq[ref String] sync ends"
+doc = "The words of the text - the pieces between runs of white space - each a view\ninto it."
 
 # --- Inferred from `src/*.nika` ----------------------------------------------
 

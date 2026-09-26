@@ -834,24 +834,25 @@ fn main() {
 /// better, and a test that had been resting on it.
 #[test]
 fn a_value_of_known_type_still_gets_the_constructor() {
-    let rust = lowered(
+    let unknown = common::undescribed_value("self.name");
+    let rust = lowered(&format!(
         "\
-struct U { name: String }
+struct U {{ name: String }}
 
-impl U {
-    fn known(ref self) -> String? { return \"lit\" }
-    fn unknown(ref self) -> String? { return self.name.repeat(1) }
-}
+impl U {{
+    fn known(ref self) -> String? {{ return \"lit\" }}
+    fn unknown(ref self) -> String? {{ return {unknown} }}
+}}
 
-fn free() -> String? { return \"lit\" }
+fn free() -> String? {{ return \"lit\" }}
 ",
-    );
+    ));
     assert!(
         rust.contains("Some(String::from(\"lit\"))"),
         "a known type keeps the constructor:\n{rust}"
     );
     assert!(
-        rust.contains("self.name.repeat(1).into()"),
+        rust.contains(&format!("{unknown}.into()")),
         "an unknown one takes the conversion:\n{rust}"
     );
     // Two of the three are `Some(…)`, so the conversion is the exception rather

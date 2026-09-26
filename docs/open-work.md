@@ -44,21 +44,6 @@ refuses it where the target is not one, or `collect` builds what the target
 declares; the second is a language question for `open-decisions.md`. Evidence:
 found probing ADR-224 §3; the program above, run through `nikaia -i`.
 
-### 1.2. A view pushed into a list a published function handed back reaches `rustc`
-
-```nika
-pub fn names() -> Vec[String] { … }
-let mut c = names()
-for line in text.lines() { c.push(line.trim()) }   // rustc: mismatched types
-```
-
-A published result is never both kinds (ADR-223 D4), so `c`, which is that
-list (ADR-224 D3), stays a list of text of its own, and the view should be
-refused with ADR-208 D2's explanation. It is not, because the checker types
-`line.trim()` as `String` — the same typing ADR-223 §1 found — so nothing asks
-whether a view is kept. 0.0.206 lowered this program the same way. Evidence:
-the program above, run through `nikaia -i`.
-
 ## 2. Decided and unbuilt
 
 Two rules for ordering this section:
