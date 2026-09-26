@@ -86,7 +86,7 @@ def badges():
         "status.svg": badge("status", "specification + bootstrap", ORANGE),
         "license.svg": badge("license", "Apache 2.0", BLUE),
         "docs.svg": badge("docs", "nikaia-lang.org", BLUE),
-        "github.svg": badge("GitHub", "keywan-ghadami/Nikaia", GITHUB),
+        "github.svg": badge("GitHub", "Nikaia-Language/Nikaia", GITHUB),
     }
 
 

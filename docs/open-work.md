@@ -261,7 +261,7 @@ What waits inside it:
   `html::Raw`) need a conversion that package cannot express yet;
 * [ADR-058](specification/adr/adr-058.md) D1's `Bytes` body row, D2's `http::File`,
   D3's mechanism choice and D8's kept mappings, all of which are things to build
-  *on* a server ([#45](https://github.com/keywan-ghadami/Nikaia/pull/45));
+  *on* a server ([#45](https://github.com/Nikaia-Language/Nikaia/pull/45));
 * [`project_status_and_roadmap.md`](project_status_and_roadmap.md) Phase 3's route
   hashing, which says in as many words that it has no target because there is no
   server.

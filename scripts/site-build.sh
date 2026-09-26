@@ -109,7 +109,7 @@ github:
   private: false
   license:
     key: apache-2.0
-  repository_url: https://github.com/keywan-ghadami/Nikaia
+  repository_url: https://github.com/Nikaia-Language/Nikaia
   branch: main
 YAML
 rm -rf "$ROOT/_site"

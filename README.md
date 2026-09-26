@@ -21,7 +21,7 @@
   <img src="assets/badges/status.svg" alt="Status" />
   <img src="assets/badges/license.svg" alt="License" />
   <a href="https://nikaia-lang.org/"><img src="assets/badges/docs.svg" alt="Documentation site" /></a>
-  <a href="https://github.com/keywan-ghadami/Nikaia"><img src="assets/badges/github.svg" alt="GitHub repository" /></a>
+  <a href="https://github.com/Nikaia-Language/Nikaia"><img src="assets/badges/github.svg" alt="GitHub repository" /></a>
 </div>
 
 ---
@@ -318,7 +318,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 **2. Check out and build the compiler.**
 
 ```sh
-git clone https://github.com/keywan-ghadami/Nikaia.git
+git clone https://github.com/Nikaia-Language/Nikaia.git
 cd Nikaia
 cargo build --release -p nikaia        # about a minute; the binary is target/release/nikaia
 export PATH="$PWD/target/release:$PATH"
