@@ -285,6 +285,15 @@ fn main() {
             .any(|f| f.code == "NK1106" && f.message.contains("`Person.name` is `String`")),
         "{found:#?}"
     );
+    // The same for one that may be absent (ADR-224 D1).
+    let nullable = source
+        .replace("pub name: String,", "pub name: String?,")
+        .replace(
+            "println(named(\"ada\").name)",
+            "println(named(\"ada\").name ?? \"-\")",
+        );
+    let found = findings(&nullable);
+    assert!(found.iter().any(|f| f.code == "NK1106"), "{found:#?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +358,14 @@ fn shout(s: String) -> String {
     return f"{s}!"
 }
 
+struct Tag {
+    s: String,
+}
+
+fn tag(s: String) -> Tag {
+    return Tag { s: s }
+}
+
 fn main() throws {
     let text = fs::read_to_string("extra.conf", fs::Root::Anywhere)
     let mut last: String = f"nothing"
@@ -359,8 +376,9 @@ fn main() throws {
         all.push(f"#{all.len()}")
     }
     let loud = shout(last)
-    let quiet = shout(f"x")
-    println(f"{loud} {quiet} {all.len()} {all[1]}")
+    // A parameter that only reads is lent either kind; one that keeps is
+    // handed each as it is, from inside a hole as anywhere else.
+    println(f"{loud} {shout(f\"x\")} {tag(last).s} {tag(f\"y\").s} {all.len()} {all[1]}")
 }
 "##;
 
@@ -369,12 +387,152 @@ fn both_kinds_into_a_parameter_a_let_and_a_list_each_as_it_is() {
     runs(
         "mixed-everywhere",
         MIXED_EVERYWHERE,
-        "host = override.org! x! 4 #1",
+        "host = override.org! x! host = override.org y 4 #1",
     );
     let rust = lowered(MIXED_EVERYWHERE, Build::default());
     assert!(
         rust.contains("Vec<nikaia_std::either_text::EitherText<'_>>"),
         "{rust}"
     );
-    assert!(rust.contains(".into()"), "{rust}");
+    assert!(rust.contains(".into_either()"), "{rust}");
+    assert!(rust.contains("fn shout(s: &str)"), "{rust}");
+    assert!(rust.contains("either_text::either(last)"), "{rust}");
+}
+
+/// **A `String?` is a position too** ([ADR-224](../../../docs/specification/adr/adr-224.md)
+/// D1): views only, and `null`, which is no text of either kind, make it a
+/// view that may be absent.
+const NULLABLE: &str = r##"use std::fs
+
+struct Entry {
+    note: String?,
+}
+
+fn port(text: ref String) -> String? {
+    for line in text.lines() {
+        if line.starts_with("port") {
+            return line.trim()
+        }
+    }
+    return null
+}
+
+fn main() throws {
+    let text = fs::read_to_string("app.conf", fs::Root::Anywhere)
+    let e = Entry { note: text.lines().next() }
+    let f = Entry { note: null }
+    let mut last: String? = null
+    for line in text.lines() {
+        last = line.trim()
+    }
+    println(f"{e.note ?? \"-\"} {f.note ?? \"-\"} {port(text) ?? \"-\"} {last ?? \"-\"}")
+}
+"##;
+
+#[test]
+fn a_view_that_may_be_absent_is_a_view() {
+    runs(
+        "nullable",
+        NULLABLE,
+        "# settings - port = 8080 include = extra.conf",
+    );
+    let rust = lowered(NULLABLE, Build::default());
+    assert!(rust.contains("note: Option<&'a str>"), "{rust}");
+    assert!(rust.contains("-> Option<&str>"), "{rust}");
+    assert!(!rust.contains("to_owned"), "{rust}");
+}
+
+/// **Both kinds into a `String?`**: each value goes in as it is, present or
+/// absent - a field, a result, a `let` and the element of a list.
+const NULLABLE_MIXED: &str = r##"use std::fs
+
+struct Entry {
+    note: String?,
+}
+
+fn find(text: ref String, fallback: bool) -> String? {
+    for line in text.lines() {
+        if line.starts_with("port") {
+            return line.trim()
+        }
+    }
+    if fallback {
+        return f"none in {text.len()}"
+    }
+    return null
+}
+
+fn main() throws {
+    let text = fs::read_to_string("app.conf", fs::Root::Anywhere)
+    let e = Entry { note: text.lines().next() }
+    let f = Entry { note: f"made" }
+    let g = Entry { note: null }
+    let mut last: String? = null
+    for line in text.lines() {
+        last = line.trim()
+    }
+    let n = last ?? "-"
+    last = f"{n}!"
+    let mut all: Vec[String?] = Vec()
+    all.push(text.lines().next())
+    all.push(f"x")
+    all.push(null)
+    println(f"{e.note ?? \"-\"} {f.note ?? \"-\"} {g.note ?? \"-\"} {find(text, true) ?? \"-\"} {find(\"a\", true) ?? \"-\"} {last ?? \"-\"} {all.len()}")
+}
+"##;
+
+#[test]
+fn both_kinds_into_a_value_that_may_be_absent_each_as_it_is() {
+    runs(
+        "nullable-mixed",
+        NULLABLE_MIXED,
+        "# settings made - port = 8080 none in 1 include = extra.conf! 3",
+    );
+    let rust = lowered(NULLABLE_MIXED, Build::default());
+    assert!(
+        rust.contains("note: Option<nikaia_std::either_text::EitherText<'a>>"),
+        "{rust}"
+    );
+    assert!(rust.contains(".into_either_maybe()"), "{rust}");
+    assert!(rust.contains("note: None"), "{rust}");
+}
+
+/// **A list going in whole** ([ADR-224](../../../docs/specification/adr/adr-224.md)
+/// D3): a literal's items one by one, a `collect` item by item, and a list
+/// handed back and bound - with a type or without - is the list it came from,
+/// one representation below, so nothing is converted.
+const WHOLE: &str = r##"use std::fs
+
+fn words(text: ref String) -> Vec[String] {
+    let mut out: Vec[String] = Vec()
+    for w in text.split(" ") {
+        out.push(w)
+    }
+    return out
+}
+
+fn main() throws {
+    let text = fs::read_to_string("app.conf", fs::Root::Anywhere)
+    let first = text.lines().next() ?? ""
+    let mut a: Vec[String] = [first, f"own"]
+    a.push(first.trim())
+    let mut b: Vec[String] = text.lines().collect()
+    b.push(f"more")
+    let mut c = words(text)
+    c.push(f"tail")
+    let d: Vec[String] = words(text)
+    println(f"{a.len()} {b.len()} {c.len()} {a[1]} {b[4]} {c[0]} {d[1]}")
+}
+"##;
+
+#[test]
+fn a_list_going_in_whole_is_handed_over_item_by_item_or_is_the_list_it_came_from() {
+    runs("whole", WHOLE, "3 5 9 own more # settings\nhost");
+    let rust = lowered(WHOLE, Build::default());
+    assert!(rust.contains(".either_items().collect"), "{rust}");
+    assert!(rust.contains("first.into_either(), "), "{rust}");
+    assert!(
+        rust.contains("-> Vec<nikaia_std::either_text::EitherText<'_>>"),
+        "{rust}"
+    );
 }

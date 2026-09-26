@@ -159,11 +159,12 @@ struct Position {
     path: Vec<usize>,
 }
 
+/// A declared `String`, or `String?`: a value that may be absent is a position
+/// as well, and `null` puts no text of either kind into it (ADR-224 D1).
 fn plain_string(parsed: &Parsed, ty: &Type) -> bool {
     parsed.text(ty.name) == "String"
         && ty.generics.is_empty()
         && !ty.is_view
-        && !ty.is_nullable
         && !ty.is_tuple
         && !ty.is_slice
         && ty.code.is_none()
@@ -315,14 +316,31 @@ struct Flows {
     /// positions that name is kept in (ADR-222 D4).
     literal_lets: BTreeMap<usize, BTreeSet<Position>>,
     /// Values that go into a mixed position at a line whose lowering does not
-    /// wrap them itself, by address: each becomes `value.into()`.
-    wraps: BTreeSet<usize>,
+    /// wrap them itself, by address, and how each is handed over.
+    wraps: BTreeMap<usize, Hand>,
+    /// Two positions a whole value goes between - a list handed back, handed
+    /// over, or bound - which are therefore one representation below, and get
+    /// one tier (ADR-224 D3).
+    links: BTreeSet<(Position, Position)>,
     /// Positions a value goes into from inside an `f"…"` hole, where it
     /// cannot be wrapped: the hole is parsed out of the literal again by every
     /// reader, so this pass has no expression there to change. Such a
     /// position is never mixed - it stays text of its own, and the view is
     /// refused with its explanation rather than handed to `rustc` unwrapped.
     unwrappable: BTreeSet<Position>,
+}
+
+/// How a value is handed into a mixed position: the method this pass writes
+/// after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hand {
+    /// `value.into_either()`: into a `String`.
+    Either,
+    /// `value.into_either_maybe()`: into a `String?`, present or absent.
+    Maybe,
+    /// `iterator.either_items()`: before a `collect` into a list whose
+    /// element is mixed, each item handed over as it is.
+    Items,
 }
 
 /// One local, as far as this walk needs it.
@@ -396,7 +414,7 @@ impl Walk<'_, '_> {
     /// A value going into one argument of a declared type, which is a
     /// position if it is `String`: recorded, and - where that position is
     /// mixed and `wrap` says the line is this pass's to wrap - marked for
-    /// `.into()`.
+    /// `.into_either()`.
     fn flow_value(
         &mut self,
         owner: &Owner,
@@ -407,7 +425,19 @@ impl Walk<'_, '_> {
         wrap: bool,
     ) {
         let mut path = path;
-        self.flow_type(owner, ty, &mut path, kinds);
+        // A list that comes whole from a position is linked to it below
+        // (`flow_whole`), and the link is all that flows: what it reads as
+        // is only what this walk has decided so far, and linked positions
+        // share what flows into either, so an early reading would stay.
+        let linked = container(self.declared.parsed, ty).is_some()
+            && value.is_some_and(|v| {
+                let collect = matches!(v, Expr::MethodCall { method, args, .. }
+                    if args.is_empty() && self.text(*method) == "collect");
+                !collect && !matches!(v, Expr::ListLit { .. }) && self.source(v).is_some()
+            });
+        if !linked {
+            self.flow_type(owner, ty, &mut path, kinds);
+        }
         if self.in_hole && wrap && plain_string(self.declared.parsed, ty) {
             self.flows.unwrappable.insert(Position {
                 owner: owner.clone(),
@@ -416,16 +446,144 @@ impl Walk<'_, '_> {
             return;
         }
         if let Some(value) = value {
+            // `null` is no text of either kind, and goes in as it is.
             if plain_string(self.declared.parsed, ty)
                 && wrap
+                && !matches!(value, Expr::LitNull)
                 && self.tier_of(&Position {
                     owner: owner.clone(),
                     path: path.clone(),
                 }) == Tier::Mixed
             {
-                self.flows.wraps.insert(value as *const Expr as usize);
+                let hand = match ty.is_nullable {
+                    true => Hand::Maybe,
+                    false => Hand::Either,
+                };
+                self.flows.wraps.insert(value as *const Expr as usize, hand);
             }
             self.kept_literal(value, owner, &path, ty);
+            if container(self.declared.parsed, ty).is_some() {
+                self.flow_whole(owner, ty, path, value);
+            }
+        }
+    }
+
+    /// **A container going in whole** (ADR-224 D3): a literal's items one by
+    /// one, a `collect` item by item, and anything that already has a
+    /// position - a list handed back, handed over or bound - linked to it, so
+    /// that the two are one representation below and nothing is converted.
+    fn flow_whole(&mut self, owner: &Owner, ty: &Type, path: Vec<usize>, value: &Expr) {
+        let parsed = self.declared.parsed;
+        let element = match container(parsed, ty) {
+            Some(name) if !MAPS.contains(&name) => ty.generics.first(),
+            _ => None,
+        };
+        match value {
+            Expr::ListLit { items, .. } => {
+                let Some(element) = element else { return };
+                for item in items {
+                    let kinds = self.expr(item);
+                    let mut at = path.clone();
+                    at.push(0);
+                    self.flow_value(owner, element, at, Some(item), &kinds, true);
+                }
+            }
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+                ..
+            } if self.text(*method) == "collect" && args.is_empty() => {
+                let Some(element) = element else { return };
+                let mut at = path.clone();
+                at.push(0);
+                let position = Position {
+                    owner: owner.clone(),
+                    path: at,
+                };
+                if !plain_string(parsed, element) {
+                    return;
+                }
+                if self.in_hole {
+                    self.flows.unwrappable.insert(position);
+                } else if self.tier_of(&position) == Tier::Mixed {
+                    let at = receiver.as_ref() as *const Expr as usize;
+                    self.flows.wraps.insert(at, Hand::Items);
+                }
+            }
+            _ => {
+                if let Some((from, from_ty)) = self.source(value) {
+                    self.link(
+                        &from,
+                        &from_ty,
+                        &mut Vec::new(),
+                        owner,
+                        ty,
+                        &mut path.clone(),
+                    );
+                }
+            }
+        }
+    }
+
+    /// The declared position a whole value comes from: a name declared with
+    /// one, a field, what a function of this program hands back.
+    fn source(&self, value: &Expr) -> Option<(Owner, Type)> {
+        match value {
+            Expr::Variable(_) | Expr::Field { .. } => self.place(value),
+            Expr::Call { func, .. } => {
+                let callee = crate::contracts::keep::callee_name(self.declared.parsed, func)?;
+                let result = self.declared.fns.get(&callee)?.result.clone()?;
+                Some((Owner::Result(callee), result))
+            }
+            Expr::MethodCall { method, .. } => {
+                let keys = self.declared.methods.get(self.text(*method))?;
+                let [key] = keys.as_slice() else { return None };
+                let result = self.declared.fns.get(key)?.result.clone()?;
+                Some((Owner::Result(key.clone()), result))
+            }
+            Expr::Try(inner) => self.source(inner),
+            _ => None,
+        }
+    }
+
+    /// Link every `String` inside two types of one shape, position to position.
+    fn link(
+        &mut self,
+        from: &Owner,
+        from_ty: &Type,
+        from_path: &mut Vec<usize>,
+        to: &Owner,
+        to_ty: &Type,
+        to_path: &mut Vec<usize>,
+    ) {
+        let parsed = self.declared.parsed;
+        if plain_string(parsed, from_ty) && plain_string(parsed, to_ty) {
+            let a = Position {
+                owner: from.clone(),
+                path: from_path.clone(),
+            };
+            let b = Position {
+                owner: to.clone(),
+                path: to_path.clone(),
+            };
+            if a != b {
+                self.flows.links.insert((a, b));
+            }
+            return;
+        }
+        if container(parsed, from_ty).is_none()
+            || container(parsed, to_ty).is_none()
+            || from_ty.generics.len() != to_ty.generics.len()
+        {
+            return;
+        }
+        for (i, (f, t)) in from_ty.generics.iter().zip(&to_ty.generics).enumerate() {
+            from_path.push(i);
+            to_path.push(i);
+            self.link(from, f, from_path, to, t, to_path);
+            from_path.pop();
+            to_path.pop();
         }
     }
 
@@ -515,8 +673,18 @@ impl Walk<'_, '_> {
                     .map(|t| self.text(t.name).to_string())
                     .or_else(|| self.struct_of(value));
                 let literal = (ty.is_none() && matches!(value, Expr::LitStr { .. })).then_some(at);
-                let declared = ty.as_ref().map(|t| (Owner::Let(at), t.clone()));
+                // **A name bound to a list without a type is that list**
+                // (ADR-224 D3): what is put into it goes where the list came
+                // from, whose representation it shares below.
+                let declared = match ty {
+                    Some(t) => Some((Owner::Let(at), t.clone())),
+                    None => self
+                        .source(value)
+                        .filter(|(_, t)| container(self.declared.parsed, t).is_some()),
+                };
+                let aliased = ty.is_none() && declared.is_some();
                 let kinds = match &declared {
+                    Some((owner, ty)) if aliased => self.kinds_of(owner, ty, &mut Vec::new()),
                     Some((owner, ty)) => {
                         self.flow_value(owner, ty, Vec::new(), Some(value), &kinds, true);
                         self.kinds_of(owner, ty, &mut Vec::new())
@@ -699,8 +867,10 @@ impl Walk<'_, '_> {
         };
         for (at, (arg, kinds)) in args.iter().zip(kinds).enumerate() {
             if let Some(ty) = decl.params.get(at) {
+                // The emitter wraps an argument to a mixed parameter itself
+                // (`Emitter::either_param`), in a hole as anywhere else.
                 let owner = Owner::Param(key.to_string(), at);
-                self.flow_value(&owner, ty, Vec::new(), Some(arg), kinds, true);
+                self.flow_value(&owner, ty, Vec::new(), Some(arg), kinds, false);
             }
         }
     }
@@ -710,6 +880,7 @@ impl Walk<'_, '_> {
     fn expr(&mut self, expr: &Expr) -> Kinds {
         match expr {
             Expr::LitStr { .. } => one(Kind::Static),
+            Expr::LitNull => Kinds::new(),
             // **A hole is code** (ADR-032): what it passes to a function of
             // this program is a flow like any other.
             Expr::LitInterpolated(_) => {
@@ -1065,11 +1236,38 @@ fn walk(declared: &Declared<'_>, tiers: &Tiers) -> Flows {
 }
 
 fn decide(declared: &Declared<'_>, flows: &Flows) -> Tiers {
-    flows
-        .positions
+    // Linked positions are one representation: each gets what flows into any
+    // of them, and none is mixed where one of them cannot be.
+    let mut positions = flows.positions.clone();
+    let mut fixed: BTreeSet<Position> = positions
+        .keys()
+        .filter(|p| declared.published(&p.owner) || flows.unwrappable.contains(p))
+        .cloned()
+        .collect();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (a, b) in &flows.links {
+            let mut both = positions.get(a).cloned().unwrap_or_default();
+            both.extend(positions.get(b).cloned().unwrap_or_default());
+            for p in [a, b] {
+                let kinds = positions.entry(p.clone()).or_default();
+                if *kinds != both {
+                    *kinds = both.clone();
+                    changed = true;
+                }
+            }
+            if fixed.contains(a) != fixed.contains(b) {
+                fixed.insert(a.clone());
+                fixed.insert(b.clone());
+                changed = true;
+            }
+        }
+    }
+    positions
         .iter()
         .map(|(position, kinds)| {
-            let fixed = declared.published(&position.owner) || flows.unwrappable.contains(position);
+            let fixed = fixed.contains(position);
             let tier = match (tier(kinds), fixed) {
                 (Tier::Mixed, true) => Tier::Owned,
                 (tier, _) => tier,
@@ -1111,7 +1309,11 @@ pub fn refine(parsed: &mut Parsed) {
         .collect();
     let text = declared.string_type();
     let said = said(&tiers);
-    let into = parsed.interner.intern_string("into");
+    let into = [
+        parsed.interner.intern_string("into_either"),
+        parsed.interner.intern_string("into_either_maybe"),
+        parsed.interner.intern_string("either_items"),
+    ];
     rewrite(parsed, &tiers, &lets, text, &flows.wraps, into);
     parsed.text_tiers = said;
 }
@@ -1138,8 +1340,8 @@ fn rewrite(
     tiers: &Tiers,
     lets: &BTreeSet<usize>,
     text_type: Option<Type>,
-    wraps: &BTreeSet<usize>,
-    into: winnow_grammar::Symbol,
+    wraps: &BTreeMap<usize, Hand>,
+    into: [winnow_grammar::Symbol; 3],
 ) {
     // Values first: a value's address is where the walk saw it, and nothing
     // has moved yet.
@@ -1421,23 +1623,23 @@ fn visit_expr_mut(
     f(expr);
 }
 
-/// **A value going into a mixed position is handed over as `value.into()`**
+/// **A value going into a mixed position is handed over as `value.into_either()`**
 /// (ADR-223 D2): `EitherText` borrows a view and moves text of its own in,
 /// and which it is the language below reads off the value's type.
-fn wrap_item(item: &mut Item, wraps: &BTreeSet<usize>, into: winnow_grammar::Symbol) {
+fn wrap_item(item: &mut Item, wraps: &BTreeMap<usize, Hand>, into: [winnow_grammar::Symbol; 3]) {
     if wraps.is_empty() {
         return;
     }
     // Every address is compared before any expression is replaced, so the
     // replacement - which moves the value into a new box - cannot shift an
     // address another comparison is still waiting for.
-    let mut marked: Vec<*mut Expr> = Vec::new();
+    let mut marked: Vec<(*mut Expr, Hand)> = Vec::new();
     each_block(item, &mut |block| {
         visit_block_mut(
             block,
             &mut |expr| {
-                if wraps.contains(&(expr as *const Expr as usize)) {
-                    marked.push(expr as *mut Expr);
+                if let Some(hand) = wraps.get(&(expr as *const Expr as usize)) {
+                    marked.push((expr as *mut Expr, *hand));
                 }
             },
             &mut |_, _| {},
@@ -1447,7 +1649,7 @@ fn wrap_item(item: &mut Item, wraps: &BTreeSet<usize>, into: winnow_grammar::Sym
     // so wrapping one never moves another that is still to be found: a
     // replacement writes into the slot it found, and only what it wraps
     // moves, into a box of its own.
-    for at in marked {
+    for (at, hand) in marked {
         each_block(item, &mut |block| {
             visit_block_mut(
                 block,
@@ -1456,7 +1658,7 @@ fn wrap_item(item: &mut Item, wraps: &BTreeSet<usize>, into: winnow_grammar::Sym
                         let value = std::mem::replace(expr, Expr::Break);
                         *expr = Expr::MethodCall {
                             receiver: Box::new(value),
-                            method: into,
+                            method: into[hand as usize],
                             args: Vec::new(),
                             config: Vec::new(),
                         };

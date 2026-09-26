@@ -34,7 +34,30 @@ goes and hands the ones that lower to `rustc`), the corpus at both settings of
 `user_parallelism`, a multi-file project. An empty section says what has been
 run, not that the compiler is correct.
 
-**This section is empty.**
+### 1.1. `collect()` into a declared map passes the checker and fails in `rustc`
+
+`let m: collections::HashMap[String, i64] = text.lines().map(fn(l) { (l, 1) }).collect()`
+is accepted, and lowers to `.collect::<Vec<_>>()` into a `TrustedMap` —
+`rustc`'s *mismatched types*, about a file nobody wrote (Part III C.1). Nikaia's
+`collect` builds a list (the emitter's comment says so), so either the checker
+refuses it where the target is not one, or `collect` builds what the target
+declares; the second is a language question for `open-decisions.md`. Evidence:
+found probing ADR-224 §3; the program above, run through `nikaia -i`.
+
+### 1.2. A view pushed into a list a published function handed back reaches `rustc`
+
+```nika
+pub fn names() -> Vec[String] { … }
+let mut c = names()
+for line in text.lines() { c.push(line.trim()) }   // rustc: mismatched types
+```
+
+A published result is never both kinds (ADR-223 D4), so `c`, which is that
+list (ADR-224 D3), stays a list of text of its own, and the view should be
+refused with ADR-208 D2's explanation. It is not, because the checker types
+`line.trim()` as `String` — the same typing ADR-223 §1 found — so nothing asks
+whether a view is kept. 0.0.206 lowered this program the same way. Evidence:
+the program above, run through `nikaia -i`.
 
 ## 2. Decided and unbuilt
 
@@ -643,11 +666,12 @@ its state — borrowed, tethered, owned — is the compiler's per use; a copy is
 of its own, a view, or either per value, by what flows into it.
 
 **And for parameters, annotated `let`s and the elements of a list or a map**
-([ADR-223](specification/adr/adr-223.md)). *What is left:* a mixed position
-reached only through an `f"…"` hole (ADR-223 D2), a nullable `?String`, a
-container initialised whole with elements of both kinds (ADR-223 §3), and
-ADR-107 D5's foreign-boundary copy once crates are described. Evidence:
-`crates/nikaia/tests/text_tiers.rs`.
+([ADR-223](specification/adr/adr-223.md)), **for `String?`, calls inside a
+hole, lists going in whole, and the foreign boundary**
+([ADR-224](specification/adr/adr-224.md)). *What is left:* a `push`, `insert`
+or `m[k] = v` written inside an `f"…"` hole, which keeps its position text of
+its own (ADR-224 §3). Evidence: `crates/nikaia/tests/text_tiers.rs`,
+`crates/nikaia/tests/described_entries.rs`.
 
 ### 2.21. An `update` block says `mut`, may run more than once, and the compiler picks the lock
 

@@ -1322,6 +1322,17 @@ pub fn argument_shape(expr: &Expr) -> String {
     format!("{expr:?}")
 }
 
+/// A view of text, present or absent, going into a `String?`
+/// ([ADR-224](../../../docs/specification/adr/adr-224.md) D1).
+fn views_into_nullable_text(found: &Ty, want: &Ty) -> bool {
+    let present = match found {
+        Ty::Nullable(found) => found.as_ref(),
+        found => found,
+    };
+    matches!(want, Ty::Nullable(inner) if **inner == Ty::named("String"))
+        && *present == Ty::view("str")
+}
+
 fn wrap_for(found: &Ty, want: &Ty, literal: bool) -> Option<Wrap> {
     if !matches!(want, Ty::Nullable(_)) || matches!(found, Ty::Nullable(_)) {
         return None;
@@ -6666,6 +6677,29 @@ impl<'a> Checker<'a> {
                     return self.grammar_call(&entered, args, span);
                 }
                 let on = self.expr(receiver, span);
+                // **The tier pass's own conversion**
+                // ([ADR-224](../../docs/specification/adr/adr-224.md) D2):
+                // `value.into_either()` is written into the program where a
+                // value goes into text both kinds flow into, and it hands the
+                // value on as it is - absent where it may be absent - so it
+                // reads as the value's own type, and what the position accepts
+                // is decided exactly as it was before the pass wrote it.
+                // Into a `String?` it is `value.into_either_maybe()`, which is
+                // absent-or-present whatever the value was, so no wrap is
+                // written around it; before a `collect`, `either_items()`,
+                // which is the same items.
+                match self.parsed.text(*method) {
+                    "into_either" | "either_items" if args.is_empty() && config.is_empty() => {
+                        return on;
+                    }
+                    "into_either_maybe" if args.is_empty() && config.is_empty() => {
+                        return match on {
+                            Ty::Nullable(_) => on,
+                            other => Ty::Nullable(Box::new(other)),
+                        };
+                    }
+                    _ => {}
+                }
                 // **`field.of(value)`, the one method a reflected field has**
                 // ([ADR-088](../../docs/specification/adr/adr-088.md) D2).
                 //
@@ -7339,15 +7373,33 @@ impl<'a> Checker<'a> {
                             }
                             let value = init.value.as_ref();
                             let is_literal = value.is_some_and(is_literal);
+                            let keeper = format!("`{owner}` keeps its `{field}` after this line");
                             if let Some(how) = wrap_for(&found, &want, is_literal) {
                                 self.checked
                                     .nullable_fields
                                     .entry((span.start, owner.clone(), field.clone()))
                                     .or_default()
                                     .insert(value.map(argument_shape).unwrap_or_default(), how);
+                                // A view into a `String?` is still a view kept
+                                // (ADR-224 D1): asked as it would be without
+                                // the `?`.
+                                if views_into_nullable_text(&found, &want) {
+                                    self.field_either = self.either_field(&owner, &field);
+                                    let (o, f) = (owner.clone(), field.clone());
+                                    self.expect_kept(
+                                        &found,
+                                        &want,
+                                        value,
+                                        &keeper,
+                                        span.clone(),
+                                        "field",
+                                        move |found, want| {
+                                            format!("`{o}.{f}` is `{want}`, and this is `{found}`")
+                                        },
+                                    );
+                                }
                                 continue;
                             }
-                            let keeper = format!("`{owner}` keeps its `{field}` after this line");
                             self.field_either = self.either_field(&owner, &field);
                             self.expect_kept(
                                 &found,
@@ -9280,6 +9332,31 @@ impl<'a> Checker<'a> {
             _ => false,
         };
         if either && *found == Ty::view("str") && *want == Ty::named("String") {
+            return;
+        }
+        // **Into a `String?` the same holds of what is there**
+        // ([ADR-224](../../docs/specification/adr/adr-224.md) D1): a view,
+        // present or absent, goes into a mixed one as it is, and is refused
+        // from an owned one - which the `?` alone had let through to the
+        // language below.
+        if views_into_nullable_text(found, want) {
+            if either {
+                return;
+            }
+            let present = match found {
+                Ty::Nullable(found) => found.as_ref(),
+                found => found,
+            };
+            let text = Ty::named("String");
+            let before = self.checked.findings.len();
+            self.expect(present, &text, span, what, message);
+            if self.checked.findings.len() > before
+                && let Some((why, help)) = self.a_view_kept(present, &text, value, keeper)
+                && let Some(finding) = self.checked.findings.last_mut()
+            {
+                finding.notes.extend(why);
+                finding.help = Some(help);
+            }
             return;
         }
         let before = self.checked.findings.len();

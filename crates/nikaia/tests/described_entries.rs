@@ -316,3 +316,41 @@ fn the_library_a_build_reads_is_std_and_the_descriptions() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// **At a described boundary, text crosses as the entry says**
+/// ([ADR-107](../../../docs/specification/adr/adr-107.md) D5): to a
+/// `ref String` for free, and to a `String` the crate may keep only as text of
+/// its own - a view handed there is refused with the copy named, never copied
+/// by the compiler.
+#[test]
+fn a_view_crosses_to_a_described_view_and_is_refused_where_the_crate_keeps() {
+    const TEXT: &str = "version = 2\n\
+                        inference = \"described-from-signatures\"\n\
+                        \n\
+                        [fn.\"fremd::zaehle\"]\n\
+                        pub = true\n\
+                        sync = true\n\
+                        signature = \"(s: ref String) -> i64\"\n\
+                        \n\
+                        [fn.\"fremd::behalte\"]\n\
+                        pub = true\n\
+                        sync = true\n\
+                        signature = \"(s: String) -> i64\"\n";
+    let root = project("text-crosses", Some(TEXT));
+    let read = findings_keeping(
+        &root,
+        "fn main() {\n    let line = \"  a b  \"\n    let n = fremd::zaehle(line.trim())\n    let m = fremd::behalte(f\"{n}\")\n    println(f\"{n} {m}\")\n}",
+    );
+    assert!(read.is_empty(), "{read:#?}");
+    let kept = findings(
+        &root,
+        "fn count(text: ref String) -> i64 {\n    return fremd::behalte(text.trim())\n}\n\
+         fn main() {\n    let n = count(\"x\")\n    println(f\"{n}\")\n}",
+    );
+    assert!(
+        kept.iter().any(|f| f.code == "NK1102"
+            && f.notes.iter().any(|n| n.contains("keeps its `s`"))
+            && f.help.iter().any(|h| h.contains(".clone()"))),
+        "{kept:#?}"
+    );
+}

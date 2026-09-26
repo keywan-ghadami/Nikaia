@@ -4,6 +4,36 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.207] — 2026-09-26
+
+**The rest of the text wall** — [ADR-224](docs/specification/adr/adr-224.md),
+`open-work.md` §2.19's remainder.
+
+- **A `String?` is a position**: views only make it a view that may be absent,
+  both kinds `EitherText` that may be absent, and `null` counts as neither. A
+  view put into a `String?` field, result or `let` passed the checker and failed
+  in `rustc`; where the position stays text of its own it is now refused with
+  ADR-208's explanation.
+- **One conversion hands a value into a mixed position**:
+  `nikaia_std::either_text::IntoEither` (and `IntoEitherMaybe` into a
+  `String?`), written `value.into_either()` by the tier pass and `either(value)`
+  by the emitter, with the nullable wrap around it. It replaces `.into()` and
+  `EitherText::from`.
+- **A call inside an `f"…"` hole** hands each kind to a keeping parameter as it
+  is, and a mixed parameter the callee only reads is a `&str` that every caller
+  lends to. ADR-223's hole exception is left only for a `push` written in one.
+- **A list going in whole**: a literal item by item, a `collect` through
+  `either_items()`, and a list that already has a position — a result, a field,
+  a declared name — is linked to where it goes, one representation with
+  nothing converted. `let c = words(text)` then `c.push(f"tail")` passed the
+  checker and failed in `rustc`; now `words` hands back text of either kind.
+- **ADR-107 D5**: a view handed to a described crate's `String` is `NK1102`
+  naming `.clone()`, and to its `ref String` crosses free — already the
+  checker's behaviour, now recorded and tested.
+- **Found on the way**, and recorded in `open-work.md` §1 rather than widened
+  into this package: `collect()` into a declared map, and a view pushed into a
+  list a published function handed back, pass the checker and fail in `rustc`.
+
 ## [0.0.206] — 2026-09-26
 
 **Every declared `String` is a position** —

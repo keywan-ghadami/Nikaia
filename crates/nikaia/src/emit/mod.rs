@@ -3658,9 +3658,14 @@ impl<'p> Emitter<'p> {
             // call already writes, and a literal reaches it as it is - which is
             // what makes `greet("Ada")` cost nothing, where a `&String` would
             // have needed a `String` built to be pointed at.
+            //
+            // A parameter both kinds of text flow into is one of these too
+            // ([ADR-223](../../docs/specification/adr/adr-223.md) D2): a body
+            // that only reads needs neither kind, only the text, so nothing is
+            // wrapped for it and each caller lends what it has.
             let plain_text = self.text(a.ty.name) == "String"
                 && a.ty.generics.is_empty()
-                && !a.ty.is_view
+                && (!a.ty.is_view || a.ty.either)
                 && !a.ty.is_nullable
                 && !a.ty.is_slice;
             let written = match (reference, plain_text) {
@@ -5772,9 +5777,11 @@ impl<'p> Emitter<'p> {
                 // **A tail is a `return` written without the word**, so the `&`
                 // it may owe is the same one — `fn text(ref self) -> ref String
                 // { self.text }` and the `return` form are one program.
-                let either = tail == Tail::Return && self.returns_either(flow.function);
+                let either = tail == Tail::Return
+                    && self.returns_either(flow.function)
+                    && !matches!(expr, Expr::LitNull);
                 if either {
-                    out.push("nikaia_std::either_text::EitherText::from(");
+                    out.push("nikaia_std::either_text::either(");
                 }
                 if tail == Tail::Return && self.lent_returns.contains(&span.start) {
                     out.push("&");
@@ -5835,9 +5842,10 @@ impl<'p> Emitter<'p> {
     ) -> Result<()> {
         let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
         out.push(before);
-        let either = self.returns_either(flow.function);
+        // `null` is no text of either kind (ADR-224 D2), and goes as `None`.
+        let either = self.returns_either(flow.function) && !matches!(value, Expr::LitNull);
         if either {
-            out.push("nikaia_std::either_text::EitherText::from(");
+            out.push("nikaia_std::either_text::either(");
         }
         if self.lent_returns.contains(&span.start) {
             out.push("&");
@@ -5848,6 +5856,33 @@ impl<'p> Emitter<'p> {
         }
         out.push(after);
         Ok(())
+    }
+
+    /// Whether parameter `at` of what `callee` names is text both kinds of
+    /// which flow into (ADR-223 D2): a function of this unit by name, or a
+    /// method by its name - where every method of that name here agrees, so a
+    /// name two types use differently is never wrapped for the wrong one.
+    fn either_param(&self, callee: &str, at: usize) -> bool {
+        let own = callee.rsplit("::").next().unwrap_or(callee);
+        let mut found = Vec::new();
+        let mut look = |item: &Item| {
+            if let Item::Fn {
+                name: Some(n),
+                args,
+                ..
+            } = item
+                && self.text(*n) == own
+            {
+                found.push(args.get(at).is_some_and(|a| a.ty.either));
+            }
+        };
+        for item in &self.parsed.program.items {
+            match &item.node {
+                Item::Impl { methods, .. } => methods.iter().for_each(|m| look(&m.node)),
+                node => look(node),
+            }
+        }
+        !found.is_empty() && found.iter().all(|e| *e)
     }
 
     /// Whether a struct's field is text both kinds of which flow into
@@ -6658,14 +6693,20 @@ impl<'p> Emitter<'p> {
                     // **Into a field both kinds of text flow into, each value
                     // goes as it is** (ADR-222 D3): a view borrowed, text of its
                     // own moved in.
-                    let either = self.either_field(&owner, field.name);
+                    let either = self.either_field(&owner, field.name)
+                        && !matches!(field.value, Some(Expr::LitNull));
+                    // The nullable wrap goes around it: `Some(either(v))`
+                    // (ADR-224 D2).
                     if either {
-                        out.push(": nikaia_std::either_text::EitherText::from(");
+                        out.push(": ");
+                        out.push(before);
+                        out.push("nikaia_std::either_text::either(");
                         match &field.value {
                             Some(value) => self.expr(out, value, depth, flow)?,
                             None => out.push(&self.name(field.name)),
                         }
                         out.push(")");
+                        out.push(after);
                     } else if let Some(value) = &field.value {
                         out.push(": ");
                         out.push(before);
@@ -6702,10 +6743,11 @@ impl<'p> Emitter<'p> {
                 out.push(&format!("{owner} {{ "));
                 for field in fields {
                     out.push(&self.name(field.name));
-                    let either = self.either_field(&owner, field.name);
+                    let either = self.either_field(&owner, field.name)
+                        && !matches!(field.value, Some(Expr::LitNull));
                     match (&field.value, either) {
                         (Some(value), true) => {
-                            out.push(": nikaia_std::either_text::EitherText::from(");
+                            out.push(": nikaia_std::either_text::either(");
                             self.expr(out, value, depth, flow)?;
                             out.push(")");
                         }
@@ -6714,7 +6756,7 @@ impl<'p> Emitter<'p> {
                             self.expr(out, value, depth, flow)?;
                         }
                         (None, true) => out.push(&format!(
-                            ": nikaia_std::either_text::EitherText::from({})",
+                            ": nikaia_std::either_text::either({})",
                             self.name(field.name)
                         )),
                         (None, false) => {}
@@ -9734,7 +9776,18 @@ impl<'p> Emitter<'p> {
                 .get(callee)
                 .and_then(|params| params.get(i))
                 .and_then(|ty| self.pointer_for(callee, ty));
+            // **Into a parameter both kinds of text flow into, each argument
+            // goes as it is** ([ADR-223](../../docs/specification/adr/adr-223.md)
+            // D2): a view borrowed, text of its own moved in. Written here and
+            // not in the program, so a call inside an `f"…"` hole gets it too.
+            // A parameter the callee only reads is a `&str` (above), and the
+            // `&` lends either kind to it.
+            let either =
+                !lend && !change && !matches!(arg, Expr::LitNull) && self.either_param(callee, i);
             out.push(before);
+            if either {
+                out.push("nikaia_std::either_text::either(");
+            }
             // **Neither `&` at the boundary**, and that is not an ordering
             // choice: what a C declaration takes is decided by the declaration
             // ([ADR-147](../../docs/specification/adr/adr-147.md) D1, D3), and
@@ -9868,6 +9921,9 @@ impl<'p> Emitter<'p> {
                 out.push(".lent()");
             }
             if count {
+                out.push(")");
+            }
+            if either {
                 out.push(")");
             }
             out.push(after);

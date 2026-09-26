@@ -134,6 +134,11 @@ pub mod prelude {
     pub use crate::bytes::Bytes;
     pub use crate::cli;
     pub use crate::collections;
+    // **How a value goes into text both kinds flow into**
+    // ([ADR-224](../../../docs/specification/adr/adr-224.md) D2): the tier
+    // pass writes `value.into_either()` (and `into_either_maybe`,
+    // `either_items`) into the program, and a method needs its trait in scope.
+    pub use crate::either_text::{EitherItems, IntoEither, IntoEitherMaybe};
     pub use crate::error::Full;
     // **The C boundary's one `std` type**
     // ([ADR-147](../../../docs/specification/adr/adr-147.md) D4): a program
