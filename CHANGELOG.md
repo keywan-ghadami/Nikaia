@@ -4,6 +4,23 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.194] — 2026-09-26
+
+**The specification states the contract and nothing else** — the owner's
+decision that ADR references, rationale, history and implementation status cost
+every reader too many tokens and too much time, and are redundant with the
+ADRs, this changelog and the roadmap.
+
+`STYLE.md` is rewritten to that rule, and the three parts follow it: no `ADR-`
+citation is left, no *Design rationale*, no *Implementation status* note, no
+*withdrawn*, *since* or *today*. Headings and section numbers are unchanged, and
+every ```` ```nika ```` block keeps its code and its verdict (`EXPECTED.txt`
+lists the same results); three blocks lost an ADR citation from a comment.
+Rules that stood only inside a status note were kept as plain rules. The three
+parts shrank from 64,392 to 47,182 words. `NK1114` (removed from the compiler)
+and `NK1171` (a refusal of what is not built yet) are no longer described.
+Also fixes the parts' `Date:` line, which 0.0.193 left at the day before.
+
 ## [0.0.193] — 2026-09-26
 
 **The text form of text is the text itself** — [ADR-216](docs/specification/adr/adr-216.md)
