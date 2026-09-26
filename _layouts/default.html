@@ -110,11 +110,9 @@
 
       {{ content }}
 
-      {% if site.github.private != true and site.github.license %}
       <div class="footer border-top border-gray-light mt-5 pt-3 text-right text-gray">
-        This site is open source. {% github_edit_link "Improve this page" %}.
+        {% if site.github.private != true and site.github.license %}This site is open source. {% github_edit_link "Improve this page" %}. · {% endif %}<a href="{{ "/impressum.html" | relative_url }}">Impressum</a>
       </div>
-      {% endif %}
       </div>
     </div>
     <script src="{{ "/assets/js/theme.js?v=" | append: site.github.build_revision | relative_url }}" defer></script>
