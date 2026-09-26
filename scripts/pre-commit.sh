@@ -21,3 +21,8 @@ fi
 
 # Ensure no clippy warnings are present
 # cargo clippy -- -D warnings
+
+# The README's badges are files in `assets/badges/`; the version badge follows
+# the specification's version line, so a release rewrites it here.
+python3 scripts/badges.py >/dev/null
+git add assets/badges
