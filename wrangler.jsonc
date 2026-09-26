@@ -18,5 +18,7 @@
   // creates the DNS record and the certificate for this hostname.
   "routes": [
     { "pattern": "nikaia-lang.org", "custom_domain": true }
-  ]
+  ],
+  // Required by Wrangler even though this Worker has no bindings to preview.
+  "previews": {}
 }

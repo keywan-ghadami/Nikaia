@@ -3,7 +3,7 @@
 Nikaia ist ein privates Projekt ohne Gewinnerzielungsabsicht: die Spezifikation
 einer Programmiersprache, die Entscheidungen dahinter und ein Compiler, der sie
 umsetzt. Diese Seite veröffentlicht die Dokumentation aus dem Repository
-[keywan-ghadami/Nikaia](https://github.com/keywan-ghadami/Nikaia) für Bildung,
+[Nikaia-Language/Nikaia](https://github.com/Nikaia-Language/Nikaia) für Bildung,
 Forschung und freie Nutzung.
 
 *Legal notice as required by German law. In short: Nikaia is a private,
@@ -60,7 +60,7 @@ Text klingt sicherer, als er ist — siehe oben.
 ## Nutzung der Inhalte
 
 Alle Inhalte dieser Seite stammen aus dem Repository und stehen wie dieses unter
-der [Apache License 2.0](https://github.com/keywan-ghadami/Nikaia/blob/main/LICENSE):
+der [Apache License 2.0](https://github.com/Nikaia-Language/Nikaia/blob/main/LICENSE):
 Sie dürfen sie verwenden, kopieren, bearbeiten und weitergeben, auch
 kommerziell, unter den Bedingungen der Lizenz. Maschinelle Auswertung, auch Text
 und Data Mining im Sinne des § 44b UrhG, ist ausdrücklich gestattet.

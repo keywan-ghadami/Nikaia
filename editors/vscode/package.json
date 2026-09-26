@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/keywan-ghadami/Nikaia.git",
+    "url": "https://github.com/Nikaia-Language/Nikaia.git",
     "directory": "editors/vscode"
   },
   "engines": {
