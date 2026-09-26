@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Write the pages and the menu the site needs and the repository does not have.
 
-Run on the runner's throwaway checkout, after `pages.yml` has fenced literal
-braces off from Liquid and before Jekyll builds. Nothing here changes a file in
+Run by `site-build.sh` on its throwaway copy of the checkout, after it has
+fenced literal braces off from Liquid and before Jekyll builds. Nothing here changes a file in
 the repository, and nothing here restates documentation: every page it writes
 either quotes a program that exists or is a list of links to pages that exist.
 

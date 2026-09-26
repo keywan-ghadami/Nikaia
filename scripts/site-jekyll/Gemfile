@@ -1,5 +1,5 @@
-# The site's Ruby dependencies, for building it anywhere but GitHub Pages:
-# Cloudflare Workers Builds, or `scripts/site-build.sh` on a desk.
+# The site's Ruby dependencies, for `scripts/site-build.sh`: on Cloudflare
+# Workers Builds, or on a desk.
 #
 # These are the gems GitHub Pages builds with, at the versions it pins
 # (github-pages 232), named one by one rather than through the `github-pages`
@@ -8,9 +8,7 @@
 # build machine, that is a rate limit away from a failed or a different site.
 # What the layout reads from `site.github` is written by the build script
 # instead, and the one tag it uses is in `plugins/` beside this file.
-#
-# It lives here and not at the repository root so that the GitHub Pages
-# build, which brings its own `github-pages` bundle, never sees it.
+
 source "https://rubygems.org"
 
 gem "jekyll", "3.10.0"

@@ -270,8 +270,9 @@ These are the ones worth arguing about, because both sides wrote something.
 
 ## The site
 
-`_config.yml` publishes the documentation through GitHub Pages, and Jekyll
-highlights with **Rouge**, which does not read TextMate grammars. So nothing here
-changes how a ```` ```nika ```` block looks on the site. `editors/` is added to
+`scripts/site-build.sh` builds the documentation site with Jekyll, which
+highlights with **Rouge**, which does not read TextMate grammars; the build then
+re-highlights every block with Shiki from `vscode/syntaxes/nikaia.tmLanguage.json`
+(`scripts/site-highlight/`). `editors/` is added to
 that file's `exclude` list for the same reason `scripts/` is on it: it is
 tooling, not documentation.
