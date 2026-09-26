@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.201 (Draft)
+**Version:** 0.0.202 (Draft)
 **Date:** 2026-09-26
 
 ---
@@ -1796,7 +1796,9 @@ keep is read off the program:
   nothing, works across any number of calls, and the body may pause;
 * **a handle that travels with the value**, where no frame outlives it — a task;
 * **a handle per view**, where a container keeps views across a loop and drops
-  entries as it goes, so that a buffer is freed when its last view leaves.
+  entries as it goes, so that a buffer is freed when its last view leaves. A
+  struct of views kept that way carries a handle on each buffer it points into,
+  and is read and written through them; the struct itself is unchanged.
 
 A struct built and consumed inside the scope that owns its buffer is borrowed,
 and costs nothing:
@@ -1815,7 +1817,8 @@ and its buffer lives on the stack or came from a foreign library, no tether is
 possible. The compiler refuses the program and names the ways out, `.clone()`
 among them. The compiler never inserts that copy. One buffer handed both to a
 task and out of the function is refused with `NK2304`, and so is a container of
-*structs* holding views that drops entries inside a loop.
+structs holding views that drops entries inside a loop where the container is
+not a list, or a struct's views are not text.
 
 **A parameter written `ref String` may not be kept past its call** unless the
 place it is kept names a buffer. A view inside a struct carries the buffer it
