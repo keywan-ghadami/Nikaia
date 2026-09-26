@@ -9,8 +9,8 @@
 use std::fs
 
 fn control() throws {
-    let a = fs::read_to_string("eins.txt", fs::Root::Anywhere) catch { "".to_string() }
-    let b = fs::read_to_string("zwei.txt", fs::Root::Anywhere) catch { "".to_string() }
+    let a = fs::read_to_string("eins.txt", fs::Root::Anywhere) catch { "" }
+    let b = fs::read_to_string("zwei.txt", fs::Root::Anywhere) catch { "" }
     println(f"{a.len()} {b.len()}")
 }
 
@@ -22,12 +22,12 @@ fn foreign_against_foreign() {
 
 fn foreign_against_a_read() throws {
     let served = hyper_shim::serve_once(18082)
-    let file = fs::read_to_string("eins.txt", fs::Root::Anywhere) catch { "".to_string() }
+    let file = fs::read_to_string("eins.txt", fs::Root::Anywhere) catch { "" }
     println(f"{served} {file.len()}")
 }
 
 fn a_read_against_foreign() throws {
-    let file = fs::read_to_string("zwei.txt", fs::Root::Anywhere) catch { "".to_string() }
+    let file = fs::read_to_string("zwei.txt", fs::Root::Anywhere) catch { "" }
     let served = hyper_shim::serve_once(18083)
     println(f"{file.len()} {served}")
 }

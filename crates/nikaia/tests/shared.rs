@@ -40,7 +40,7 @@ fn serve(db: ref Connection) {
 }
 
 fn main() {
-    let db = Shared(connect(\"localhost\".to_string()))
+    let db = Shared(connect(\"localhost\"))
     serve(db)
     serve(db)
 }
@@ -173,7 +173,7 @@ pub fn serve(db: Shared[Connection]) {
 }
 
 fn main() {
-    let db = Shared(connect(\"localhost\".to_string()))
+    let db = Shared(connect(\"localhost\"))
     serve(db)
 }
 ";
@@ -215,7 +215,7 @@ fn connect(host: String) -> Connection {
 }
 
 fn main() {
-    let pool = Pool { db: Shared(connect(\"localhost\".to_string())), size: 4 }
+    let pool = Pool { db: Shared(connect(\"localhost\")), size: 4 }
     println(f\"{pool.size} to {pool.db.host}\")
 }
 ";
@@ -281,7 +281,7 @@ fn keep(db: Shared[Conn]) -> Pool {
 }
 
 fn main() {
-    let db = Shared(connect(\"localhost\".to_string()))
+    let db = Shared(connect(\"localhost\"))
     serve(db)
     peek(db)
     let pool = keep(db)
@@ -331,7 +331,7 @@ fn keep(db: Shared[Conn]) -> Pool {
 }
 
 fn main() {
-    let db = Shared(connect(\"localhost\".to_string()))
+    let db = Shared(connect(\"localhost\"))
     let pool = keep(db)
     let again = keep(pool.db)
     println(f\"{pool.db.host} {again.db.host}\")
@@ -368,7 +368,7 @@ fn keep(db: Shared[Conn]) -> Pool {
 }
 
 fn main() {
-    let db = Shared(connect(\"localhost\".to_string()))
+    let db = Shared(connect(\"localhost\"))
     serve(db)
     let pool = keep(db)
     println(f\"{pool.db.host}\")
@@ -404,7 +404,7 @@ fn serve(db: ref Conn) { }
 fn peek(db: ref Shared[Conn]) { }
 
 fn main() {
-    let db = Shared(connect(\"localhost\".to_string()))
+    let db = Shared(connect(\"localhost\"))
     serve(db)
     peek(db)
 }
@@ -462,7 +462,7 @@ fn a_function_returning_a_shared_value_wraps_on_a_line_of_its_own() {
          }\n\
          \n\
          fn main() {\n    \
-             let db = connect(\"localhost\".to_string())\n    \
+             let db = connect(\"localhost\")\n    \
              println(f\"connected to {db.host}\")\n\
          }\n",
         &[],

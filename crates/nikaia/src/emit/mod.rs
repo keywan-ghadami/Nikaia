@@ -1059,6 +1059,8 @@ struct Emitter<'p> {
     slice_indices: std::collections::BTreeSet<(usize, String)>,
     /// `std` copies, written `to_owned` (ADR-215 D4).
     owned_copies: std::collections::BTreeSet<(usize, String)>,
+    /// `.to_string()` on text, written as its receiver (ADR-216 D4).
+    text_as_is: std::collections::BTreeSet<(usize, String)>,
     /// The walks of a pausing sequence that have no form
     /// ([ADR-172](../../docs/specification/adr/adr-172.md) D5), by the byte the
     /// statement starts at and the method's name.
@@ -1109,6 +1111,9 @@ struct Emitter<'p> {
     keep_plans: HashMap<String, crate::contracts::keep::Plan>,
     /// `check::Checked::view_fallbacks`.
     view_fallbacks: std::collections::BTreeSet<usize>,
+    /// The f-string hole being written, whose literals are keyed by
+    /// `check::text_key`.
+    hole: std::cell::RefCell<Option<(usize, String)>>,
     /// The statements whose keeps are already declared, because a `throws`
     /// body declares them before its `Ok(` rather than inside it.
     preluded: std::cell::RefCell<HashSet<usize>>,
@@ -2142,6 +2147,7 @@ impl<'p> Emitter<'p> {
             map_keys: propagation.map_keys,
             slice_indices: propagation.slice_indices,
             owned_copies: propagation.owned_copies,
+            text_as_is: propagation.text_as_is,
             pausing_walks: propagation.pausing_walks,
             fallible_methods: propagation.methods,
             pausing_methods: propagation.pausing_methods,
@@ -2165,6 +2171,7 @@ impl<'p> Emitter<'p> {
                 .collect(),
             preluded: std::cell::RefCell::new(HashSet::new()),
             view_fallbacks: propagation.view_fallbacks,
+            hole: std::cell::RefCell::new(None),
             wrappers: std::cell::RefCell::new(Vec::new()),
             holding: std::cell::RefCell::new(false),
             hold_args: std::cell::RefCell::new(None),
@@ -6564,7 +6571,7 @@ impl<'p> Emitter<'p> {
                 // **And except for text where the left side is a view of text**
                 // (ADR-209 §6): the literal already is one.
                 let bare = a_number(fallback)
-                    || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(at));
+                    || matches!(&**fallback, Expr::LitStr { at, .. } if self.view_fallbacks.contains(&self.text_at(*at)));
                 out.push("nikaia_std::index::or(");
                 self.expr(out, value, depth, flow)?;
                 out.push(", || ");
@@ -8637,7 +8644,7 @@ impl<'p> Emitter<'p> {
             // `Vec` is wanted: a literal is a constant being built, not text
             // the program had being copied.
             Expr::LitStr { text: literal, at } => {
-                match self.owned_texts.contains(at) {
+                match self.owned_texts.contains(&self.text_at(*at)) {
                     true => out.push(&format!("String::from(\"{literal}\")")),
                     false => out.push(&format!("\"{literal}\"")),
                 }
@@ -8665,6 +8672,10 @@ impl<'p> Emitter<'p> {
         }
     }
 
+    fn text_at(&self, at: usize) -> usize {
+        crate::check::text_key(self.hole.borrow().as_ref(), at)
+    }
+
     /// The literal as a Rust format string, with its holes as arguments.
     fn format_string(
         &self,
@@ -8681,7 +8692,11 @@ impl<'p> Emitter<'p> {
                 refused_at!(flow.statement, "in the interpolated `{{{hole}}}`: {e}")
             })?;
             out.push(", ");
-            self.expr(out, &expr, depth, flow)?;
+            let hole = (flow.statement, crate::check::argument_shape(&expr));
+            let outer = self.hole.replace(Some(hole));
+            let written = self.expr(out, &expr, depth, flow);
+            self.hole.replace(outer);
+            written?;
         }
         Ok(())
     }
@@ -8872,6 +8887,18 @@ impl<'p> Emitter<'p> {
                     .map(|a| &a.value),
                 false => None,
             };
+        // **The text form of text is the text** (ADR-216 D4): nothing is
+        // called, and whether it is lent, built or handed over is decided
+        // around it as for any other text.
+        if let Some(text) = receiver.filter(|receiver| {
+            self.text(method) == "to_string"
+                && args.is_empty()
+                && self
+                    .text_as_is
+                    .contains(&(flow.statement, crate::check::argument_shape(receiver)))
+        }) {
+            return self.postfix_base(out, text, depth, flow);
+        }
         let copies = receiver.is_some_and(|receiver| {
             self.owned_copies
                 .contains(&(flow.statement, crate::check::argument_shape(receiver)))
@@ -9242,7 +9269,7 @@ impl<'p> Emitter<'p> {
                 // **A literal is a view already** (ADR-207 D3): lent to a
                 // `&str` it is written as it is, and a `&` in front of it would
                 // be a `&&str` the language below has to see through.
-                && !matches!(arg, Expr::LitStr { at, .. } if !self.owned_texts.contains(at));
+                && !matches!(arg, Expr::LitStr { at, .. } if !self.owned_texts.contains(&self.text_at(*at)));
             // **And `&mut` for a parameter the callee declared `mut`** (D3),
             // which is the one of the three states the *author* wrote rather
             // than the inference. The two maps are disjoint by construction:

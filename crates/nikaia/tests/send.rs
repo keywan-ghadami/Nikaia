@@ -885,7 +885,7 @@ fn a_described_type_that_may_not_cross_is_refused_into_a_task() {
     let found = crossings_against(
         &describing("crosses = false\n"),
         "fn ueber() {\n\
-             let handle = fremd::ortsgebunden(\"nicht Send\".to_string())\n\
+             let handle = fremd::ortsgebunden(\"nicht Send\")\n\
              spawn fn { println(f\"{handle}\") }\n\
          }",
     );
@@ -903,7 +903,7 @@ fn a_described_type_that_may_not_cross_is_refused_into_a_task() {
         crossings_against(
             &describing(""),
             "fn ueber() {\n\
-                 let handle = fremd::ortsgebunden(\"nicht Send\".to_string())\n\
+                 let handle = fremd::ortsgebunden(\"nicht Send\")\n\
                  spawn fn { println(f\"{handle}\") }\n\
              }",
         )
@@ -923,7 +923,7 @@ fn a_described_type_that_may_not_cross_is_refused_into_a_foreign_call() {
     let found = crossings_against(
         &describing("crosses = false\n"),
         "fn ueber() {\n\
-             let handle = fremd::ortsgebunden(\"nicht Send\".to_string())\n\
+             let handle = fremd::ortsgebunden(\"nicht Send\")\n\
              fremd::irgendwohin(handle)\n\
          }",
     );
@@ -964,7 +964,7 @@ fn a_described_call_that_says_it_threads_is_asked_and_a_silent_one_is_not() {
                signature = \"(value: $T) -> String\"\n"
     };
     let program = "fn ueber() {\n\
-                       let handle = fremd::ortsgebunden(\"nicht Send\".to_string())\n\
+                       let handle = fremd::ortsgebunden(\"nicht Send\")\n\
                        let text = fremd::ueber_einen_thread(handle)\n\
                    }";
 

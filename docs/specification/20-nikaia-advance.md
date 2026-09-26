@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part II: Advanced Features & Metaprogramming**
-**Version:** 0.0.192 (Draft)
+**Version:** 0.0.193 (Draft)
 **Date:** 2026-09-25
 
 ---
@@ -623,7 +623,7 @@ Since code is implicitly async, calling a function runs it now. A task that runs
 * **Ordinary data is cloned.** A program that keeps **data** in the parent, a string, a number, a struct or a collection of those, calls `.clone()` before spawning, and the copy is what the task takes (Part I 8.3).
 * **A handle is duplicated.** A handle on a `Shared[T]` is **duplicated** where it is handed to the task, so the name in the parent keeps working and there is nothing to call. Copying a handle copies none of the data (Part I 6.2, [ADR-040](adr/adr-040.md) D1).
 
-A move is refused only where the type is **known** and a move takes the value away. A number, a `bool`, a `char` and a view are *copied*, so the parent keeps them and there is nothing to clone: `let message = "Hello"` is not this case, and `"Hello".to_string()` is. A value whose type nothing describes is not refused, because the compiler does not refuse on a guess (Part III C.4). An assignment between the spawn and the later use clears the refusal; a name given a value again is a correct program.
+A move is refused only where the type is **known** and a move takes the value away. A number, a `bool`, a `char` and a view are *copied*, so the parent keeps them and there is nothing to clone: `let message = "Hello"` is not this case, and `let message: String = "Hello"` is. A value whose type nothing describes is not refused, because the compiler does not refuse on a guess (Part III C.4). An assignment between the spawn and the later use clears the refusal; a name given a value again is a correct program.
 
 > **Implementation status:** Implemented. `spawn` lowers, its body is an `async`
 > block the captures move into, and a use after the move is refused with

@@ -133,7 +133,7 @@ fn a_door_over_memory_is_untouched() {
 fn a_type_that_says_nothing_is_claimed_nothing_about() {
     assert!(!refused(
         "fn main() {\n\
-         \x20   let text = \"abc\".to_string()\n\
+         \x20   let text = \"abc\"\n\
          \x20   let counter = SharedMut(0)\n\
          \x20   counter.update fn(mut n) { n = n + text.len() }\n\
          }\n"

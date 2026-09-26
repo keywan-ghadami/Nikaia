@@ -328,7 +328,7 @@ fn no_word_is_written_for_a_tether() {
 fn a_view_of_a_buffer_the_body_owns_is_tethered() {
     let source = "struct Token { text: ref String }\n\n\
                   fn first() -> ref String {\n\
-                  \x20   let held = \"a b\".to_string()\n\
+                  \x20   let held: String = \"a b\"\n\
                   \x20   return held.trim()\n\
                   }\n";
     let parsed = parse_to_ast(source).expect("the source parses");

@@ -101,7 +101,7 @@ fn a_for_over_something_that_is_not_a_place_owns_it() {
         "fn main() {\n\
          \x20   let mut sum = 0\n\
          \x20   for i in 0..<3 { sum += i }\n\
-         \x20   let text = \"abc\".to_string()\n\
+         \x20   let text = \"abc\"\n\
          \x20   for c in text.chars() { sum += 1 }\n\
          \x20   println(f\"{sum}\")\n\
          }\n",
@@ -153,8 +153,8 @@ fn a_drain_takes_the_elements_away() {
         "for-drains",
         "fn main() {\n\
          \x20   let mut xs = Vec()\n\
-         \x20   xs.push(\"a\".to_string())\n\
-         \x20   xs.push(\"b\".to_string())\n\
+         \x20   xs.push(\"a\")\n\
+         \x20   xs.push(\"b\")\n\
          \x20   let mut all = Vec()\n\
          \x20   for x in xs.drain() { all.push(x) }\n\
          \x20   println(f\"{all.len()}\")\n\
@@ -247,7 +247,7 @@ fn a_let_over_a_place_that_copies_is_not_a_view() {
 fn a_let_over_a_whole_name_stays_a_move() {
     let rust = lowered(
         "fn main() {\n\
-         \x20   let a = \"one\".to_string()\n\
+         \x20   let a = \"one\"\n\
          \x20   let b = a\n\
          \x20   println(f\"{b}\")\n\
          }\n",

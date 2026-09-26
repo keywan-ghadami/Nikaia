@@ -61,8 +61,8 @@ fn lowered(source: &str) -> String {
 fn a_struct_of_comparable_parts_derives_both() {
     let source = "struct P { x: i64, name: String }\n\
                   fn main() {\n\
-                  \x20   let a = P { x: 1, name: \"a\".to_string() }\n\
-                  \x20   let b = P { x: 1, name: \"a\".to_string() }\n\
+                  \x20   let a = P { x: 1, name: \"a\" }\n\
+                  \x20   let b = P { x: 1, name: \"a\" }\n\
                   \x20   if a == b { print(\"equal\") }\n\
                   }\n";
     assert!(refusals(source).is_empty(), "{:#?}", refusals(source));
@@ -204,8 +204,8 @@ fn the_comparisons_run() {
          \x20   let k = Kind::Post\n\
          \x20   if k == Kind::Post { print(\"enum \") }\n\
          \x20   if k != Kind::Get { print(\"not \") }\n\
-         \x20   let a = P { x: 1, name: \"a\".to_string() }\n\
-         \x20   let b = P { x: 1, name: \"a\".to_string() }\n\
+         \x20   let a = P { x: 1, name: \"a\" }\n\
+         \x20   let b = P { x: 1, name: \"a\" }\n\
          \x20   if a == b { print(\"struct \") }\n\
          \x20   let one = Reading { temp: 1.5 }\n\
          \x20   let two = Reading { temp: 1.5 }\n\

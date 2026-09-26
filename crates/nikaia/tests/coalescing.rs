@@ -104,7 +104,7 @@ fn coalescing_and_its_chain_still_parse_and_run() {
         "fn main() {\n\
          \x20   let a: String? = null\n\
          \x20   let b: String? = null\n\
-         \x20   let s = a ?? b ?? \"last\".to_string()\n\
+         \x20   let s = a ?? b ?? \"last\"\n\
          \x20   println(f\"{s}\")\n\
          }\n",
     );
@@ -138,7 +138,7 @@ fn a_jump_is_the_second_spelling() {
     let printed = output(
         "coalescing-jump",
         "fn pick(q: String?) -> String {\n\
-         \x20   let id = q ?? return \"bad request\".to_string()\n\
+         \x20   let id = q ?? return \"bad request\"\n\
          \x20   return id\n\
          }\n\
          \n\

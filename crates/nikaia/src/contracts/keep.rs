@@ -499,6 +499,18 @@ impl Walk<'_> {
         }
     }
 
+    /// Whether `to_string` of this makes text rather than handing back the
+    /// text it is: a name whose written type is something other than text.
+    fn formats(&self, receiver: &Expr) -> bool {
+        match receiver {
+            Expr::Variable(name) => self
+                .local(self.parsed.text(*name))
+                .and_then(|local| local.ty.as_ref())
+                .is_some_and(|ty| !matches!(self.parsed.text(ty.name), "String" | "str")),
+            _ => false,
+        }
+    }
+
     fn local(&self, name: &str) -> Option<&Local> {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
     }
@@ -549,12 +561,30 @@ impl Walk<'_> {
                         } if self.parsed.text(*method) == "clone" && self.copies_text(receiver) => {
                             Buffer::Named("String".to_string())
                         }
-                        _ => super::tether::makes_a_buffer(
+                        // And so is the text form of something that is not
+                        // text - `seed.to_string()` for `seed: i64` - where
+                        // text's own is the text itself (ADR-216 D4).
+                        Expr::MethodCall {
+                            receiver, method, ..
+                        } if self.parsed.text(*method) == "to_string" && self.formats(receiver) => {
+                            Buffer::Named("String".to_string())
+                        }
+                        _ => match super::tether::makes_a_buffer(
                             self.parsed,
                             value,
                             self.ledger,
                             self.library,
-                        ),
+                        ) {
+                            // A name declared `String` is text of this
+                            // frame's own, built or moved here.
+                            Buffer::Named(name) => Buffer::Named(name),
+                            _ if !self.is_the_buffer(value)
+                                && super::tether::declares_text(self.parsed, ty.as_ref()) =>
+                            {
+                                Buffer::Named("String".to_string())
+                            }
+                            other => other,
+                        },
                     },
                     _ => Buffer::None,
                 };
@@ -1048,7 +1078,6 @@ pub fn keeping_method_key(
 /// Methods whose result is a value of its own, not a view of the receiver.
 const OWNED: &[&str] = &[
     "to_owned",
-    "to_string",
     "clone_text",
     "len",
     "is_empty",

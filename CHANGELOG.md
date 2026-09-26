@@ -4,6 +4,20 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.193] — 2026-09-26
+
+**The text form of text is the text itself** — [ADR-216](docs/specification/adr/adr-216.md)
+D4, the owner's *why must `to_string` be a copy?* and *`"nobody"` is enough*.
+
+`.to_string()` on text now answers the receiver's own type — a view stays a
+view, a literal a literal — and is not written below. Only `.clone()` copies. A
+bare literal is text of its own wherever it is kept, now also in a tuple's parts
+and after `??` inside an f-string hole; the latter uncovered a literal-position
+collision between holes, fixed by keying hole literals by statement and hole.
+The keep and tether analyses read `to_string` accordingly. Test programs,
+examples and Part I write the bare literal. Open: whether a redundant
+`.to_string()` on text should get a hint.
+
 ## [0.0.192] — 2026-09-25
 
 **A copy has one word: `.clone()`** — [ADR-216](docs/specification/adr/adr-216.md),

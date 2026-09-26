@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part I: The Language Core**
-**Version:** 0.0.192 (Draft)
+**Version:** 0.0.193 (Draft)
 **Date:** 2026-09-25
 
 ---
@@ -519,7 +519,7 @@ A type is **non-nullable** unless it says otherwise. A variable of type
 absence of a value is written with a trailing question mark `?`.
 
 ```nika
-let strictly_string: String = "Hello".to_string()
+let strictly_string: String = "Hello"
 // strictly_string = null // Error!
 
 let mut maybe_string: ref String? = null // Valid
@@ -2777,7 +2777,8 @@ duplication of 6.2 serves, so there is no error and no `.clone()` to write
 
 `NK2101` is raised only where the type is known and a move takes the value
 away. A number, a `bool`, a `char` and a **view** are copied, so
-`let message = "Hello"` is not this case and `"Hello".to_string()` is. An
+`let message = "Hello"` is not this case and `let message: String = "Hello"`
+is. An
 **assignment** between the task and the later use clears it, because giving the
 name a value again is a correct program. The form above is the one spelling of
 a `spawn`, the trailing lambda of 5.3. A lambda that **names** an argument is

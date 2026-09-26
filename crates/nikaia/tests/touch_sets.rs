@@ -24,8 +24,8 @@ use nikaia::parser::parse_to_ast;
 /// also hold against an analysis that refused everything.
 const TWO_READS: &str = "use std::fs\n\
      fn main() throws {\n\
-         let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
-         let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+         let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\" }\n\
+         let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
          println(f\"{a.len()} {b.len()}\")\n\
      }";
 
@@ -126,8 +126,8 @@ fn a_data_dependency_keeps_the_order() {
     assert!(!overlaps(
         "use std::fs\n\
          fn main() throws {\n\
-             let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
-             let b = fs::read_to_string(a, fs::Root::Anywhere) catch { \"\".to_string() }\n\
+             let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\" }\n\
+             let b = fs::read_to_string(a, fs::Root::Anywhere) catch { \"\" }\n\
              println(f\"{b.len()}\")\n\
          }"
     ));
@@ -140,7 +140,7 @@ fn a_write_to_the_same_file_keeps_the_order() {
         "use std::fs\n\
          fn main() throws {\n\
              let a = fs::write(\"log.txt\", fs::Root::Anywhere, \"x\") catch { }\n\
-             let b = fs::read_to_string(\"log.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+             let b = fs::read_to_string(\"log.txt\", fs::Root::Anywhere) catch { \"\" }\n\
              println(f\"{b.len()}\")\n\
          }"
     ));
@@ -157,7 +157,7 @@ fn a_file_that_cannot_be_named_keeps_the_order() {
         "use std::fs\n\
          fn main(pfad: ref String) throws {\n\
              let a = fs::write(\"log.txt\", fs::Root::Anywhere, \"x\") catch { }\n\
-             let b = fs::read_to_string(pfad, fs::Root::Anywhere) catch { \"\".to_string() }\n\
+             let b = fs::read_to_string(pfad, fs::Root::Anywhere) catch { \"\" }\n\
              println(f\"{b.len()}\")\n\
          }"
     ));
@@ -173,8 +173,8 @@ fn a_function_with_no_contract_keeps_the_order() {
     assert!(!overlaps(
         "use std::fs\n\
          fn main() throws {\n\
-             let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
-             let b = etwas_unbekanntes() catch { \"\".to_string() }\n\
+             let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\" }\n\
+             let b = etwas_unbekanntes() catch { \"\" }\n\
              println(f\"{a.len()}\")\n\
          }"
     ));
@@ -192,7 +192,7 @@ fn a_diverting_handler_keeps_the_order() {
         "use std::fs\n\
          fn main() throws {\n\
              let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { return }\n\
-             let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+             let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
              println(f\"{a.len()} {b.len()}\")\n\
          }"
     ));
@@ -209,7 +209,7 @@ fn a_dependency_in_a_handler_keeps_the_order() {
     assert!(!overlaps(
         "use std::fs\n\
          fn main() throws {\n\
-             let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+             let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\" }\n\
              let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { a }\n\
              println(f\"{a.len()} {b.len()}\")\n\
          }"
@@ -221,7 +221,7 @@ fn a_dependency_in_a_handler_keeps_the_order() {
     assert!(!overlaps(
         "use std::fs\n\
          fn main() throws {\n\
-             let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+             let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\" }\n\
              let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { f\"{a}\" }\n\
              println(f\"{a.len()} {b.len()}\")\n\
          }"
@@ -238,8 +238,8 @@ fn a_non_literal_argument_keeps_the_order() {
     assert!(!overlaps(
         "use std::fs\n\
          fn main(eins: ref String, zwei: ref String) throws {\n\
-             let a = fs::read_to_string(eins, fs::Root::Anywhere) catch { \"\".to_string() }\n\
-             let b = fs::read_to_string(zwei, fs::Root::Anywhere) catch { \"\".to_string() }\n\
+             let a = fs::read_to_string(eins, fs::Root::Anywhere) catch { \"\" }\n\
+             let b = fs::read_to_string(zwei, fs::Root::Anywhere) catch { \"\" }\n\
              println(f\"{a.len()} {b.len()}\")\n\
          }"
     ));
@@ -304,9 +304,9 @@ fn an_assignment_is_not_an_operation() {
     assert!(!overlaps(
         "use std::fs\n\
          fn main() throws {\n\
-             let mut a = \"\".to_string()\n\
-             a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
-             let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+             let mut a = \"\"\n\
+             a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\" }\n\
+             let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
              println(f\"{a.len()} {b.len()}\")\n\
          }"
     ));
@@ -321,7 +321,7 @@ fn a_method_call_keeps_the_order() {
          fn main() throws {\n\
              let mut out = Vec()\n\
              out.push(\"eins\")\n\
-             let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+             let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
              println(f\"{b.len()}\")\n\
          }"
     ));
@@ -486,8 +486,8 @@ fn an_unreadable_handler_is_not_an_empty_one() {
     const HANDLER_DOES_MORE: &str = "use std::fs\n\
          fn main() throws {\n\
          \x20   let a = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \
-         fs::write(\"zwei.txt\", fs::Root::Anywhere, \"x\") catch { }; \"\".to_string() }\n\
-         \x20   let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+         fs::write(\"zwei.txt\", fs::Root::Anywhere, \"x\") catch { }; \"\" }\n\
+         \x20   let b = fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
          \x20   println(f\"{a.len()} {b.len()}\")\n\
          }";
 
@@ -508,8 +508,8 @@ fn a_value_that_is_not_a_bare_call_is_weighed() {
     let reason = why(
         "use std::fs\n\
          fn main() throws {\n\
-             let beide = (fs::read_to_string(\"eins.txt\", fs::Root::Anywhere), fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere)) catch { (\"\".to_string(), \"\".to_string()) }\n\
-             let c = fs::read_to_string(\"drei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+             let beide = (fs::read_to_string(\"eins.txt\", fs::Root::Anywhere), fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere)) catch { (\"\", \"\") }\n\
+             let c = fs::read_to_string(\"drei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
              println(\"x\")\n\
          }",
     );
@@ -524,7 +524,7 @@ fn a_value_that_is_not_a_bare_call_is_weighed() {
     let reason = why(
         "use std::fs\n\
          fn main() throws {\n\
-             let beide = (fs::read_to_string(\"eins.txt\", fs::Root::Anywhere), fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere)) catch { (\"\".to_string(), \"\".to_string()) }\n\
+             let beide = (fs::read_to_string(\"eins.txt\", fs::Root::Anywhere), fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere)) catch { (\"\", \"\") }\n\
              fs::write(\"zwei.txt\", fs::Root::Anywhere, \"x\") catch { }\n\
              println(\"x\")\n\
          }",

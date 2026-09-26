@@ -599,7 +599,7 @@ fn a_copy_has_one_word() {
             "fn main() {\n\
              \x20   let n = 3\n\
              \x20   let a = n.to_string()\n\
-             \x20   let b = \"x\".to_string()\n\
+             \x20   let b = \"x\"\n\
              \x20   println(f\"{a}{b}\")\n\
              }\n"
         )),
@@ -627,5 +627,66 @@ fn a_copy_is_owned_whatever_it_copied() {
          \x20   println(f\"{owned.len()} {shout(\\\"hey\\\")}\")\n\
          }\n",
         "2 hey!",
+    );
+}
+
+/// **The text form of text is the text itself** (ADR-216 D4): a view stays a
+/// view and a literal a literal, so nothing is copied and nothing is written
+/// below - and a view put where text of its own is kept is refused naming
+/// `.clone()`, as it is without the `.to_string()`.
+#[test]
+fn the_text_form_of_text_is_the_text() {
+    let rust = lowered(
+        "fn main() {\n\
+         \x20   let a = \"x\".to_string()\n\
+         \x20   let n = 3\n\
+         \x20   println(f\"{a}{n.to_string()}\")\n\
+         }\n",
+        Build::default(),
+    );
+    assert!(rust.contains("let a = \"x\";"), "{rust}");
+    assert!(rust.contains("n.to_string()"), "{rust}");
+    let refused = findings(
+        "struct P { name: String }\n\n\
+         fn main() {\n\
+         \x20   let v = \"x\"\n\
+         \x20   let p = P { name: v.to_string() }\n\
+         \x20   println(p.name)\n\
+         }\n",
+    );
+    assert_eq!(refused.len(), 1, "{refused:#?}");
+    assert!(
+        refused[0].help.as_deref().unwrap_or_default().contains(".clone()"),
+        "{refused:#?}"
+    );
+}
+
+/// **A literal is enough wherever text of its own is kept** (ADR-216 D4): in a
+/// tuple, in every link of an `else if` chain, after a `??` inside an f-string
+/// hole - the places a program used to write `.to_string()` to get a `String`.
+#[test]
+fn a_bare_literal_is_text_of_its_own_where_it_is_kept() {
+    runs(
+        "bare-literals",
+        "struct U { name: String }\n\n\
+         impl U {\n\
+         \x20   fn copy(ref self) -> String? { return null }\n\
+         \x20   fn rest(ref self) -> ref String? { return self.name.strip_prefix(\"A\") }\n\
+         }\n\n\
+         fn pair() -> (i64, String) {\n\
+         \x20   return (1, \"one\")\n\
+         }\n\n\
+         fn grade(score: i64) -> String {\n\
+         \x20   let g: String = if score >= 90 { \"A\" } else if score >= 80 { \"B\" } else { \"F\" }\n\
+         \x20   return g\n\
+         }\n\n\
+         fn main() {\n\
+         \x20   let u = U { name: \"Ada\" }\n\
+         \x20   let (n, word) = pair()\n\
+         \x20   println(f\"{n} {word} {grade(85)}\")\n\
+         \x20   println(f\"{u.copy() ?? \\\"none\\\"}\")\n\
+         \x20   println(f\"{u.rest() ?? \\\"n/a\\\"}\")\n\
+         }\n",
+        "1 one B\nnone\nda",
     );
 }

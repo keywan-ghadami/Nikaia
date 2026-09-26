@@ -344,12 +344,25 @@ fn owns_a_buffer(
     library: &Ledger,
 ) -> Buffer {
     let mut found = Buffer::None;
-    bindings(body, &mut |value| {
-        found = found
-            .clone()
-            .or(makes_a_buffer(parsed, value, own, library))
+    bindings(body, &mut |ty, value| {
+        let made = match makes_a_buffer(parsed, value, own, library) {
+            Buffer::Named(name) => Buffer::Named(name),
+            _ if declares_text(parsed, ty) => Buffer::Named("String".to_string()),
+            other => other,
+        };
+        found = found.clone().or(made);
     });
     found
+}
+
+/// **A name declared `String` holds text of this frame's own**, whatever its
+/// initialiser was: `let held: String = "a b"` builds it
+/// ([ADR-207](../../../docs/specification/adr/adr-207.md) D2), and a name
+/// handed over is moved here (ADR-216 D4).
+pub(crate) fn declares_text(parsed: &Parsed, ty: Option<&crate::ast::Type>) -> bool {
+    ty.is_some_and(|ty| {
+        parsed.text(ty.name) == "String" && ty.generics.is_empty() && !ty.is_view && !ty.is_nullable
+    })
 }
 
 /// Whether a body makes a buffer, and whether this walk could **name** it.
@@ -383,12 +396,16 @@ impl Buffer {
     }
 }
 
-/// Every `let`'s initialiser in a body, the blocks inside it included.
-fn bindings(block: &crate::ast::Block, f: &mut impl FnMut(&crate::ast::Expr)) {
+/// Every `let`'s declared type and initialiser in a body, the blocks inside it
+/// included.
+fn bindings(
+    block: &crate::ast::Block,
+    f: &mut impl FnMut(Option<&crate::ast::Type>, &crate::ast::Expr),
+) {
     use crate::ast::Stmt;
     for stmt in &block.stmts {
-        if let Stmt::Let { value, .. } = &stmt.node {
-            f(value);
+        if let Stmt::Let { value, ty, .. } = &stmt.node {
+            f(ty.as_ref(), value);
         }
         super::sync::visit_stmt_blocks(&stmt.node, &mut |inner| bindings(inner, f));
     }
@@ -403,12 +420,25 @@ pub(crate) fn makes_a_buffer(
 ) -> Buffer {
     use crate::ast::Expr;
     match expr {
-        // `text.to_owned()` and `n.to_string()`: owned text by the name, which
-        // every entry of either name agrees on.
+        // `text.to_owned()`: owned text by the name, which every entry of it
+        // agrees on.
+        //
+        // **`to_string` is the text form of a value** (ADR-216 D4): a number's
+        // is text of its own and text's is the text itself - a view stays the
+        // view it was, a literal the literal. Without types this walk cannot
+        // tell the two apart, so beside the literals it says *unsure*, which
+        // the state errs on and no refusal stands on.
         Expr::MethodCall {
             method, receiver, ..
         } => match parsed.text(*method) {
-            "to_owned" | "to_string" => Buffer::Named("String".to_string()),
+            "to_owned" => Buffer::Named("String".to_string()),
+            "to_string" => match receiver.as_ref() {
+                Expr::LitStr { .. } => Buffer::None,
+                Expr::LitInterpolated(_) | Expr::LitInt(_) | Expr::LitFloat(_) => {
+                    Buffer::Named("String".to_string())
+                }
+                _ => Buffer::Unknown,
+            },
             // A copy of a literal is text of its own (ADR-216 D2); a copy of
             // a name is `keep`'s question, which knows the name's type.
             "clone"

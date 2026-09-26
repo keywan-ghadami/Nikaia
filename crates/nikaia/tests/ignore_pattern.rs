@@ -47,7 +47,7 @@ fn the_ignore_pattern_stands_where_a_name_would_be_bound() {
          fn twice(x: i64, f: fn(i64) -> i64 sync) -> i64 { return f(f(x)) }\n\
          fn main() {\n\
              let (first, _) = pair()\n\
-             let tag = \"x\".to_string()\n\
+             let tag = \"x\"\n\
              let n = twice(1, fn(_) { 3 })\n\
              let m = match first { 0 => 1, else => 2 }\n\
              println(f\"{handle(first, tag)} {n} {m}\")\n\
@@ -188,7 +188,7 @@ fn an_ignored_argument_earns_no_warning_from_rustc() {
         "fn twice(x: i64, f: fn(i64) -> i64 sync) -> i64 { return f(f(x)) }\n\
          fn ignored(event: i64, _: String) -> i64 { return event }\n\
          fn main() {\n\
-             let tag = \"x\".to_string()\n\
+             let tag = \"x\"\n\
              let n = twice(1, fn(_) { 3 })\n\
              println(f\"{ignored(n, tag)}\")\n\
          }",

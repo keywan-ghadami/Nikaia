@@ -747,7 +747,7 @@ fn a_declared_throws_or_a_catch_is_the_end_of_it() {
 
     let caught =
         "use std::fs\n\nfn liest() -> String throws { return fs::read_to_string(\"x.txt\", fs::Root::Anywhere) }\n\
-                  fn ruft() -> String { return liest() catch { return \"\".to_string() } }";
+                  fn ruft() -> String { return liest() catch { return \"\" } }";
     assert!(findings(caught).is_empty(), "{:#?}", findings(caught));
 }
 
@@ -1022,7 +1022,7 @@ fn a_call_on_the_type_makes_a_plain_value_shared() {
     assert!(
         findings(
             "struct Conn { host: String }\n\
-             fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+             fn connect() -> Conn { return Conn { host: \"h\" } }\n\
              fn main() { let db = Shared(connect()) }"
         )
         .is_empty(),
@@ -1042,7 +1042,7 @@ fn the_constructor_stands_where_any_expression_may() {
         findings(
             "struct Conn { host: String }\n\
              struct Pool { db: Shared[Conn] }\n\
-             fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+             fn connect() -> Conn { return Conn { host: \"h\" } }\n\
              fn main() { let p = Pool { db: Shared(connect()) } }"
         )
         .is_empty(),
@@ -1060,14 +1060,14 @@ fn the_constructor_stands_where_any_expression_may() {
 fn a_call_that_wants_a_shared_value_and_is_given_a_plain_one_is_refused() {
     let (code, message) = one("struct Conn { host: String }\n\
          fn keep(db: Shared[Conn]) { }\n\
-         fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+         fn connect() -> Conn { return Conn { host: \"h\" } }\n\
          fn main() { let db = connect()\n keep(db) }");
     assert_eq!(code, "NK1115");
     assert_eq!(message, "`keep` takes a shared value, and `db` is not one");
     let help = findings(
         "struct Conn { host: String }\n\
          fn keep(db: Shared[Conn]) { }\n\
-         fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+         fn connect() -> Conn { return Conn { host: \"h\" } }\n\
          fn main() { let db = connect()\n keep(db) }",
     )[0]
     .help
@@ -1087,7 +1087,7 @@ fn a_shared_value_fits_a_shared_parameter() {
         findings(
             "struct Conn { host: String }\n\
              fn keep(db: Shared[Conn]) { }\n\
-             fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+             fn connect() -> Conn { return Conn { host: \"h\" } }\n\
              fn main() { let db = Shared(connect())\n keep(db) }"
         )
         .is_empty(),
@@ -1105,7 +1105,7 @@ fn a_view_of_a_shared_value_is_a_view_of_what_it_holds() {
         findings(
             "struct Conn { host: String }\n\
              fn serve(db: ref Conn) { }\n\
-             fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+             fn connect() -> Conn { return Conn { host: \"h\" } }\n\
              fn main() { let db = Shared(connect())\n serve(db) }"
         )
         .is_empty(),
@@ -1119,7 +1119,7 @@ fn a_view_of_a_shared_value_is_a_view_of_what_it_holds() {
 fn a_shared_value_does_not_fit_a_view_of_just_anything() {
     let (code, message) = one("struct Conn { host: String }\n\
          fn count(n: ref i64) { }\n\
-         fn connect() -> Conn { return Conn { host: \"h\".to_string() } }\n\
+         fn connect() -> Conn { return Conn { host: \"h\" } }\n\
          fn main() { let db = Shared(connect())\n count(ref db) }");
     assert_eq!(code, "NK1102");
     assert!(message.contains("ref Shared[Conn]"), "{message}");

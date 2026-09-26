@@ -94,7 +94,7 @@ fn a_parameter_that_is_only_read_is_lent_at_the_call() {
         "fn width(text: String) -> i64 { return text.len() as i64 }\n\
          \n\
          fn main() {\n\
-         \x20   let text = \"hello\".to_string()\n\
+         \x20   let text = \"hello\"\n\
          \x20   println(f\"{width(text)} {text}\")\n\
          }\n",
     );
@@ -108,7 +108,7 @@ fn a_parameter_that_is_only_read_is_lent_at_the_call() {
 fn the_declaration_and_the_call_gain_the_reference_together() {
     let rust = lowered(
         "fn width(text: String) -> i64 { return text.len() as i64 }\n\
-         fn main() { let t = \"hi\".to_string() println(f\"{width(t)}\") }\n",
+         fn main() { let t: String = \"hi\" println(f\"{width(t)}\") }\n",
     );
     // A `String` the body only reads is a `&str` below (ADR-207 D3), and
     // the caller's `&t` reaches it the way it reached a `&String`.
@@ -122,14 +122,14 @@ fn the_declaration_and_the_call_gain_the_reference_together() {
 fn a_written_ampersand_at_a_lending_call_is_refused() {
     assert!(refused(
         "fn width(text: String) -> i64 { return text.len() as i64 }\n\
-         fn main() { let t = \"hi\".to_string() println(f\"{width(ref t)}\") }\n"
+         fn main() { let t = \"hi\" println(f\"{width(ref t)}\") }\n"
     ));
 
     // And the same call without it is not refused, which is the half that says
     // the rule is about the `&` and not about the call.
     assert!(!refused(
         "fn width(text: String) -> i64 { return text.len() as i64 }\n\
-         fn main() { let t = \"hi\".to_string() println(f\"{width(t)}\") }\n"
+         fn main() { let t: String = \"hi\" println(f\"{width(t)}\") }\n"
     ));
 }
 
@@ -141,7 +141,7 @@ fn a_kept_parameter_keeps_its_owned_argument() {
     let rust = lowered(
         "struct Row { name: String }\n\
          fn wrap(name: String) -> Row { return Row { name: name } }\n\
-         fn main() { let n = \"a\".to_string() let r = wrap(n) println(f\"{r.name}\") }\n",
+         fn main() { let n = \"a\" let r = wrap(n) println(f\"{r.name}\") }\n",
     );
     assert!(rust.contains("fn wrap(name: String)"), "{rust}");
     assert!(!rust.contains("wrap(&n)"), "{rust}");
@@ -150,7 +150,7 @@ fn a_kept_parameter_keeps_its_owned_argument() {
     assert!(!refused(
         "struct Row { name: String }\n\
          fn wrap(name: String) -> Row { return Row { name: name } }\n\
-         fn main() { let n = \"a\".to_string() let r = wrap(n) println(f\"{r.name}\") }\n"
+         fn main() { let n = \"a\" let r = wrap(n) println(f\"{r.name}\") }\n"
     ));
 }
 
@@ -181,7 +181,7 @@ fn an_owned_string_reaches_a_view_parameter_without_a_written_ampersand() {
         "fn count(dna: ref String) -> i64 { return dna.len() as i64 }\n\
          \n\
          fn main() {\n\
-         \x20   let dna = \"acgt\".to_string()\n\
+         \x20   let dna = \"acgt\"\n\
          \x20   println(f\"{count(dna)} {dna}\")\n\
          }\n",
     );
@@ -227,7 +227,7 @@ fn a_method_argument_is_not_lent() {
          }\n\
          fn main() {\n\
          \x20   let mut s = Sink { n: 0 }\n\
-         \x20   let t = \"abc\".to_string()\n\
+         \x20   let t = \"abc\"\n\
          \x20   s.measure(t)\n\
          \x20   println(f\"{s.n}\")\n\
          }\n",
@@ -248,7 +248,7 @@ fn a_written_ampersand_at_a_method_call_is_left_alone() {
          }\n\
          fn main() {\n\
          \x20   let mut s = Sink { n: 0 }\n\
-         \x20   let t = \"abc\".to_string()\n\
+         \x20   let t = \"abc\"\n\
          \x20   s.measure(ref t)\n\
          }\n"
     ));
@@ -265,8 +265,8 @@ fn a_written_ampersand_at_a_method_call_is_left_alone() {
 fn an_argument_no_signature_describes_keeps_its_written_ampersand() {
     assert!(!refused(
         "use std::fs\n\nfn main() {\n\
-         \x20   let out = \"/tmp/x\".to_string()\n\
-         \x20   let text = \"hi\".to_string()\n\
+         \x20   let out = \"/tmp/x\"\n\
+         \x20   let text = \"hi\"\n\
          \x20   fs::write(ref out, fs::Root::Anywhere, ref text) catch { return }\n\
          }\n"
     ));
@@ -284,7 +284,7 @@ fn a_wrong_argument_is_a_type_error_and_not_this_one() {
         "struct Request { path: String }\n\
          fn route(r: Request) -> i64 { return r.path.len() as i64 }\n\
          fn main() {\n\
-         \x20   let t = \"hi\".to_string()\n\
+         \x20   let t = \"hi\"\n\
          \x20   let n = route(ref t)\n\
          \x20   println(f\"{n}\")\n\
          }\n",
@@ -307,7 +307,7 @@ fn a_parameter_passed_on_to_a_lending_callee_is_lent_too() {
          fn measure(text: String) -> i64 { return width(text) + 1 }\n\
          \n\
          fn main() {\n\
-         \x20   let t = \"hello\".to_string()\n\
+         \x20   let t = \"hello\"\n\
          \x20   println(f\"{measure(t)} {t}\")\n\
          }\n",
     );
@@ -345,7 +345,7 @@ fn an_argument_whose_type_is_not_known_is_still_lent() {
                   }\n\
                   \n\
                   fn main() {\n\
-                  \x20   let data = \"abcd\".to_string()\n\
+                  \x20   let data = \"abcd\"\n\
                   \x20   let entries = read(data) catch { return }\n\
                   \x20   println(f\"{total(entries)}\")\n\
                   }\n";

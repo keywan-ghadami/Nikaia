@@ -341,6 +341,10 @@ pub struct Checked {
     /// shape: written `to_owned` below, which is a copy whether the receiver
     /// is a value or a view of one (ADR-215 D4).
     pub owned_copies: BTreeSet<(usize, String)>,
+    /// `.to_string()` on **text**, by statement and receiver shape: the text
+    /// form of text is the text itself, so the call is written as its receiver
+    /// ([ADR-216](../../docs/specification/adr/adr-216.md) D4).
+    pub text_as_is: BTreeSet<(usize, String)>,
     /// The **method calls that can fail**, as the byte the statement they
     /// stand in starts at and the method's name (ADR-023 D8).
     ///
@@ -979,6 +983,7 @@ fn walked<'a>(
         handed: Vec::new(),
         writing_index: false,
         read_a_map: false,
+        hole: None,
         last_resolved: None,
         receiver_name: None,
         caught_several: false,
@@ -1257,6 +1262,21 @@ fn plainly_a_value(expr: &Expr) -> bool {
     )
 }
 
+/// **Where a text literal stands, as the emitter will find it.** A hole of an
+/// f-string is parsed on its own, so a literal inside one has an offset into
+/// the hole and not into the file - and two holes, or a hole and the file's own
+/// text, would share it. Inside a hole the key is the offset mixed with the
+/// statement and the hole's text, above every offset a file can have.
+pub fn text_key(hole: Option<&(usize, String)>, at: usize) -> usize {
+    use std::hash::{Hash, Hasher};
+    let Some((statement, text)) = hole else {
+        return at;
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (statement, text, at).hash(&mut hasher);
+    (hasher.finish() as usize) | (1 << (usize::BITS - 1))
+}
+
 pub fn argument_shape(expr: &Expr) -> String {
     format!("{expr:?}")
 }
@@ -1310,6 +1330,8 @@ pub struct Propagation {
     pub slice_indices: BTreeSet<(usize, String)>,
     /// [`Checked::owned_copies`].
     pub owned_copies: BTreeSet<(usize, String)>,
+    /// [`Checked::text_as_is`].
+    pub text_as_is: BTreeSet<(usize, String)>,
     /// [`Checked::pausing_walks`].
     pub pausing_walks: BTreeSet<(usize, String)>,
     /// [`Checked::fallible_methods`].
@@ -1503,6 +1525,7 @@ pub fn propagation_against(
         map_keys: checked.map_keys,
         slice_indices: checked.slice_indices,
         owned_copies: checked.owned_copies,
+        text_as_is: checked.text_as_is,
         pausing_walks: checked.pausing_walks,
         methods: checked.fallible_methods,
         pausing_methods: checked.pausing_methods,
@@ -2284,6 +2307,9 @@ struct Checker<'a> {
     /// Set where an `Index` read a **map**, for the `??` around it: a map read
     /// hands out a view of the value, whatever the value's type (ADR-213 D2).
     read_a_map: bool,
+    /// The statement and the text of the f-string hole being walked, for
+    /// `text_at`.
+    hole: Option<(usize, String)>,
     /// The ledger key the last method call resolved to, for the arm around it
     /// (ADR-215 D4).
     last_resolved: Option<String>,
@@ -3656,9 +3682,10 @@ impl<'a> Checker<'a> {
             };
             // **And the tail is a use**, as `return` is (ADR-207 D2).
             let tail = match body.stmts.last().map(|s| &s.node) {
-                Some(Stmt::Expr(value)) if !lending => {
-                    self.text_literal(expected, value, true).unwrap_or(tail)
-                }
+                Some(Stmt::Expr(value)) if !lending => self
+                    .text_literal(expected, value, true)
+                    .or_else(|| self.tuple_literal(&tail, expected, value))
+                    .unwrap_or(tail),
                 _ => tail,
             };
             let value = match body.stmts.last().map(|s| &s.node) {
@@ -6695,6 +6722,25 @@ impl<'a> Checker<'a> {
                     }
                 }
                 self.a_copy_under_another_name(receiver, *method, args, span);
+                // **The text form of text is the text** (ADR-216 D4): a view
+                // stays a view and a literal stays a literal, and whoever keeps
+                // it asks for text of its own as anywhere else - by building a
+                // literal there, or by a `.clone()` the program writes.
+                let text = matches!(&on, Ty::Named { name, args: none, .. }
+                    if none.is_empty() && matches!(name.as_str(), "String" | "str"));
+                if text
+                    && args.is_empty()
+                    && self.parsed.text(*method) == "to_string"
+                    && self.own.candidates("to_string").is_empty()
+                {
+                    self.checked
+                        .text_as_is
+                        .insert((span.start, argument_shape(receiver)));
+                    self.receiver_name = outer_named;
+                    self.at_a_write_door = outer_door;
+                    self.inside_a_door = outer_inside;
+                    return on;
+                }
                 // **A copy of a slice is a list** (ADR-216 D2): `to_owned`
                 // below, where `.clone()` would copy the reference.
                 let a_run = match &on {
@@ -7455,7 +7501,7 @@ impl<'a> Checker<'a> {
                 let other = self.expr(fallback, span);
                 if let (Ty::Nullable(inner), Expr::LitStr { at, .. }) = (&left, &**fallback) {
                     if **inner == Ty::view("str") {
-                        self.checked.view_fallbacks.insert(*at);
+                        self.checked.view_fallbacks.insert(self.text_at(*at));
                     }
                     // **A map's text, read, is a view of it** (ADR-213 D2): the
                     // map hands out its `String` and keeps it, so the literal
@@ -7465,7 +7511,7 @@ impl<'a> Checker<'a> {
                     // wanted the map's reference: `rustc`'s words, about a file
                     // nobody wrote.
                     if **inner == Ty::named("String") && from_a_map {
-                        self.checked.view_fallbacks.insert(*at);
+                        self.checked.view_fallbacks.insert(self.text_at(*at));
                         return Ty::view("str");
                     }
                 }
@@ -7616,7 +7662,7 @@ impl<'a> Checker<'a> {
                 // [ADR-034](../../../docs/specification/adr/adr-034.md)'s
                 // question and this refusal does not need it answered.
                 let enclosing = self.guarded.replace(Guarded::default());
-                self.expr(expr, span);
+                let answers = self.expr(expr, span);
                 let guarded = std::mem::replace(&mut self.guarded, enclosing);
                 if self.guarded.is_some() {
                     self.guard_has_no_answer();
@@ -7631,6 +7677,13 @@ impl<'a> Checker<'a> {
                 let single = std::mem::replace(&mut self.caught_one, one);
                 let from = self.taken_so_far();
                 self.block(handler);
+                // **A handler's value stands where the guarded one would**, so
+                // a text literal it ends in is built into text of its own where
+                // the guarded value is (ADR-216 D4, one more of ADR-207 D1's
+                // positions): `read() catch { "" }`.
+                if let Some(tail) = tail_of(handler) {
+                    self.text_literal(&answers, tail, true);
+                }
                 self.a_branch_that_leaves(from, block_exits(handler), span);
                 self.caught_several = several;
                 self.caught_one = single;
@@ -8170,7 +8223,13 @@ impl<'a> Checker<'a> {
                 .map(|name| Local::free(name, Ty::Unknown))
                 .collect();
             self.scope.push(frame);
+            // An f-string's holes, which the emitter walks the same way.
+            let outer = match literal {
+                Expr::LitInterpolated(_) => self.hole.replace((span.start, argument_shape(&hole))),
+                _ => self.hole.clone(),
+            };
             self.expr(&hole, span);
+            self.hole = outer;
             self.scope.pop();
         }
     }
@@ -9805,6 +9864,16 @@ impl<'a> Checker<'a> {
     /// outside a loop or a lambda handed over inside it is refused where it is
     /// handed, because the next turn hands over what is already gone.
     fn hands_over(&mut self, value: &Expr, ty: &Ty, to: &str, span: &Span) {
+        // `name.to_string()` is `name` (ADR-216 D4): what is handed over is it.
+        if let Expr::MethodCall { receiver, .. } = value {
+            if self
+                .checked
+                .text_as_is
+                .contains(&(span.start, argument_shape(receiver)))
+            {
+                return self.hands_over(receiver, ty, to, span);
+            }
+        }
         let Some(&at) = self.read_index.get(&(address(value), span.start)) else {
             return;
         };
@@ -11805,7 +11874,7 @@ impl<'a> Checker<'a> {
             .zip(founds)
             .map(|(item, found)| match (item, holds_text) {
                 (Expr::LitStr { at, .. }, true) => {
-                    self.checked.owned_texts.insert(*at);
+                    self.checked.owned_texts.insert(self.text_at(*at));
                     Ty::named("String")
                 }
                 _ => found,
@@ -12131,6 +12200,35 @@ impl<'a> Checker<'a> {
     fn literal_by_use(&mut self, found: &Ty, want: &Ty, value: &Expr, span: &Span) -> Option<Ty> {
         self.array_literal(found, want, value, span)
             .or_else(|| self.text_literal(want, value, true))
+            .or_else(|| self.tuple_literal(found, want, value))
+    }
+
+    /// **A tuple's text literals are built where the tuple is kept**, part by
+    /// part: `return (1, "x")` for a `(i64, String)` is the program it reads
+    /// as. The parts that are not literals keep the type they were found to
+    /// have, so a view among them is still refused.
+    fn tuple_literal(&mut self, found: &Ty, want: &Ty, value: &Expr) -> Option<Ty> {
+        let (Ty::Tuple(wants), Ty::Tuple(founds), Expr::Tuple(parts)) = (want, found, value) else {
+            return None;
+        };
+        if wants.len() != parts.len() || founds.len() != parts.len() {
+            return None;
+        }
+        let mut built = false;
+        let mut answered = Vec::with_capacity(parts.len());
+        for ((want, found), part) in wants.iter().zip(founds).zip(parts) {
+            match self
+                .text_literal(want, part, true)
+                .or_else(|| self.tuple_literal(found, want, part))
+            {
+                Some(ty) => {
+                    built = true;
+                    answered.push(ty);
+                }
+                None => answered.push(found.clone()),
+            }
+        }
+        built.then_some(Ty::Tuple(answered))
     }
 
     /// **A text literal where a `String` is wanted is a `String`**
@@ -12144,7 +12242,7 @@ impl<'a> Checker<'a> {
     /// *constructing* a value, as `[1, 2]` constructs the `Vec` it stands in,
     /// and not copying text the program had. ADR-005 §3's rule is about the
     /// second, and it stands: a **view** of text the program has still needs
-    /// its `.to_owned()`.
+    /// its `.clone()`.
     ///
     /// `owned` says whether the position keeps what it is given. It is `false`
     /// for an argument the callee only reads, whose parameter is a `&str` below
@@ -12155,13 +12253,33 @@ impl<'a> Checker<'a> {
     /// and through a list literal where a `Vec[String]` is wanted, element by
     /// element - but only where **every** element is a text literal, so a list
     /// that mixes in a view keeps the refusal it had.
+    fn text_at(&self, at: usize) -> usize {
+        text_key(self.hole.as_ref(), at)
+    }
+
     fn text_literal(&mut self, want: &Ty, value: &Expr, owned: bool) -> Option<Ty> {
         let text = Ty::named("String");
         match (want, value) {
             (Ty::Nullable(inner), _) => self.text_literal(inner, value, owned),
+            // `"x".to_string()` is `"x"` (ADR-216 D4), so it is built where it
+            // is kept exactly as the literal is.
+            (
+                _,
+                Expr::MethodCall {
+                    receiver,
+                    method,
+                    args,
+                    ..
+                },
+            ) if args.is_empty()
+                && self.parsed.text(*method) == "to_string"
+                && matches!(receiver.as_ref(), Expr::LitStr { .. }) =>
+            {
+                self.text_literal(want, receiver, owned)
+            }
             (_, Expr::LitStr { at, .. }) if *want == text => {
                 if owned {
-                    self.checked.owned_texts.insert(*at);
+                    self.checked.owned_texts.insert(self.text_at(*at));
                 }
                 Some(text)
             }

@@ -178,14 +178,14 @@ fn a_return_in_a_block_used_as_a_value_leaves_the_function() {
 const CATCH_HANDLER: &str = "use std::fs\n\
      \n\
      fn label(path: String) -> String throws {\n\
-     \x20   let text = fs::read_to_string(ref path, fs::Root::Anywhere) catch { return \"missing\".to_string() }\n\
+     \x20   let text = fs::read_to_string(ref path, fs::Root::Anywhere) catch { return \"missing\" }\n\
      \x20   f\"read {text.len()} bytes\"\n\
      }\n\
      \n\
      fn main() {\n\
-     \x20   let here = label(\"there.txt\".to_string()) catch { \"failed\".to_string() }\n\
+     \x20   let here = label(\"there.txt\") catch { \"failed\" }\n\
      \x20   println(here)\n\
-     \x20   let gone = label(\"absent.txt\".to_string()) catch { \"failed\".to_string() }\n\
+     \x20   let gone = label(\"absent.txt\") catch { \"failed\" }\n\
      \x20   println(gone)\n\
      }\n";
 
@@ -203,7 +203,7 @@ fn a_return_in_a_catch_handler_leaves_the_function() {
 fn the_ordering_analysis_and_the_lowering_agree_about_a_diverting_handler() {
     let rust = lowered(CATCH_HANDLER);
     assert!(
-        rust.contains("return Ok(\"missing\""),
+        rust.contains("return Ok(String::from(\"missing\")"),
         "the handler's `return` is gone from the lowering:\n{rust}"
     );
 }

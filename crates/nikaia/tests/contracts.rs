@@ -1087,7 +1087,7 @@ fn the_trust_report_lists_every_root_with_nothing_to_check_against() {
 fn a_root_that_names_a_directory_is_not_in_the_report() {
     let source = "use std::fs\n\
                   fn main() throws {\n\
-                  \x20   let store = \"/srv/www\".to_string()\n\
+                  \x20   let store = \"/srv/www\"\n\
                   \x20   let a = fs::read_to_string(\"a\", fs::Root::Dir(store))\n\
                   }\n";
     let t = provenance(source);

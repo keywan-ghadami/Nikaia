@@ -228,7 +228,7 @@ fn the_pages_own_example_runs() {
          impl Error for Timeout {\n\
          \x20   fn message(ref self) -> String {\n\
          \x20       match self {\n\
-         \x20           Timeout::TooSlow => { return \"too slow\".to_string() }\n\
+         \x20           Timeout::TooSlow => { return \"too slow\" }\n\
          \x20       }\n\
          \x20   }\n\
          }\n\

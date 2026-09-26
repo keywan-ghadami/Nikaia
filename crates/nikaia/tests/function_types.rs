@@ -375,7 +375,7 @@ fn a_pausing_lambda_handed_to_a_sync_type_is_refused() {
 #[test]
 fn a_failing_lambda_handed_to_a_type_without_throws_is_refused() {
     const ERROR: &str = "enum E { Bad }\n\
-                         impl Error for E { fn message(ref self) -> String { return \"bad\".to_string() } }\n\
+                         impl Error for E { fn message(ref self) -> String { return \"bad\" } }\n\
                          fn risky() throws { throw E::Bad }\n";
 
     let refused = findings(&format!(
@@ -554,7 +554,7 @@ fn a_trailing_sync_belongs_to_the_type_it_follows() {
 fn a_promise_before_the_arrow_is_refused() {
     let said = format!(
         "{:#}",
-        parse_to_ast("fn load() throws -> String { return \"a\".to_string() }")
+        parse_to_ast("fn load() throws -> String { return \"a\" }")
             .expect_err("the pre-arrow form is a parse error")
     );
     assert!(said.contains("stand after the result type"), "{said}");

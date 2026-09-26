@@ -229,8 +229,8 @@ fn a_branch_travels_in_the_functions_own_channel() {
         "{OWN_ERROR}\n\
          fn main() throws {{\n\
          \x20   let pair = overlap {{\n\
-         \x20       load(\"c\".to_string())\n\
-         \x20       load(\"d\".to_string())\n\
+         \x20       load(\"c\")\n\
+         \x20       load(\"d\")\n\
          \x20   }}\n\
          \x20   println(f\"{{pair.0}} {{pair.1}}\")\n\
          }}\n"
@@ -295,8 +295,8 @@ fn the_block_keeps_every_failure_and_the_first_still_wins() {
         "{OWN_ERROR}\n\
          fn main() throws {{\n\
          \x20   let pair = overlap {{\n\
-         \x20       load(\"a\".to_string())\n\
-         \x20       load(\"b\".to_string())\n\
+         \x20       load(\"a\")\n\
+         \x20       load(\"b\")\n\
          \x20   }}\n\
          \x20   println(f\"{{pair.0}} {{pair.1}}\")\n\
          }}\n"
@@ -354,8 +354,8 @@ fn a_handler_on_the_block_gets_the_blocks_outcome() {
         "{OWN_ERROR}\n\
          fn main() {{\n\
          \x20   let pair = overlap {{\n\
-         \x20       load(\"a\".to_string())\n\
-         \x20       load(\"b\".to_string())\n\
+         \x20       load(\"a\")\n\
+         \x20       load(\"b\")\n\
          \x20   }} catch {{\n\
          \x20       println(f\"caught: {{error}}\")\n\
          \x20       return\n\
@@ -389,8 +389,8 @@ fn a_handler_on_the_block_matches_the_branches_variants() {
         "{OWN_ERROR}\n\
          fn main() {{\n\
          \x20   let pair = overlap {{\n\
-         \x20       load(\"a\".to_string())\n\
-         \x20       load(\"b\".to_string())\n\
+         \x20       load(\"a\")\n\
+         \x20       load(\"b\")\n\
          \x20   }} catch {{\n\
          \x20       match error {{\n\
          \x20           LoadError::Missing(w) => {{ println(f\"missing {{w}}\") }}\n\
@@ -423,8 +423,8 @@ fn a_handler_on_a_select_gets_the_blocks_outcome() {
         "{OWN_ERROR}\n\
          fn main() {{\n\
          \x20   select {{\n\
-         \x20       x = load(\"a\".to_string()) => {{ println(f\"a {{x}}\") }}\n\
-         \x20       y = load(\"b\".to_string()) => {{ println(f\"b {{y}}\") }}\n\
+         \x20       x = load(\"a\") => {{ println(f\"a {{x}}\") }}\n\
+         \x20       y = load(\"b\") => {{ println(f\"b {{y}}\") }}\n\
          \x20   }} catch {{\n\
          \x20       println(f\"caught: {{error}}\")\n\
          \x20   }}\n\
@@ -453,7 +453,7 @@ fn rustc_says_nothing_about_the_generated_file() {
         format!(
             "{OWN_ERROR}\n\
              fn main() {{\n\
-             \x20   let got = load(\"a\".to_string()) catch {{\n\
+             \x20   let got = load(\"a\") catch {{\n\
              \x20       println(f\"caught: {{error}}\")\n\
              \x20       return\n\
              \x20   }}\n\
@@ -465,7 +465,7 @@ fn rustc_says_nothing_about_the_generated_file() {
         "enum Boom { Now }\n\
          \n\
          impl Error for Boom {\n\
-         \x20   fn message(ref self) -> String { return \"boom\".to_string() }\n\
+         \x20   fn message(ref self) -> String { return \"boom\" }\n\
          }\n\
          \n\
          fn always() -> String throws {\n\

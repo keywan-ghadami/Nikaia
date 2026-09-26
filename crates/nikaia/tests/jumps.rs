@@ -288,7 +288,7 @@ fn a_break_in_an_overlap_branch_cannot_reach_the_loop_outside_it() {
          \x20   for i in 0..<n {\n\
          \x20       let r = overlap {\n\
          \x20           fs::read_to_string(\"a\", fs::Root::Anywhere) catch { break }\n\
-         \x20           fs::read_to_string(\"b\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+         \x20           fs::read_to_string(\"b\", fs::Root::Anywhere) catch { \"\" }\n\
          \x20       }\n\
          \x20       t += 1\n\
          \x20   }\n\

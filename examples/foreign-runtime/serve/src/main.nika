@@ -9,6 +9,6 @@ fn main() {
     let served = hyper_shim::serve_once(18080)
     println(f"served: {served}")
 
-    let crossed = hyper_shim::across_a_thread("a String is Send".to_string())
+    let crossed = hyper_shim::across_a_thread("a String is Send")
     println(f"crossed: {crossed}")
 }

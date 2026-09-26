@@ -33,7 +33,7 @@ fn lowered(source: &str) -> Result<String, String> {
 #[test]
 fn a_three_link_chain_answers_at_every_link() {
     let source = "fn grade(score: i64) -> String {\n\
-                  \x20   let g = if score >= 90 {\n\
+                  \x20   let g: String = if score >= 90 {\n\
                   \x20       \"A\"\n\
                   \x20   } else if score >= 80 {\n\
                   \x20       \"B\"\n\
@@ -42,7 +42,7 @@ fn a_three_link_chain_answers_at_every_link() {
                   \x20   } else {\n\
                   \x20       \"F\"\n\
                   \x20   }\n\
-                  \x20   return g.to_string()\n\
+                  \x20   return g\n\
                   }\n\
                   fn main() {\n\
                   \x20   println(f\"{grade(95)}{grade(85)}{grade(75)}{grade(10)}\")\n\

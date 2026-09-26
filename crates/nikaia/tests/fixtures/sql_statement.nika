@@ -29,7 +29,7 @@ impl Db {
 }
 
 fn main() {
-    let db = Db { name: "people.db".to_string() }
+    let db = Db { name: "people.db" }
 
     let query = dsl mysql {
         SELECT name FROM people WHERE id = :id AND active = :active

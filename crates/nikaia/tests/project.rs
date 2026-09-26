@@ -1007,7 +1007,7 @@ fn a_package_trait_is_implemented_by_a_body_that_calls_that_package() {
                  }\n\
                  \n\
                  pub fn hello() -> String {\n\
-                 \x20   return \"hello\".to_string()\n\
+                 \x20   return \"hello\"\n\
                  }\n",
             ),
             (
@@ -1497,8 +1497,8 @@ fn a_warning_reaches_the_user_once_and_in_nikaia_terms() {
         // which is exactly Part I 2.3's own example.
         "fn main() {\n    \
          let mut maybe: String? = null\n    \
-         maybe = \"World\".to_string()\n    \
-         let shown = maybe ?? \"x\".to_string()\n    \
+         maybe = \"World\"\n    \
+         let shown = maybe ?? \"x\"\n    \
          println(f\"{shown}\")\n\
          }\n",
     );
@@ -1778,7 +1778,7 @@ fn a_trait_a_package_publishes_can_be_implemented_and_called() {
                  \n\
                  impl handler::Handler for Fixed {\n\
                  \x20   fn handle(ref self) -> handler::Answer {\n\
-                 \x20       return handler::Answer { text: \"handled\".to_string() }\n\
+                 \x20       return handler::Answer { text: \"handled\" }\n\
                  \x20   }\n\
                  }\n\
                  \n\
@@ -2225,7 +2225,7 @@ fn a_bound_takes_a_path_across_a_package() {
                  \n\
                  impl handler::Handler for Fixed {\n\
                  \x20   fn handle(ref self) -> handler::Answer {\n\
-                 \x20       return handler::Answer { text: \"handled\".to_string() }\n\
+                 \x20       return handler::Answer { text: \"handled\" }\n\
                  \x20   }\n\
                  }\n\
                  \n\
@@ -2313,7 +2313,7 @@ fn a_bound_a_package_declares_is_checked_at_a_consumers_call() {
             package,
             (
                 "app/src/main.nika",
-                "use handler\n\n                 struct Fixed {\n                 \x20   n: i64,\n                 }\n                 \n                 impl handler::Handler for Fixed {\n                 \x20   fn handle(ref self) -> handler::Answer {\n                 \x20       return handler::Answer { text: \"handled\".to_string() }\n                 \x20   }\n                 }\n                 \n                 fn main() {\n                 \x20   println(handler::dispatch(Fixed { n: 1 }))\n                 }\n",
+                "use handler\n\n                 struct Fixed {\n                 \x20   n: i64,\n                 }\n                 \n                 impl handler::Handler for Fixed {\n                 \x20   fn handle(ref self) -> handler::Answer {\n                 \x20       return handler::Answer { text: \"handled\" }\n                 \x20   }\n                 }\n                 \n                 fn main() {\n                 \x20   println(handler::dispatch(Fixed { n: 1 }))\n                 }\n",
             ),
         ],
     );
@@ -2357,7 +2357,7 @@ fn an_enum_a_package_declares_is_matched_completely_by_a_consumer() {
             ),
             (
                 "app/src/main.nika",
-                "use verdict\n\n                 fn main() {\n                 \x20   let word = \"ja\".to_string()\n                 \x20   match verdict::of(word) {\n                 \x20       verdict::Answer::Yes => { println(\"yes\") }\n                 \x20       verdict::Answer::No => { println(\"no\") }\n                 \x20   }\n                 \x20   let again = \"nein\".to_string()\n                 \x20   if verdict::of(again) == verdict::Answer::No {\n                 \x20       println(\"compared\")\n                 \x20   }\n                 }\n",
+                "use verdict\n\n                 fn main() {\n                 \x20   let word = \"ja\"\n                 \x20   match verdict::of(word) {\n                 \x20       verdict::Answer::Yes => { println(\"yes\") }\n                 \x20       verdict::Answer::No => { println(\"no\") }\n                 \x20   }\n                 \x20   let again = \"nein\"\n                 \x20   if verdict::of(again) == verdict::Answer::No {\n                 \x20       println(\"compared\")\n                 \x20   }\n                 }\n",
             ),
         ],
     );
@@ -2421,7 +2421,7 @@ fn an_impl_a_package_wrote_answers_a_consumers_bound() {
                  }\n\
                  \n\
                  fn main() {\n\
-                 \x20   let s = handler::Static { what: \"from the package\".to_string() }\n\
+                 \x20   let s = handler::Static { what: \"from the package\" }\n\
                  \x20   println(dispatch(s))\n\
                  }\n",
             ),
@@ -2543,7 +2543,7 @@ fn a_packages_own_bound_and_its_own_types_are_answered_in_its_own_namespace() {
                 "app/src/main.nika",
                 "use handler\n\n\
                  fn main() {\n\
-                 \x20   let s = handler::Static { what: \"its own\".to_string() }\n\
+                 \x20   let s = handler::Static { what: \"its own\" }\n\
                  \x20   println(handler::dispatch(s))\n\
                  }\n",
             ),

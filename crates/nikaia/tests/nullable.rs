@@ -124,10 +124,10 @@ fn the_sections_own_example_lowers() {
         "nullable-example",
         "\
 fn main() {
-    let strictly_string: String = \"Hello\".to_string()
+    let strictly_string: String = \"Hello\"
     let mut maybe_string: String? = null
-    maybe_string = \"World\".to_string()
-    let shown = maybe_string ?? \"nothing\".to_string()
+    maybe_string = \"World\"
+    let shown = maybe_string ?? \"nothing\"
     println(f\"{strictly_string} {shown}\")
 }
 ",
@@ -139,7 +139,7 @@ fn main() {
     // The second line is the one that needs the constructor written: a
     // `String` standing where a `String?` is wanted.
     assert!(
-        rust.contains("maybe_string = Some(\"World\".to_string());"),
+        rust.contains("maybe_string = Some(String::from(\"World\"));"),
         "{rust}"
     );
 }
@@ -283,16 +283,16 @@ struct User { name: String, home: Address? }
 
 fn find(id: i64) -> User? {
     if id > 0 {
-        let home = Address { city: \"Bletchley\".to_string(), zip: null }
-        return User { name: \"Ada\".to_string(), home: home }
+        let home = Address { city: \"Bletchley\", zip: null }
+        return User { name: \"Ada\", home: home }
     }
     return null
 }
 
 fn main() {
-    let name = find(1)?.name ?? \"nobody\".to_string()
-    let city = find(1)?.home?.city ?? \"nowhere\".to_string()
-    let zip = find(1)?.home?.zip ?? \"none\".to_string()
+    let name = find(1)?.name ?? \"nobody\"
+    let city = find(1)?.home?.city ?? \"nowhere\"
+    let zip = find(1)?.home?.zip ?? \"none\"
     println(f\"{name} {city} {zip}\")
 }
 ",
@@ -330,8 +330,8 @@ struct Address { city: String }
 struct User { name: String, home: Address? }
 
 fn main() {
-    let home = Address { city: \"Bletchley\".to_string() }
-    let u = User { name: \"Ada\".to_string(), home: home }
+    let home = Address { city: \"Bletchley\" }
+    let u = User { name: \"Ada\", home: home }
     let city = u.home?.city ?? \"nowhere\"
     println(f\"{city}\")
 }
@@ -359,7 +359,7 @@ fn reaching_through_a_plain_value_is_refused() {
     let source = "\
 struct User { name: String }
 fn main() {
-    let u = User { name: \"Ada\".to_string() }
+    let u = User { name: \"Ada\" }
     let n = u?.name
     println(f\"{n}\")
 }
@@ -433,7 +433,7 @@ fn a_plain_value_in_a_nullable_parameter_is_wrapped() {
         "nullable-argument",
         "\
 fn shown(what: String?) -> String {
-    return what ?? \"nothing\".to_string()
+    return what ?? \"nothing\"
 }
 
 fn pair(a: i64?, b: i64?) -> i64 {
@@ -441,13 +441,16 @@ fn pair(a: i64?, b: i64?) -> i64 {
 }
 
 fn main() {
-    println(f\"{shown(\\\"here\\\".to_string())}\")
+    println(f\"{shown(\\\"here\\\")}\")
     println(f\"{shown(null)}\")
     println(f\"{pair(1, 2)}\")
 }
 ",
     );
-    assert!(rust.contains("shown(Some(\"here\".to_string()))"), "{rust}");
+    assert!(
+        rust.contains("shown(Some(String::from(\"here\")))"),
+        "{rust}"
+    );
     // `null` is a `T?` already, so nothing goes round it.
     assert!(rust.contains("shown(None)"), "{rust}");
     assert!(!rust.contains("Some(None)"), "{rust}");
@@ -464,11 +467,11 @@ fn a_nullable_argument_is_not_wrapped() {
 struct Box { label: String? }
 
 fn shown(what: String?) -> String {
-    return what ?? \"nothing\".to_string()
+    return what ?? \"nothing\"
 }
 
 fn main() {
-    let b = Box { label: \"on it\".to_string() }
+    let b = Box { label: \"on it\" }
     println(f\"{shown(b.label)}\")
 }
 ",
@@ -477,7 +480,7 @@ fn main() {
     assert!(!rust.contains("Some(b.label)"), "{rust}");
     // The field itself does need the wrap, which is the other position.
     assert!(
-        rust.contains("label: Some(\"on it\".to_string())"),
+        rust.contains("label: Some(String::from(\"on it\"))"),
         "{rust}"
     );
 }
@@ -507,14 +510,14 @@ impl User {
 
 fn find(id: i64) -> User? {
     if id > 0 {
-        return User { name: \"Ada\".to_string() }
+        return User { name: \"Ada\" }
     }
     return null
 }
 
 fn main() {
-    let here = find(1)?.greet(\"Hallo\") ?? \"nobody\".to_string()
-    let gone = find(0)?.greet(\"Hallo\") ?? \"nobody\".to_string()
+    let here = find(1)?.greet(\"Hallo\") ?? \"nobody\"
+    let gone = find(0)?.greet(\"Hallo\") ?? \"nobody\"
     println(f\"{here} | {gone}\")
 }
 ",
@@ -547,15 +550,15 @@ impl Store {
 
 fn open(yes: bool) -> Store? {
     if yes {
-        return Store { root: \".\".to_string() }
+        return Store { root: \".\" }
     }
     return null
 }
 
 fn main() throws {
     fs::write(\"note.txt\", fs::Root::Anywhere, \"hallo\")
-    let text = open(true)?.read(\"note.txt\") ?? \"\".to_string()
-    let none = open(false)?.read(\"note.txt\") ?? \"missing\".to_string()
+    let text = open(true)?.read(\"note.txt\") ?? \"\"
+    let none = open(false)?.read(\"note.txt\") ?? \"missing\"
     println(f\"{text} | {none}\")
 }
 ",
@@ -590,12 +593,12 @@ impl User {
 }
 
 fn find(name: ref String) -> User? {
-    return User { name: name.to_string() }
+    return User { name: name.clone() }
 }
 
 fn main() {
-    let long = find(\"Alexandra\")?.nickname() ?? \"none\".to_string()
-    let short = find(\"Ada\")?.nickname() ?? \"none\".to_string()
+    let long = find(\"Alexandra\")?.nickname() ?? \"none\"
+    let short = find(\"Ada\")?.nickname() ?? \"none\"
     println(f\"{long} | {short}\")
 }
 ",
@@ -613,7 +616,7 @@ fn a_reached_method_on_a_plain_value_is_refused_in_the_spelling_it_was_written()
 struct U { name: String }
 impl U { fn n(ref self) -> i64 { return 1 } }
 fn main() {
-    let u = U { name: \"a\".to_string() }
+    let u = U { name: \"a\" }
     let x = u?.n()
 }
 ",
@@ -650,11 +653,11 @@ fn a_chain_of_fallbacks_takes_the_first_one_that_has_a_value() {
         "\
 fn a() -> String? { return null }
 fn b() -> String? { return null }
-fn c() -> String? { return \"third\".to_string() }
+fn c() -> String? { return \"third\" }
 
 fn main() {
-    let none = a() ?? b() ?? \"last\".to_string()
-    let third = a() ?? b() ?? c() ?? \"last\".to_string()
+    let none = a() ?? b() ?? \"last\"
+    let third = a() ?? b() ?? c() ?? \"last\"
     println(f\"{none} | {third}\")
 }
 ",
@@ -680,14 +683,14 @@ impl User {
 
 fn find(id: i64) -> User? {
     if id > 0 {
-        return User { name: \"Ada\".to_string() }
+        return User { name: \"Ada\" }
     }
     return null
 }
 
 fn main() {
-    let found = find(0)?.greet() ?? find(1)?.greet() ?? \"nobody\".to_string()
-    let neither = find(0)?.greet() ?? find(0)?.greet() ?? \"nobody\".to_string()
+    let found = find(0)?.greet() ?? find(1)?.greet() ?? \"nobody\"
+    let neither = find(0)?.greet() ?? find(0)?.greet() ?? \"nobody\"
     println(f\"{found} | {neither}\")
 }
 ",
@@ -806,9 +809,9 @@ impl U {
 }
 
 fn main() {
-    let u = U { name: \"Ada\".to_string() }
-    let v = U { name: \"zzz\".to_string() }
-    println(f\"{u.copy() ?? \\\"none\\\".to_string()}\")
+    let u = U { name: \"Ada\" }
+    let v = U { name: \"zzz\" }
+    println(f\"{u.copy() ?? \\\"none\\\"}\")
     println(f\"{u.rest() ?? \\\"no prefix\\\"}\")
     println(f\"{v.rest() ?? \\\"no prefix\\\"}\")
 }
@@ -836,15 +839,15 @@ fn a_value_of_known_type_still_gets_the_constructor() {
 struct U { name: String }
 
 impl U {
-    fn known(ref self) -> String? { return \"lit\".to_string() }
+    fn known(ref self) -> String? { return \"lit\" }
     fn unknown(ref self) -> String? { return self.name.repeat(1) }
 }
 
-fn free() -> String? { return \"lit\".to_string() }
+fn free() -> String? { return \"lit\" }
 ",
     );
     assert!(
-        rust.contains("Some(\"lit\".to_string())"),
+        rust.contains("Some(String::from(\"lit\"))"),
         "a known type keeps the constructor:\n{rust}"
     );
     assert!(
@@ -854,7 +857,7 @@ fn free() -> String? { return \"lit\".to_string() }
     // Two of the three are `Some(…)`, so the conversion is the exception rather
     // than the rule - the `impl` and the free function alike.
     assert_eq!(
-        rust.matches("Some(\"lit\".to_string())").count(),
+        rust.matches("Some(String::from(\"lit\"))").count(),
         2,
         "{rust}"
     );
@@ -1030,7 +1033,7 @@ fn a_reached_field_that_copies_leaves_the_receiver_where_it_was() {
 struct User { name: String, id: i64 }
 
 fn main() {
-    let user: User? = User { name: \"Ada\".to_string(), id: 7 }
+    let user: User? = User { name: \"Ada\", id: 7 }
     let first = user?.id ?? 0
     let again = user?.id ?? 0
     println(f\"{first} {again}\")
@@ -1057,9 +1060,9 @@ impl User {
 }
 
 fn main() {
-    let u: User? = User { name: \"Ada\".to_string() }
-    let first = u?.greet(\"Hallo\") ?? \"nobody\".to_string()
-    let again = u?.greet(\"Servus\") ?? \"nobody\".to_string()
+    let u: User? = User { name: \"Ada\" }
+    let first = u?.greet(\"Hallo\") ?? \"nobody\"
+    let again = u?.greet(\"Servus\") ?? \"nobody\"
     println(f\"{first} | {again}\")
 }
 ",
@@ -1102,7 +1105,7 @@ fn a_reached_field_that_moves_over_a_place_is_a_view() {
 struct User { name: String, tags: Vec[i64] }
 
 fn main() {
-    let user: User? = User { name: \"Ada\".to_string(), tags: [1, 2, 3] }
+    let user: User? = User { name: \"Ada\", tags: [1, 2, 3] }
     let name = user?.name ?? \"nobody\"
     let many = user?.tags?.len() ?? 0
     println(f\"{name} {many}\")
@@ -1131,12 +1134,12 @@ fn a_reached_field_over_a_temporary_still_takes_it() {
 struct User { name: String }
 
 fn find(id: i64) -> User? {
-    if id > 0 { return User { name: \"Ada\".to_string() } }
+    if id > 0 { return User { name: \"Ada\" } }
     return null
 }
 
 fn main() {
-    let name = find(1)?.name ?? \"nobody\".to_string()
+    let name = find(1)?.name ?? \"nobody\"
     println(f\"{name}\")
 }
 ",
@@ -1163,8 +1166,9 @@ fn a_fallback_that_owns_what_the_reach_views_is_refused() {
 struct User { name: String }
 
 fn main() {
-    let user: User? = User { name: \"Ada\".to_string() }
-    let name = user?.name ?? \"nobody\".to_string()
+    let user: User? = User { name: \"Ada\" }
+    let nobody: String = \"nobody\"
+    let name = user?.name ?? nobody
     println(f\"{name}\")
 }
 ";
@@ -1183,7 +1187,7 @@ fn main() {
 
     // **And the way out is accepted**, which is the half that makes it a way
     // out: a text literal is already a view.
-    let taken = source.replace("\"nobody\".to_string()", "\"nobody\"");
+    let taken = source.replace("?? nobody", "?? \"nobody\"");
     let parsed = parse_to_ast(&taken).expect("the way out parses");
     let own = Ledger::infer(&parsed);
     assert!(

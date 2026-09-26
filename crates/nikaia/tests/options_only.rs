@@ -57,16 +57,16 @@ fn a_mixed_signature_keeps_its_semicolon() {
     let rust = lowered(
         "fn read(path: String; trusted: bool = false) -> String {\n\
              if trusted { return path }\n\
-             return \"no\".to_string()\n\
+             return \"no\"\n\
          }\n\
-         fn main() { println(read(\"in\".to_string(); trusted: true)) }",
+         fn main() { println(read(\"in\"; trusted: true)) }",
     )
     .expect("it parses and lowers");
     assert!(
         rust.contains("fn read(path: String, trusted: bool)"),
         "{rust}"
     );
-    assert!(rust.contains("read(\"in\".to_string(), true)"), "{rust}");
+    assert!(rust.contains("read(String::from(\"in\"), true)"), "{rust}");
 }
 
 /// **The leading `;` in a signature is refused, and the message names the new
@@ -153,12 +153,12 @@ fn a_mixed_call_keeps_its_semicolon() {
     let rust = lowered(
         "fn read(path: String; trusted: bool = false) -> String {\n\
              if trusted { return path }\n\
-             return \"no\".to_string()\n\
+             return \"no\"\n\
          }\n\
-         fn main() { println(read(\"in\".to_string(); trusted: true)) }",
+         fn main() { println(read(\"in\"; trusted: true)) }",
     )
     .expect("it lowers");
-    assert!(rust.contains("read(\"in\".to_string(), true)"), "{rust}");
+    assert!(rust.contains("read(String::from(\"in\"), true)"), "{rust}");
 }
 
 /// **A method call takes the form too**, because one rule answers both: the

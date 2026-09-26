@@ -20,7 +20,7 @@
 // That is not soundness and the record says so (ADR-193 D3). What moved is who
 // has to be honest. `docs/foreign-runtime.md` §8 is the measurement.
 fn main() {
-    let handle = hyper_shim::local_handle("not Send".to_string())
+    let handle = hyper_shim::local_handle("not Send")
     let crossed = hyper_shim::across_a_thread_unchecked(handle)
     println(f"crossed: {crossed}")
 }

@@ -97,8 +97,8 @@ fn the_shorthand_is_the_struct_literals() {
     let source = "struct S { name: String, n: i64 }\n\
          \n\
          fn main() {\n\
-         \x20   let s = S { name: \"a\".to_string(), n: 1 }\n\
-         \x20   let name = \"b\".to_string()\n\
+         \x20   let s = S { name: \"a\", n: 1 }\n\
+         \x20   let name: String = \"b\"\n\
          \x20   let t = s with { name }\n\
          \x20   println(f\"{t.name} {t.n}\")\n\
          }";

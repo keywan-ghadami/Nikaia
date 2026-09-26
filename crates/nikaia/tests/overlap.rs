@@ -69,9 +69,9 @@ const THREE_READS: &str = "use std::fs\n\
      \n\
      fn main() {\n\
      \x20   let r = overlap {\n\
-     \x20       fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
-     \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
-     \x20       fs::read_to_string(\"drei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+     \x20       fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\" }\n\
+     \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
+     \x20       fs::read_to_string(\"drei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
      \x20   }\n\
      \x20   println(f\"{r.0.len()} {r.1.len()} {r.2.len()}\")\n\
      }";
@@ -109,8 +109,8 @@ fn a_branch_that_cannot_pause_is_started_last_and_answered_in_place() {
          fn main() {\n\
          \x20   let r = overlap {\n\
          \x20       expensive(10)\n\
-         \x20       fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
-         \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+         \x20       fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\" }\n\
+         \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
          \x20   }\n\
          \x20   println(f\"{r.0} {r.1.len()} {r.2.len()}\")\n\
          }";
@@ -210,8 +210,8 @@ fn a_branch_that_binds_a_name_is_refused() {
         "use std::fs\n\
          fn main() {\n\
          \x20   let r = overlap {\n\
-         \x20       let x = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
-         \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+         \x20       let x = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\" }\n\
+         \x20       fs::read_to_string(\"zwei.txt\", fs::Root::Anywhere) catch { \"\" }\n\
          \x20   }\n\
          \x20   println(f\"{r.1.len()}\")\n\
          }",

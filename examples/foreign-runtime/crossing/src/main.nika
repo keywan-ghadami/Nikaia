@@ -27,7 +27,7 @@
 // description says two things no signature could: `crosses = false` on
 // `LocalHandle` and `threads = true` on the function (ADR-193 D1, D2).
 fn main() {
-    let handle = hyper_shim::local_handle("not Send".to_string())
+    let handle = hyper_shim::local_handle("not Send")
     let crossed = hyper_shim::across_a_thread(handle)
     println(f"crossed: {crossed}")
 }

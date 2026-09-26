@@ -191,7 +191,7 @@ fn two_tasks_are_in_flight_before_either_finishes() {
 fn data_a_task_took_and_the_program_used_again_is_refused() {
     let found = findings(
         "fn main() {\n\
-         \x20   let message = \"Hello\".to_string()\n\
+         \x20   let message: String = \"Hello\"\n\
          \x20   spawn fn { println(message) }\n\
          \x20   println(message)\n\
          }",
@@ -222,7 +222,7 @@ fn data_a_task_took_and_the_program_used_again_is_refused() {
 #[test]
 fn a_copy_a_clone_and_a_reassignment_are_not_refused() {
     let source = "fn main() {\n\
-         \x20   let message = \"Hello\".to_string()\n\
+         \x20   let message = \"Hello\"\n\
          \x20   let copy = message.clone()\n\
          \x20   spawn fn { println(copy) }\n\
          \x20   println(message)\n\
@@ -235,9 +235,9 @@ fn a_copy_a_clone_and_a_reassignment_are_not_refused() {
          \x20   spawn fn { println(word) }\n\
          \x20   println(word)\n\
          \n\
-         \x20   let mut again = \"eins\".to_string()\n\
+         \x20   let mut again = \"eins\"\n\
          \x20   spawn fn { println(again) }\n\
-         \x20   again = \"zwei\".to_string()\n\
+         \x20   again = \"zwei\"\n\
          \x20   println(again)\n\
          }";
     assert!(findings(source).is_empty(), "{:?}", findings(source));
@@ -316,7 +316,7 @@ fn a_task_is_an_async_block_and_never_a_closure() {
     let rust = lower(
         "use std::fs\n\
          fn main() {\n\
-         \x20   spawn fn { fs::read_to_string(\"x\", fs::Root::Anywhere) catch { \"\".to_string() } }\n\
+         \x20   spawn fn { fs::read_to_string(\"x\", fs::Root::Anywhere) catch { \"\" } }\n\
          }",
     );
     assert!(rust.contains("TaskHandle::start(async move"), "{rust}");
@@ -360,7 +360,7 @@ fn a_task_that_never_finishes_is_abandoned_at_the_deadline() {
          \n\
          fn forever() {\n\
          \x20   while true {\n\
-         \x20       let text = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\".to_string() }\n\
+         \x20       let text = fs::read_to_string(\"eins.txt\", fs::Root::Anywhere) catch { \"\" }\n\
          \x20       if text.len() < 0 { return }\n\
          \x20   }\n\
          }\n\
