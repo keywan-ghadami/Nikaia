@@ -383,7 +383,14 @@ fn each_representation_is_the_one_the_plan_chose() {
     assert!(task.contains("settings.get()"), "{task}");
 
     let cache = lowered(CACHE, Build::default());
-    assert!(cache.contains("nikaia_std::tether::hold("), "{cache}");
+    assert!(
+        cache.contains(").hold([std::sync::Arc::clone(&__keep_"),
+        "{cache}"
+    );
+    assert!(cache.contains(".put_viewed("), "{cache}");
+    // **No `unsafe` for a held view** (ADR-221 D1): the keep finds the view
+    // again by address, so what the plan claims is checked, not trusted.
+    assert!(!cache.contains("unsafe"), "{cache}");
 }
 
 /// **Nothing is kept that needs no keep**: a buffer whose views stay in its
@@ -406,4 +413,231 @@ fn a_buffer_nothing_outlives_is_left_alone() {
     let rust = lowered(source, Build::default());
     assert!(!rust.contains("nikaia_std::tether"), "{rust}");
     assert_eq!(ran("left-alone", source, Build::default()), "59 63");
+}
+
+// ---------------------------------------------------------------------------
+// A container of structs holding views that drops entries in a loop
+// ([ADR-221](../../../docs/specification/adr/adr-221.md))
+// ---------------------------------------------------------------------------
+
+/// The program `NK2304` refused until ADR-221: records of the lines of files
+/// read in a loop, kept in a list that is pruned as it goes, and read back by
+/// index, by a `for`, and through a method.
+const RECORDS: &str = r##"use std::fs
+
+struct Record {
+    name: ref String,
+    size: i64,
+}
+
+impl Record {
+    fn describe(ref self) -> String {
+        return f"{self.name}:{self.size}"
+    }
+}
+
+fn main() throws {
+    let mut kept: Vec[Record] = Vec()
+    let mut round = 0
+    while round < 200 {
+        for path in ["app.conf", "extra.conf"] {
+            let text = fs::read_to_string(path, fs::Root::Anywhere)
+            for line in text.lines() {
+                let name = line.trim()
+                kept.push(Record { name: name, size: line.len() as i64 })
+            }
+            while kept.len() > 3 { kept.remove(0) }
+        }
+        round = round + 1
+    }
+    for r in kept { println(r.describe()) }
+    println(f"{kept.len()} {kept[0].name} {kept[2].describe()}")
+    println(kept.last()?.name ?? "-")
+}
+"##;
+
+#[test]
+fn a_list_of_structs_of_views_that_drops_entries_is_held() {
+    runs(
+        "records",
+        RECORDS,
+        "include = extra.conf:20\nmode = fast:11\nhost = override.org:19\n\
+         3 include = extra.conf host = override.org:19\nhost = override.org",
+    );
+    let rust = lowered(RECORDS, Build::default());
+    assert!(
+        rust.contains("Vec<nikaia_std::tether::Holding<__Views_Record, 1>>"),
+        "{rust}"
+    );
+    assert!(rust.contains("enum __Views_Record {}"), "{rust}");
+    assert!(rust.contains(".map(|held| held.get())"), "{rust}");
+    assert!(!rust.contains("unsafe"), "{rust}");
+}
+
+/// **A value whose views point into two buffers carries a handle on each**
+/// (ADR-221 D2), and neither buffer is copied.
+const PAIRS: &str = r##"use std::fs
+
+struct Pair {
+    key: ref String,
+    value: ref String,
+}
+
+fn main() throws {
+    let mut pairs: Vec[Pair] = Vec()
+    let mut round = 0
+    while round < 100 {
+        let a = fs::read_to_string("app.conf", fs::Root::Anywhere)
+        let b = fs::read_to_string("extra.conf", fs::Root::Anywhere)
+        pairs.push(Pair { key: a.trim(), value: b.trim() })
+        if pairs.len() > 2 { pairs.remove(0) }
+        round = round + 1
+    }
+    println(f"{pairs.len()} {pairs[0].key.len()} {pairs[1].value.len()}")
+}
+"##;
+
+#[test]
+fn a_struct_of_views_into_two_buffers_holds_both() {
+    runs("pairs", PAIRS, "2 62 31");
+    let rust = lowered(PAIRS, Build::default());
+    assert!(rust.contains("Holding<__Views_Pair, 2>"), "{rust}");
+}
+
+/// **A view of something the element does not hold is carried as a copy**
+/// (ADR-221 D2): a literal in a view field points into no buffer, and the
+/// keep takes a copy of it rather than a reference it cannot vouch for.
+const LITERAL: &str = r##"use std::fs
+
+struct Note {
+    key: ref String,
+    tag: ref String,
+}
+
+fn main() throws {
+    let mut notes: Vec[Note] = Vec()
+    for path in ["app.conf", "extra.conf", "app.conf"] {
+        let text = fs::read_to_string(path, fs::Root::Anywhere)
+        for line in text.lines() {
+            let tag = if line.starts_with("#") { "comment" } else { "setting" }
+            notes.push(Note { key: line, tag: tag })
+        }
+        if notes.len() > 4 { notes.clear() }
+    }
+    println(f"{notes.len()} {notes[0].tag} {notes[1].tag}")
+}
+"##;
+
+#[test]
+fn a_view_of_a_literal_in_a_held_struct_is_carried_as_a_copy() {
+    runs("literal", LITERAL, "4 comment setting");
+}
+
+/// **Dropping entries after the loop is not dropping them while it goes on**:
+/// the frame's keep holds the buffers exactly as long, no element carries a
+/// handle, and the program is not refused (the case ADR-221 D5 fixes).
+const CLEARED_AFTER: &str = r##"use std::fs
+
+struct Record {
+    name: ref String,
+    size: i64,
+}
+
+fn main() throws {
+    let mut kept: Vec[Record] = Vec()
+    for path in ["app.conf", "extra.conf"] {
+        let text = fs::read_to_string(path, fs::Root::Anywhere)
+        kept.push(Record { name: text.trim(), size: text.len() as i64 })
+    }
+    println(f"{kept.len()} {kept[1].size}")
+    kept.clear()
+    println(f"{kept.len()}")
+}
+"##;
+
+#[test]
+fn entries_dropped_only_after_the_loop_need_no_handle() {
+    runs("cleared-after", CLEARED_AFTER, "2 32\n0");
+    let rust = lowered(CLEARED_AFTER, Build::default());
+    assert!(rust.contains("let __keep_frame"), "{rust}");
+    assert!(!rust.contains("Holding"), "{rust}");
+}
+
+/// **A map of structs of views is still refused, by name** (ADR-221 §4): a
+/// map's reads hand back a value that may be absent, and that is not yet
+/// read through the handle.
+#[test]
+fn a_map_of_structs_of_views_that_drops_entries_is_refused_by_name() {
+    let source = r##"use std::fs
+use std::collections
+
+struct Record {
+    name: ref String,
+}
+
+fn main() throws {
+    let mut by_path: collections::HashMap[String, Record] = collections::HashMap()
+    for path in ["app.conf", "extra.conf"] {
+        let text = fs::read_to_string(path, fs::Root::Anywhere)
+        by_path.insert(path.clone(), Record { name: text.trim() })
+        if by_path.len() > 1 { by_path.clear() }
+    }
+    println(f"{by_path.len()}")
+}
+"##;
+    let found = findings(source);
+    assert!(
+        found
+            .iter()
+            .any(|f| f.code == "NK2304" && f.message.contains("is not a list")),
+        "{found:#?}"
+    );
+}
+
+/// **An element taken out stays held, and a field is written through the
+/// handle** (ADR-221 D3, D4): `old` carries its buffer's keep out of the list,
+/// a number is stored as it is, and a view made outside the element is found
+/// again in its keeps - or, here, is a literal and is copied into them.
+const TAKEN_AND_WRITTEN: &str = r##"use std::fs
+
+struct Record {
+    name: ref String,
+    size: i64,
+}
+
+fn main() throws {
+    let mut kept: Vec[Record] = Vec()
+    let mut gone = 0
+    for path in ["app.conf", "extra.conf", "app.conf"] {
+        let text = fs::read_to_string(path, fs::Root::Anywhere)
+        kept.push(Record { name: text.trim(), size: text.len() as i64 })
+        if kept.len() > 2 {
+            let old = kept.remove(0)
+            gone = gone + old.size
+            println(old.name.len())
+        }
+    }
+    kept[0].size = 7
+    kept[1].size += 1
+    kept[1].name = "renamed"
+    println(f"{gone} {kept[0].size} {kept[1].size} {kept[1].name}")
+}
+"##;
+
+#[test]
+fn an_element_taken_out_stays_held_and_a_field_is_written_through_the_handle() {
+    runs(
+        "taken-and-written",
+        TAKEN_AND_WRITTEN,
+        "62\n63 7 64 renamed",
+    );
+    let rust = lowered(TAKEN_AND_WRITTEN, Build::default());
+    assert!(rust.contains("old.get()"), "{rust}");
+    // A number is stored as it is; a view is found again in the keeps.
+    assert!(rust.contains(".with_mut(|held, _| held.size = "), "{rust}");
+    assert!(
+        rust.contains(".with_mut(|held, keeps| held.name = "),
+        "{rust}"
+    );
+    assert!(!rust.contains("unsafe"), "{rust}");
 }

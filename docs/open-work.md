@@ -1139,11 +1139,12 @@ with two ways to say one thing.
 
 [ADR-218](specification/adr/adr-218.md) D4's last step. `nikaia-std` holds no
 `unsafe` (`#![forbid(unsafe_code)]`), but generated programs still call
-`tether::hold` and `tether::forever` inside `unsafe { … }`
-(`crates/nikaia/src/emit/mod.rs`: the per-view handle, and a task's keep). The
-lowering moves onto an API that takes the handle and builds the view inside
-it, as `tether::Holding::new` does. Evidence: `grep -n 'unsafe {{' 
-crates/nikaia/src/emit/mod.rs`.
+`tether::forever` inside `unsafe { … }` for a task's keep
+(`crates/nikaia/src/emit/mod.rs`, ADR-209 D3). **Half done**: the per-view
+handle is `Held::new` since [ADR-221](specification/adr/adr-221.md) D1, which
+finds the view in the keep by address instead of trusting the caller. The
+task's packed values move onto the same shape — `Holding` over the task's
+keep. Evidence: `grep -n 'unsafe {{' crates/nikaia/src/emit/mod.rs`.
 
 ## 3. Upkeep
 

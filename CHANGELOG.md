@@ -4,6 +4,26 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.202] — 2026-09-26
+
+**A list of structs of views that drops entries is held, one handle per
+buffer** — [ADR-221](docs/specification/adr/adr-221.md), the owner's decision
+on the last open question (option 3).
+
+The records program `NK2304` refused compiles and runs: each element is a
+`tether::Holding` beside the keep of every buffer it points into, the struct is
+lowered once, and the compiler writes `Views`, `Rebase` and `Hold` for it. An
+element is read through `get` (brackets, `for`, `iter`, `first`, `last`, `get`)
+and a field written through `with_mut`; an element taken out with `remove` stays
+held. A view is carried in by address — found in its keep, or copied where it
+points into none, such as a literal — so the plan is checked rather than
+trusted, and `tether::hold`, the one `unsafe fn` the emitted code called for a
+held view, is gone. Two defects of ADR-209 D4 on the way: entries dropped only
+after the loop no longer make a container a pruning one (it was refused for a
+struct and paid a handle per view for text), and a removal bound by a `let` now
+counts. A map of structs of views, a struct with type parameters and a view of
+something other than text stay `NK2304`, by name. `open-decisions.md` is empty.
+
 ## [0.0.201] — 2026-09-26
 
 **Edition 2024, and no `.await` point needs a change** —

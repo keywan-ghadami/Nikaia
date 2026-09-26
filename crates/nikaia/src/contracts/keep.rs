@@ -173,12 +173,27 @@ pub struct Plan {
     /// Bindings a task captures whose views need the task's keep (D3): the
     /// name, and the statement that binds it.
     pub tethered: BTreeMap<String, usize>,
-    /// Locals whose text views are held one handle per element (D4).
+    /// Locals whose views are held one handle per element (D4): a view of
+    /// text as a `Held`, a struct of views as a `Holding`
+    /// ([ADR-221](../../../../docs/specification/adr/adr-221.md) D1).
     pub element_keepers: BTreeSet<String>,
+    /// The element keepers whose elements are **structs** of views, read
+    /// through the handle rather than through `Deref` (ADR-221 D4).
+    pub struct_keepers: BTreeSet<String>,
+    /// How many keeps each element of a keeper carries: the most buffers any
+    /// one value put into it points into (ADR-221 D2).
+    pub widths: BTreeMap<String, usize>,
+    /// The struct each such keeper holds, by the keeper's name: what a write
+    /// through its handle asks about a field (ADR-221 D4).
+    pub keeper_structs: BTreeMap<String, String>,
+    /// Locals bound to an element **taken out** of such a keeper -
+    /// `let old = kept.remove(0)` - which is still held and read through its
+    /// handle (ADR-221 D3).
+    pub held_locals: BTreeSet<String>,
     /// Statements that put a view into such a local: by statement and local,
-    /// which argument of the call carries it and the buffer statement whose
-    /// keep it is held with.
-    pub holds: BTreeMap<(usize, String), BTreeMap<usize, usize>>,
+    /// which argument of the call carries it and the buffer statements whose
+    /// keeps it is held with.
+    pub holds: BTreeMap<(usize, String), BTreeMap<usize, BTreeSet<usize>>>,
     /// Every place a view leaves its scope, for the report and the refusals.
     pub escapes: Vec<(Source, Escape)>,
     /// What cannot be lowered, said in this language's words.
@@ -284,9 +299,12 @@ pub fn plans(parsed: &Parsed, ledger: &Ledger, library: &Ledger) -> Vec<Plan> {
     out
 }
 
-/// What a whole unit says about views: which types hold one.
+/// What a whole unit says about views: which types hold one, and what the
+/// structs among them are made of.
 struct Context {
     borrowing: BTreeSet<String>,
+    /// Every struct: whether it has type parameters, and its fields.
+    structs: BTreeMap<String, (bool, Vec<(String, Type)>)>,
 }
 
 impl Context {
@@ -295,7 +313,82 @@ impl Context {
             .into_iter()
             .map(|s| parsed.text(s).to_string())
             .collect();
-        Context { borrowing }
+        let structs = parsed
+            .program
+            .items
+            .iter()
+            .filter_map(|item| match &item.node {
+                Item::Struct {
+                    name,
+                    generics,
+                    fields,
+                    ..
+                } => Some((
+                    parsed.text(*name).to_string(),
+                    (
+                        !generics.is_empty(),
+                        fields
+                            .iter()
+                            .map(|f| (parsed.text(f.name).to_string(), f.ty.clone()))
+                            .collect(),
+                    ),
+                )),
+                _ => None,
+            })
+            .collect();
+        Context { borrowing, structs }
+    }
+
+    /// Why a value of this type **cannot** be carried into a handle, or
+    /// `None` where it can (ADR-221 D3): every view in it is text, or a list or
+    /// a nullable of one, or a struct made only of such fields. That is what
+    /// `tether::Rebase` is written for, and the one property `Holding` needs
+    /// beyond it - covariance - holds for every such struct.
+    fn not_held(&self, parsed: &Parsed, ty: &Type, seen: &mut Vec<String>) -> Option<String> {
+        let name = parsed.text(ty.name);
+        if ty.is_view {
+            return match name == "String" && ty.generics.is_empty() {
+                true => None,
+                false => Some(format!("a view of `{name}` rather than of text")),
+            };
+        }
+        if ty.is_tuple && self.carries(parsed, ty) {
+            return Some("a tuple of views".to_string());
+        }
+        if self.structs.contains_key(name) && self.borrowing.contains(name) {
+            return self.struct_not_held(parsed, name, seen);
+        }
+        if !self.carries(parsed, ty) {
+            return None;
+        }
+        match name {
+            "Vec" | "List" => ty
+                .generics
+                .iter()
+                .find_map(|g| self.not_held(parsed, g, seen)),
+            _ => Some(format!("a `{name}` of views")),
+        }
+    }
+
+    /// [`Context::not_held`] for a struct, by its name.
+    fn struct_not_held(
+        &self,
+        parsed: &Parsed,
+        name: &str,
+        seen: &mut Vec<String>,
+    ) -> Option<String> {
+        let (generic, fields) = self.structs.get(name)?;
+        if *generic {
+            return Some(format!("`{name}`, a struct of views with type parameters"));
+        }
+        if seen.iter().any(|s| s == name) {
+            return None;
+        }
+        seen.push(name.to_string());
+        fields.iter().find_map(|(field, ty)| {
+            self.not_held(parsed, ty, seen)
+                .map(|why| format!("`{name}.{field}`, which holds {why}"))
+        })
     }
 
     /// Whether a written type holds a view: it is one, or names a type that
@@ -339,11 +432,21 @@ struct Walk<'a> {
     path: Vec<(usize, bool)>,
     sources: BTreeMap<Id, (Source, Vec<(usize, bool)>)>,
     escapes: BTreeSet<(Id, Escape)>,
-    /// Locals something removes entries from, or assigns again.
-    sheds: BTreeSet<String>,
+    /// Locals something removes entries from, or assigns again, with the
+    /// blocks each removal stands in: a removal only matters to a buffer read
+    /// in a loop the removal is inside of (D4).
+    sheds: BTreeMap<String, Vec<Vec<(usize, bool)>>>,
     /// Statements that put a value with origins into a local:
     /// `(statement, local) -> argument -> origins`.
     puts_into: BTreeMap<(usize, String), BTreeMap<usize, BTreeSet<Id>>>,
+    /// Locals something puts a **struct** of views into, by its name - read
+    /// off the value where the local's type is not written.
+    struct_puts: BTreeMap<String, String>,
+    /// Locals bound to what a removal hands back, by the local it was taken
+    /// from.
+    taken: BTreeMap<String, String>,
+    /// The structs that hold a view, from the unit.
+    borrowing: &'a BTreeSet<String>,
     /// Task captures: `(binding, its let statement)`.
     captured: BTreeMap<String, (usize, BTreeSet<Id>)>,
     /// The statement being walked.
@@ -423,8 +526,11 @@ fn plan(
         path: Vec::new(),
         sources: BTreeMap::new(),
         escapes: BTreeSet::new(),
-        sheds: BTreeSet::new(),
+        sheds: BTreeMap::new(),
         puts_into: BTreeMap::new(),
+        struct_puts: BTreeMap::new(),
+        taken: BTreeMap::new(),
+        borrowing: &context.borrowing,
         captured: BTreeMap::new(),
         statement: 0,
         last_seen: BTreeMap::new(),
@@ -587,6 +693,13 @@ impl Walk<'_> {
                     },
                     _ => Buffer::None,
                 };
+                // **An element taken out of a keeper** stays what it was in
+                // there (ADR-221 D3).
+                if let [name] = names.as_slice()
+                    && let Some(from) = taken_from(self.parsed, value)
+                {
+                    self.taken.insert(self.parsed.text(*name).to_string(), from);
+                }
                 // A second name for the buffer is the buffer.
                 let renames_a_buffer = self.is_the_buffer(value);
                 let is_buffer = matches!(made, Buffer::Named(_)) || renames_a_buffer;
@@ -618,7 +731,10 @@ impl Walk<'_> {
                 let origins = self.origins(value);
                 if let Some(root) = root_of(self.parsed, target) {
                     if op.is_none() && matches!(target, Expr::Variable(_)) {
-                        self.sheds.insert(root.clone());
+                        self.sheds
+                            .entry(root.clone())
+                            .or_default()
+                            .push(self.path.clone());
                     }
                     self.flow_into(&root, origins);
                 }
@@ -692,7 +808,10 @@ impl Walk<'_> {
                 let method_name = self.parsed.text(*method).to_string();
                 if let Some(root) = root_of(self.parsed, receiver) {
                     if SHEDS.contains(&method_name.as_str()) {
-                        self.sheds.insert(root.clone());
+                        self.sheds
+                            .entry(root.clone())
+                            .or_default()
+                            .push(self.path.clone());
                     }
                     if KEEPS.contains(&method_name.as_str()) {
                         let mut origins = BTreeSet::new();
@@ -708,6 +827,9 @@ impl Walk<'_> {
                                 .entry(at)
                                 .or_default()
                                 .extend(of.iter().cloned());
+                            if let Some(name) = self.struct_of(arg) {
+                                self.struct_puts.insert(root.clone(), name);
+                            }
                             origins.extend(of);
                         }
                         self.flow_into(&root, origins);
@@ -720,6 +842,21 @@ impl Walk<'_> {
                 let _ = self.origins(expr);
             }
         }
+    }
+
+    /// The struct of views an expression is a value of, where this walk can
+    /// see it without types: a literal of one, or a name whose type was
+    /// written as one.
+    fn struct_of(&self, expr: &Expr) -> Option<String> {
+        let name = match expr {
+            Expr::StructLit { name, .. } => self.parsed.text(*name).to_string(),
+            Expr::Variable(name) => self
+                .local(self.parsed.text(*name))
+                .and_then(|l| l.ty.as_ref())
+                .map(|ty| self.parsed.text(ty.name).to_string())?,
+            _ => return None,
+        };
+        self.borrowing.contains(&name).then_some(name)
     }
 
     /// Whether an expression **is** a buffer rather than a view of one: a
@@ -838,6 +975,13 @@ impl Walk<'_> {
                 ..
             } => {
                 let name = self.parsed.text(*method).to_string();
+                // **A removal is a removal wherever it stands** - `let old =
+                // kept.remove(0)` drops the entry as surely as a statement does.
+                if SHEDS.contains(&name.as_str())
+                    && let Some(root) = root_of(self.parsed, receiver)
+                {
+                    self.sheds.entry(root).or_default().push(self.path.clone());
+                }
                 let mut out = BTreeSet::new();
                 if let Some(callee) = self.keeping_method(receiver, &name) {
                     out.extend(self.call_source(&callee));
@@ -1225,15 +1369,22 @@ fn decide(
             .collect();
 
         // **A keeper that drops entries across a loop** (D4): the buffer is
-        // read inside a loop the keeper is declared outside of.
+        // read inside a loop the keeper is declared outside of, and the entries
+        // are dropped **inside that same loop** - while it goes on reading.
+        // Dropped only after the loop, or before it, nothing is freed early by
+        // a handle per view: the frame's keep holds the buffers exactly as
+        // long, and costs nothing per view.
         let shedding: Vec<&String> = outer
             .iter()
             .copied()
-            .filter(|r| walk.sheds.contains(*r))
             .filter(|r| {
                 let declared = walk_local_path(&walk, r);
+                let Some(sheds) = walk.sheds.get(*r) else {
+                    return false;
+                };
                 path.iter()
-                    .any(|(at, looping)| *looping && !declared.contains(&(*at, true)))
+                    .filter(|(at, looping)| *looping && !declared.contains(&(*at, true)))
+                    .any(|around| sheds.iter().any(|shed| shed.contains(around)))
             })
             .collect();
 
@@ -1286,7 +1437,9 @@ fn decide(
                             plan.holds
                                 .entry((*statement, into.clone()))
                                 .or_default()
-                                .insert(*arg, source.at());
+                                .entry(*arg)
+                                .or_default()
+                                .insert(source.at());
                         }
                     }
                 }
@@ -1306,6 +1459,35 @@ fn decide(
                     plan.tethered.insert(name.clone(), *at);
                 }
             }
+        }
+    }
+
+    // **One keep per buffer, as many as the widest value needs** (ADR-221
+    // D2): a value whose views point into two buffers carries a handle on
+    // each, and every element of one keeper carries the same number, since
+    // they are one type.
+    for ((_, keeper), by_arg) in &plan.holds {
+        let widest = by_arg.values().map(BTreeSet::len).max().unwrap_or(1);
+        let width = plan.widths.entry(keeper.clone()).or_insert(1);
+        *width = (*width).max(widest);
+    }
+    // **Which keepers hold structs** (ADR-221 D4): read through the handle.
+    for keeper in &plan.element_keepers {
+        let written = walk_local_type(&walk, keeper)
+            .is_some_and(|ty| names_a_struct_of_views(parsed, &ty, context));
+        if written || walk.struct_puts.contains_key(keeper) {
+            plan.struct_keepers.insert(keeper.clone());
+            let named = walk.struct_puts.get(keeper).cloned().or_else(|| {
+                walk_local_type(&walk, keeper).and_then(|ty| struct_in(parsed, &ty, context))
+            });
+            if let Some(name) = named {
+                plan.keeper_structs.insert(keeper.clone(), name);
+            }
+        }
+    }
+    for (local, from) in &walk.taken {
+        if plan.struct_keepers.contains(from) {
+            plan.held_locals.insert(local.clone());
         }
     }
 
@@ -1330,26 +1512,85 @@ fn walk_refusals(
     context: &Context,
 ) -> Vec<crate::check::Finding> {
     let mut out = Vec::new();
-    // D4 holds **text**: a container of `ref String` becomes a container of
-    // held text. A keeper whose element is a struct would need its every
-    // reader rewritten, and that is said rather than guessed at.
+    // D4 holds text one view at a time, and ADR-221 holds a **struct** of
+    // views one handle per buffer. What is left is a value `tether::Rebase`
+    // has no shape for, and a struct in a container whose reads are not a
+    // sequence's - each said by name rather than handed to `rustc`.
     for keeper in &plan.element_keepers {
-        // **An unwritten type is not asked for**: the language below reads
-        // the held views off what goes in, as it reads any other element type.
-        let Some(ty) = walk_local_type(walk, keeper) else {
-            continue;
-        };
-        if !only_text_views(parsed, &ty, context) {
+        let written = walk_local_type(walk, keeper)
+            .and_then(|ty| context.not_held(parsed, &ty, &mut Vec::new()));
+        let put = walk
+            .struct_puts
+            .get(keeper)
+            .and_then(|name| context.struct_not_held(parsed, name, &mut Vec::new()));
+        for why in written.into_iter().chain(put) {
+            {
+                out.push(element_refusal(
+                    keeper,
+                    &format!("it holds {why}, which is not held one handle per buffer"),
+                    "keep text or structs of text views in it, or copy what it keeps with \
+                     `.clone()`",
+                    plan,
+                    walk,
+                ));
+            }
+        }
+        let sequence = walk_local_type(walk, keeper)
+            .is_none_or(|ty| matches!(parsed.text(ty.name), "Vec" | "List" | "VecDeque" | "Deque"));
+        if plan.struct_keepers.contains(keeper) && !sequence {
             out.push(element_refusal(
                 keeper,
-                "it holds views inside a struct, and only text is held one view at a time",
-                "keep text (`ref String`) in it, or copy what it keeps with `.clone()`",
+                "it holds structs of views and is not a list, and only a list's elements \
+                 are read through their handle yet",
+                "keep the structs in a list, or copy what it keeps with `.clone()`",
                 plan,
                 walk,
             ));
         }
     }
     out
+}
+
+/// The struct of views a written type names, outermost first.
+fn struct_in(parsed: &Parsed, ty: &Type, context: &Context) -> Option<String> {
+    let name = parsed.text(ty.name);
+    if context.borrowing.contains(name) {
+        return Some(name.to_string());
+    }
+    ty.generics
+        .iter()
+        .find_map(|g| struct_in(parsed, g, context))
+}
+
+/// The local a removal takes an element out of: `kept.remove(0)`,
+/// `kept.pop()`, and the same under `?` or a `catch`.
+fn taken_from(parsed: &Parsed, value: &Expr) -> Option<String> {
+    match value {
+        Expr::MethodCall {
+            receiver, method, ..
+        } if TAKES.contains(&parsed.text(*method)) => root_of(parsed, receiver),
+        Expr::Try(inner) | Expr::TryCatch { expr: inner, .. } => taken_from(parsed, inner),
+        _ => None,
+    }
+}
+
+/// Methods that hand back the element they remove.
+const TAKES: &[&str] = &[
+    "remove",
+    "pop",
+    "pop_front",
+    "pop_back",
+    "swap_remove",
+    "take",
+];
+
+/// Whether a written type names a struct of views anywhere in it.
+fn names_a_struct_of_views(parsed: &Parsed, ty: &Type, context: &Context) -> bool {
+    context.borrowing.contains(parsed.text(ty.name))
+        || ty
+            .generics
+            .iter()
+            .any(|g| names_a_struct_of_views(parsed, g, context))
 }
 
 fn element_refusal(
@@ -1400,16 +1641,6 @@ fn capitalised(text: &str) -> String {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
     }
-}
-
-/// Whether every view in a type is bare text, the one shape D4 holds.
-fn only_text_views(parsed: &Parsed, ty: &Type, context: &Context) -> bool {
-    if context.borrowing.contains(parsed.text(ty.name)) {
-        return false;
-    }
-    ty.generics
-        .iter()
-        .all(|g| only_text_views(parsed, g, context))
 }
 
 fn walk_local_path(walk: &Walk<'_>, name: &str) -> Vec<(usize, bool)> {

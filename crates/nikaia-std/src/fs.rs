@@ -153,6 +153,15 @@ impl AsRef<str> for Mapped {
     }
 }
 
+/// A mapping is a buffer views of text are cut from, so a view of it kept by a
+/// container that drops entries is found in it again (ADR-221 D2).
+impl crate::tether::Viewed for Mapped {
+    fn bytes(&self) -> &[u8] {
+        let text: &str = self;
+        text.as_bytes()
+    }
+}
+
 /// Map a file and make its contents addressable as text.
 ///
 /// Fails as the file system does, and additionally when the file is not

@@ -23,6 +23,13 @@ pub struct Bytes {
     buffer: Arc<[u8]>,
 }
 
+/// Bytes are a buffer a view of text may be cut from (ADR-221 D2).
+impl crate::tether::Viewed for Bytes {
+    fn bytes(&self) -> &[u8] {
+        &self.buffer
+    }
+}
+
 impl Bytes {
     /// No bytes at all.
     pub fn new() -> Bytes {

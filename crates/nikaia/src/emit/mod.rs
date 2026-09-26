@@ -1137,12 +1137,14 @@ struct Emitter<'p> {
     /// The handle types a task's tethered values are packed in (D3), written
     /// once at the end of the unit.
     wrappers: std::cell::RefCell<Vec<String>>,
-    /// Writing a keeper whose text views are held one by one (D4): `ref
-    /// String` is `Held` while this is set.
-    holding: std::cell::RefCell<bool>,
+    /// Writing a keeper whose views are held one handle per buffer (D4): `ref
+    /// String` is `Held` while this is set, and a struct of views a `Holding`
+    /// with this many keeps ([ADR-221](../../docs/specification/adr/adr-221.md)).
+    holding: std::cell::RefCell<Option<usize>>,
     /// The arguments of the call being written that are held (D4): argument
-    /// position and the buffer statement whose keep holds it.
-    hold_args: std::cell::RefCell<Option<std::collections::BTreeMap<usize, usize>>>,
+    /// position and the buffer statements whose keeps hold it, one per keep
+    /// its element carries.
+    hold_args: std::cell::RefCell<Option<std::collections::BTreeMap<usize, Vec<usize>>>>,
     /// The function being written, for the keep plan: a lambda's body is
     /// written with a flow of its own (`Flow::PLAIN`), and its statements are
     /// still the function's to the plan that walked them.
@@ -2198,7 +2200,7 @@ impl<'p> Emitter<'p> {
             view_fallbacks: propagation.view_fallbacks,
             hole: std::cell::RefCell::new(None),
             wrappers: std::cell::RefCell::new(Vec::new()),
-            holding: std::cell::RefCell::new(false),
+            holding: std::cell::RefCell::new(None),
             hold_args: std::cell::RefCell::new(None),
             keep_function: std::cell::RefCell::new(String::new()),
             comptime_values: propagation.comptime_values,
@@ -4900,7 +4902,7 @@ impl<'p> Emitter<'p> {
         if ty.is_view && self.text(ty.name) == "String" && ty.generics.is_empty() {
             // **Held, where the keeper drops entries** (ADR-209 D4): a view
             // that carries its own handle on the buffer it points into.
-            if *self.holding.borrow() {
+            if self.holding.borrow().is_some() {
                 return "nikaia_std::tether::Held".to_string();
             }
             out.push_str("str");
@@ -4938,6 +4940,19 @@ impl<'p> Emitter<'p> {
             out.push_str(&format!(
                 "[{}; {n}]",
                 self.ty_counted(element, lifetimes, count)
+            ));
+            return out;
+        }
+        // **A struct of views in a keeper that drops entries is held**
+        // ([ADR-221](../../docs/specification/adr/adr-221.md) D1): beside a
+        // handle on each buffer it points into, and read through them.
+        if let Some(width) = *self.holding.borrow()
+            && self.borrowing.contains(&ty.name)
+            && ty.generics.is_empty()
+        {
+            out.push_str(&format!(
+                "nikaia_std::tether::Holding<__Views_{}, {width}>",
+                self.name(ty.name)
             ));
             return out;
         }
@@ -5242,14 +5257,16 @@ impl<'p> Emitter<'p> {
                     .is_some();
                 // **A keeper that drops entries holds each text view with its
                 // own handle** (D4): `ref String` is `Held` in its type.
-                let holding = plan.is_some_and(|p| p.element_keepers.contains(bound));
+                let holding = plan
+                    .filter(|p| p.element_keepers.contains(bound))
+                    .map(|p| p.widths.get(bound).copied().unwrap_or(1));
                 *self.holding.borrow_mut() = holding;
                 let annotation = match ty {
                     Some(_) if put.is_some() || packed => String::new(),
                     Some(ty) => format!(": {}", self.ty_counted(ty, Lifetimes::ELIDED, count)),
                     None => String::new(),
                 };
-                *self.holding.borrow_mut() = false;
+                *self.holding.borrow_mut() = None;
                 if packed {
                     let Some(held) = self.tethered_type(ty.as_ref(), value) else {
                         return Err(refused_at!(
@@ -5271,8 +5288,14 @@ impl<'p> Emitter<'p> {
                     return Ok(());
                 }
                 if let Some(keep) = put {
+                    // A buffer whose views are held one by one is one they
+                    // are found in again (ADR-221 D1).
+                    let put = match keep {
+                        crate::contracts::keep::KeepAt::Element(_) => "put_viewed",
+                        _ => "put",
+                    };
                     out.push(&format!(
-                        "let {mutable}{} = {}.put(",
+                        "let {mutable}{} = {}.{put}(",
                         escaped(bound),
                         Self::keep_expr(keep, false)
                     ));
@@ -5399,6 +5422,58 @@ impl<'p> Emitter<'p> {
                         out.push(&format!("), {STORED}); }}"));
                     }
                 }
+            }
+            // **A field of a held struct is written through its handle**
+            // ([ADR-221](../../docs/specification/adr/adr-221.md) D4): the
+            // value first, as everywhere, and then a closure that is handed the
+            // struct and its keeps - where a view made outside is found again
+            // in them, or copied into them, before it is stored.
+            Stmt::Assign {
+                target:
+                    Expr::Field {
+                        base: element,
+                        name: field,
+                    },
+                op,
+                value,
+            } if self.held_element(flow, element).is_some() => {
+                let (keeper, index) = self
+                    .held_element(flow, element)
+                    .expect("matched as a held element");
+                let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
+                out.push(&format!("{{ let {STORED} = "));
+                out.push(before);
+                self.expr(out, value, depth, flow)?;
+                out.push(after);
+                out.push("; ");
+                self.expr(out, keeper, depth, flow.place())?;
+                match only_literals(index) {
+                    true => {
+                        out.push("[");
+                        self.index_expr(out, index, depth, flow.inferred())?;
+                        out.push("]");
+                    }
+                    false => {
+                        out.push("[nikaia_std::index::at(");
+                        self.index_expr(out, index, depth, flow)?;
+                        out.push(")]");
+                    }
+                }
+                let (keeps, stored) = match self.held_field_carries_view(flow, keeper, *field) {
+                    true => (
+                        "keeps",
+                        format!("nikaia_std::tether::Rebase::rebase({STORED}, &keeps)"),
+                    ),
+                    false => ("_", STORED.to_string()),
+                };
+                let assign = match op {
+                    Some(op) => format!("{}=", binary_op(*op)),
+                    None => "=".to_string(),
+                };
+                out.push(&format!(
+                    ".with_mut(|held, {keeps}| held.{} {assign} {stored}); }}",
+                    self.name(*field)
+                ));
             }
             Stmt::Assign { target, op, value } => {
                 let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
@@ -5580,6 +5655,9 @@ impl<'p> Emitter<'p> {
                 }
                 if lends {
                     out.push(".iter()");
+                    if self.reads_through_handle(flow, iter) {
+                        out.push(HELD_READ);
+                    }
                 }
                 out.push(" ");
 
@@ -5944,11 +6022,15 @@ impl<'p> Emitter<'p> {
             Expr::Variable(name) => {
                 out.push(&self.name(*name));
                 // **A binding packed for a task is read through its handle**
-                // (ADR-209 D3), for as long as the read borrows it.
-                let packed = self
-                    .keep_plan(flow.function)
-                    .is_some_and(|p| p.tethered.contains_key(self.text(*name)));
-                if packed {
+                // (ADR-209 D3), for as long as the read borrows it - and so is
+                // an element taken out of a keeper that holds structs of views
+                // ([ADR-221](../../docs/specification/adr/adr-221.md) D3): it
+                // carries its handles with it.
+                let packed = self.keep_plan(flow.function).is_some_and(|p| {
+                    p.tethered.contains_key(self.text(*name))
+                        || p.held_locals.contains(self.text(*name))
+                });
+                if packed && !flow.in_a_place {
                     out.push(".get()");
                 }
             }
@@ -6396,6 +6478,13 @@ impl<'p> Emitter<'p> {
                         }
                     }
                     out.push(")");
+                    // **A held struct is read through its handle** (ADR-221
+                    // D4): what the brackets answer is then the struct, over
+                    // no longer than the read, exactly as for a list of plain
+                    // structs.
+                    if self.reads_through_handle(flow, base) {
+                        out.push(".get()");
+                    }
                     return Ok(());
                 }
                 self.postfix_base(out, base, depth, flow)?;
@@ -9164,13 +9253,28 @@ impl<'p> Emitter<'p> {
         }
         out.push("(");
         let takes = self.takes_a_handle(self.text(method));
-        // **Views put into a keeper that drops entries are held** (ADR-209 D4).
+        // **Views put into a keeper that drops entries are held** (ADR-209 D4),
+        // each value with a handle on every buffer it points into - as many as
+        // the keeper's widest value needs, so that every element is one type
+        // (ADR-221 D2).
         let held = receiver
             .and_then(|receiver| crate::contracts::keep::root_of(self.parsed, receiver))
             .and_then(|root| {
-                self.keep_plan(flow.function)
-                    .and_then(|p| p.holds.get(&(flow.statement, root)))
-                    .cloned()
+                let plan = self.keep_plan(flow.function)?;
+                let by_arg = plan.holds.get(&(flow.statement, root.clone()))?;
+                let width = plan.widths.get(&root).copied().unwrap_or(1);
+                Some(
+                    by_arg
+                        .iter()
+                        .map(|(arg, buffers)| {
+                            let mut keeps: Vec<usize> = buffers.iter().copied().collect();
+                            while keeps.len() < width {
+                                keeps.push(keeps[keeps.len() - 1]);
+                            }
+                            (*arg, keeps)
+                        })
+                        .collect(),
+                )
             });
         *self.hold_args.borrow_mut() = held;
         let written_args = self.args(out, self.text(method), args, &takes, depth, flow);
@@ -9217,6 +9321,13 @@ impl<'p> Emitter<'p> {
             }
         }
         out.push(")");
+        // **What hands back an element of a held list reads it through its
+        // handle** (ADR-221 D4), as the brackets and a `for` do.
+        if matches!(self.text(method), "iter" | "first" | "last" | "get")
+            && receiver.is_some_and(|r| self.reads_through_handle(flow, r))
+        {
+            out.push(HELD_READ);
+        }
 
         // ADR-023 D8, the method half. The same three conditions the
         // call by name is given in `call` below, and the same rule -
@@ -9617,16 +9728,23 @@ impl<'p> Emitter<'p> {
                         .hold_args
                         .borrow()
                         .as_ref()
-                        .and_then(|h| h.get(&i).copied());
+                        .and_then(|h| h.get(&i).cloned());
                     match held {
-                        // SAFETY: the view points into the buffer this keep
-                        // holds - the plan followed it there (ADR-209 D4).
-                        Some(buffer) => {
-                            out.push(&format!(
-                                "unsafe {{ nikaia_std::tether::hold(&__keep_{buffer}, "
-                            ));
+                        // **Held by the keeps of the buffers it points into**
+                        // (ADR-209 D4, ADR-221 D1): a view of text becomes a
+                        // `Held`, a struct of views a `Holding`, and which one
+                        // is the language below's to pick by the value's type.
+                        // No `unsafe`: each view is found again in its keep by
+                        // address, so the plan is checked rather than trusted.
+                        Some(buffers) => {
+                            let keeps = buffers
+                                .iter()
+                                .map(|b| format!("std::sync::Arc::clone(&__keep_{b})"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            out.push("{ use nikaia_std::tether::Hold as _; (");
                             self.expr(out, arg, depth, inside)?;
-                            out.push(") }");
+                            out.push(&format!(").hold([{keeps}]) }}"));
                         }
                         None => {
                             // A kept value handed to a parameter that only
@@ -10911,6 +11029,9 @@ pub(crate) fn interpolation(literal: &str) -> Result<(String, Vec<String>)> {
 
 /// The name of the keep a function was given.
 const KEEP_PARAM: &str = "__keep";
+/// A held struct's element, read through its handle (ADR-221 D4): appended to
+/// what walks such a keeper.
+const HELD_READ: &str = ".map(|held| held.get())";
 /// The keep declared first in a function's body (D2).
 const KEEP_FRAME: &str = "__keep_frame";
 /// The keep a function's tasks share (D3).
@@ -11108,6 +11229,120 @@ impl Emitter<'_> {
         for wrapper in self.wrappers.borrow().iter() {
             out.push("\n");
             out.push(wrapper);
+        }
+        self.held_structs(out);
+    }
+
+    /// `kept[i]`, where `kept` holds structs of views one handle per buffer:
+    /// the keeper and the index, for a write through the handle (ADR-221 D4).
+    fn held_element<'e>(&self, flow: Flow<'_>, element: &'e Expr) -> Option<(&'e Expr, &'e Expr)> {
+        let Expr::Index { base, index } = element else {
+            return None;
+        };
+        self.reads_through_handle(flow, base)
+            .then_some((base.as_ref(), index.as_ref()))
+    }
+
+    /// Whether the field of a held struct being written holds a view, which
+    /// is then found again in the element's keeps before it is stored.
+    fn held_field_carries_view(&self, flow: Flow<'_>, keeper: &Expr, field: Symbol) -> bool {
+        let Expr::Variable(keeper) = keeper else {
+            return true;
+        };
+        let Some(name) = self
+            .keep_plan(flow.function)
+            .and_then(|p| p.keeper_structs.get(self.text(*keeper)))
+        else {
+            return true;
+        };
+        let wanted = self.text(field);
+        self.parsed
+            .program
+            .items
+            .iter()
+            .find_map(|item| match &item.node {
+                Item::Struct {
+                    name: n, fields, ..
+                } if self.text(*n) == name => fields
+                    .iter()
+                    .find(|f| self.text(f.name) == wanted)
+                    .map(|f| holds_view(&f.ty) || names_borrowing(&f.ty, &self.borrowing)),
+                _ => None,
+            })
+            .unwrap_or(true)
+    }
+
+    /// Whether `expr` names a keeper whose elements are structs of views held
+    /// one handle per buffer, so that an element is read through the handle
+    /// ([ADR-221](../../docs/specification/adr/adr-221.md) D4).
+    fn reads_through_handle(&self, flow: Flow<'_>, expr: &Expr) -> bool {
+        let Expr::Variable(name) = expr else {
+            return false;
+        };
+        self.keep_plan(flow.function)
+            .is_some_and(|p| p.struct_keepers.contains(self.text(*name)))
+    }
+
+    /// **What `tether` needs to hold a struct of views**, once per struct, at
+    /// the end of a unit that holds any
+    /// ([ADR-221](../../docs/specification/adr/adr-221.md) D1, D3): the struct
+    /// over any lifetime (`Views`, whose `shorten` compiles only where the
+    /// struct is covariant), each of its views found again in the keeps
+    /// (`Rebase`, one call per field that holds a view), and the value put
+    /// into a `Holding` (`Hold`). Written by the compiler, and none of it
+    /// `unsafe`.
+    fn held_structs(&self, out: &mut Out) {
+        // Only a unit that holds anything one handle per buffer pays for it.
+        if self
+            .keep_plans
+            .values()
+            .all(|p| p.element_keepers.is_empty())
+        {
+            return;
+        }
+        for item in &self.parsed.program.items {
+            let Item::Struct {
+                name,
+                generics,
+                fields,
+                ..
+            } = &item.node
+            else {
+                continue;
+            };
+            if !self.borrowing.contains(name) || !generics.is_empty() {
+                continue;
+            }
+            let ty = self.name(*name);
+            let rebased = fields
+                .iter()
+                .map(|field| {
+                    let field_name = self.name(field.name);
+                    match holds_view(&field.ty) || names_borrowing(&field.ty, &self.borrowing) {
+                        true => format!(
+                            "{field_name}: nikaia_std::tether::Rebase::rebase(self.{field_name}, keeps)"
+                        ),
+                        false => format!("{field_name}: self.{field_name}"),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push(&format!(
+                "\n/// `{ty}` held one handle per buffer (ADR-221).\n\
+                 #[allow(non_camel_case_types)]\n\
+                 enum __Views_{ty} {{}}\n\n\
+                 impl nikaia_std::tether::Views for __Views_{ty} {{\n    \
+                 type Of<'a> = {ty}<'a>;\n    \
+                 fn shorten<'long: 's, 's>(x: &'s {ty}<'long>) -> &'s {ty}<'s> {{\n        x\n    }}\n}}\n\n\
+                 impl<'a> nikaia_std::tether::Rebase<'a> for {ty}<'_> {{\n    \
+                 type At = {ty}<'a>;\n    \
+                 fn rebase<const N: usize>(self, keeps: &nikaia_std::tether::Keeps<'a, N>) -> {ty}<'a> {{\n        \
+                 {ty} {{ {rebased} }}\n    }}\n}}\n\n\
+                 impl<const N: usize> nikaia_std::tether::Hold<N> for {ty}<'_> {{\n    \
+                 type Held = nikaia_std::tether::Holding<__Views_{ty}, N>;\n    \
+                 fn hold(self, keeps: [std::sync::Arc<nikaia_std::tether::Keep>; N]) -> Self::Held {{\n        \
+                 nikaia_std::tether::Holding::new(keeps, move |keeps| nikaia_std::tether::Rebase::rebase(self, &keeps))\n    }}\n}}\n"
+            ));
         }
     }
 }

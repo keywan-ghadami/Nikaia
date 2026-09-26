@@ -710,9 +710,20 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
             ));
         }
         for keeper in &plan.element_keepers {
-            said.push(format!(
-                "    `{keeper}` holds each view with its own handle\n"
-            ));
+            // ADR-221: a struct of views carries a handle on each buffer it
+            // points into, and the report says how many that is.
+            let line = match plan.struct_keepers.contains(keeper) {
+                true => {
+                    let width = plan.widths.get(keeper).copied().unwrap_or(1);
+                    let handles = match width {
+                        1 => "a handle on the buffer it points into".to_string(),
+                        n => format!("a handle on each of the {n} buffers it points into"),
+                    };
+                    format!("    `{keeper}` holds each struct with {handles}\n")
+                }
+                false => format!("    `{keeper}` holds each view with its own handle\n"),
+            };
+            said.push(line);
         }
         if said.is_empty() {
             continue;
