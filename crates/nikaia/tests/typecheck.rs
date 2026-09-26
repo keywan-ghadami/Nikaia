@@ -171,8 +171,11 @@ fn an_assignment_of_the_wrong_type_is_reported() {
 /// A struct literal whose field is given the wrong type.
 #[test]
 fn a_struct_field_of_the_wrong_type_is_reported() {
-    let (code, message) = one("struct Reading { name: String, temp: i32 }\n\
-         fn read(city: ref String) -> Reading { return Reading { name: city, temp: 12 } }");
+    // Published, and text of its own flows in too: the field stays text of
+    // its own (ADR-222 D2), so the view is the wrong type for it.
+    let (code, message) = one("pub struct Reading { pub name: String, pub temp: i32 }\n\
+         pub fn read(city: ref String) -> Reading { return Reading { name: city, temp: 12 } }\n\
+         pub fn made() -> Reading { return Reading { name: f\"x\", temp: 1 } }");
     assert_eq!(code, "NK1106");
     assert_eq!(
         message,

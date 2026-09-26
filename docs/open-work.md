@@ -635,25 +635,19 @@ something asks for it, and the demand is the line after.
 ### 2.19. Text is one type, and `ref String` is the assertion
 
 [ADR-107](specification/adr/adr-107.md). `String` is the one text type and
-its state — borrowed, tethered, owned — is the compiler's per use; `ref String` is
-the promise that a value is a borrowed view, held to at the line that would
-break it; a copy is `.clone()` or a refusal, never inserted. **The literal
-half is built** by [ADR-207](specification/adr/adr-207.md) at 0.0.183 — a literal
-is a `String` wherever one is wanted, constructed where it is kept and lent as
-it is where it is read — and with it `NK1106`'s help and the literal sites in
-`examples/`. **What is not**: two types in the checker, so a *view* in a
-`String` slot where something keeps it (and a name bound to a literal) is refused
-— saying why, for the case it is ([ADR-208](specification/adr/adr-208.md) D2) — and
-no text carries a handle. A view handed to a `String` the callee only reads is
-lent as it is (D1).
+its state — borrowed, tethered, owned — is the compiler's per use; a copy is
+`.clone()` or a refusal, never inserted. **Built for literals**
+([ADR-207](specification/adr/adr-207.md)), **for a view handed to a reader**
+([ADR-208](specification/adr/adr-208.md) D1), and **for fields and results**
+([ADR-222](specification/adr/adr-222.md)): a `String` field or result is text
+of its own, a view, or either per value, by what flows into it.
 
-*What it needs, in the record's order (§5):* the checker's acceptance of a view
-with D2's refusal. **The representation it waited for is not needed any more**:
-a view that outlives its buffer is tethered by
-[ADR-209](specification/adr/adr-209.md) without a text type of its own, so what
-is left is the checker accepting a *view* where a `String` is kept — which is a
-copy or a tether, and deciding which is this entry's question; and the
-foreign-boundary copy once crates are described.
+*What is left:* the same for the two other positions that keep text — an
+argument a callee keeps, and an annotated `let` — where a view is still
+refused with ADR-208 D2's explanation (ADR-222 §3); a nullable `?String` field
+or result; and ADR-107 D5's foreign-boundary copy once crates are described.
+Evidence: `crates/nikaia/tests/text_literals.rs`, whose kept-argument case is
+still a refusal.
 
 ### 2.21. An `update` block says `mut`, may run more than once, and the compiler picks the lock
 

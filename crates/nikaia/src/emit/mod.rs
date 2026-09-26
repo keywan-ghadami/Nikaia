@@ -4323,6 +4323,7 @@ impl<'p> Emitter<'p> {
                     count: None,
                     is_mut: false,
                     is_slice: false,
+                    either: false,
                 },
                 Lifetimes::NAMED,
             );
@@ -4838,6 +4839,7 @@ impl<'p> Emitter<'p> {
                 count: None,
                 is_mut: false,
                 is_slice: false,
+                either: false,
             });
             let inner = Type {
                 is_nullable: ty.is_nullable || inner.is_nullable,
@@ -4886,6 +4888,12 @@ impl<'p> Emitter<'p> {
             return format!("{}[{element}]", lifetimes.reference);
         }
 
+        // **Text both kinds of which flow into a position**
+        // ([ADR-222](../../docs/specification/adr/adr-222.md) D3): a view
+        // borrowed, text of its own owned, each where it is put in.
+        if ty.either {
+            return format!("nikaia_std::either_text::EitherText<{}>", lifetimes.params);
+        }
         // A view is a borrow of the parser's input, and that is where the
         // lifetime comes from - the source never writes one (ADR-008).
         if ty.is_view {
@@ -5764,10 +5772,17 @@ impl<'p> Emitter<'p> {
                 // **A tail is a `return` written without the word**, so the `&`
                 // it may owe is the same one — `fn text(ref self) -> ref String
                 // { self.text }` and the `return` form are one program.
+                let either = tail == Tail::Return && self.returns_either(flow.function);
+                if either {
+                    out.push("nikaia_std::either_text::EitherText::from(");
+                }
                 if tail == Tail::Return && self.lent_returns.contains(&span.start) {
                     out.push("&");
                 }
                 self.expr(out, expr, depth, flow)?;
+                if either {
+                    out.push(")");
+                }
                 // `if x { … };` is legal and noisy; a block-shaped statement
                 // ends where its brace does.
                 let block_shaped = matches!(
@@ -5820,12 +5835,63 @@ impl<'p> Emitter<'p> {
     ) -> Result<()> {
         let (before, after) = Self::around(self.nullable_sites.get(&span.start).copied());
         out.push(before);
+        let either = self.returns_either(flow.function);
+        if either {
+            out.push("nikaia_std::either_text::EitherText::from(");
+        }
         if self.lent_returns.contains(&span.start) {
             out.push("&");
         }
         self.expr(out, value, depth, flow)?;
+        if either {
+            out.push(")");
+        }
         out.push(after);
         Ok(())
+    }
+
+    /// Whether a struct's field is text both kinds of which flow into
+    /// ([ADR-222](../../docs/specification/adr/adr-222.md) D3).
+    fn either_field(&self, owner: &str, field: Symbol) -> bool {
+        let wanted = self.text(field);
+        let owner = owner.rsplit("::").next().unwrap_or(owner);
+        self.parsed
+            .program
+            .items
+            .iter()
+            .any(|item| match &item.node {
+                Item::Struct { name, fields, .. } if self.text(*name) == owner => fields
+                    .iter()
+                    .any(|f| f.ty.either && self.text(f.name) == wanted),
+                _ => false,
+            })
+    }
+
+    /// Whether the function being written hands back text both kinds of
+    /// which flow into its result (ADR-222 D3).
+    fn returns_either(&self, function: &str) -> bool {
+        let (target, own) = match function.rsplit_once("::") {
+            Some((target, own)) => (Some(target), own),
+            None => (None, function),
+        };
+        let either = |item: &Item| {
+            matches!(item, Item::Fn { name: Some(n), ret_type: Some(t), .. }
+                if self.text(*n) == own && t.either)
+        };
+        self.parsed
+            .program
+            .items
+            .iter()
+            .any(|item| match (&item.node, target) {
+                (
+                    Item::Impl {
+                        target: t, methods, ..
+                    },
+                    Some(target),
+                ) if self.text(t.name) == target => methods.iter().any(|m| either(&m.node)),
+                (node, None) => either(node),
+                _ => false,
+            })
     }
 
     /// An expression, with Part I 2.3's `Some(…)` around it where the checker
@@ -6589,7 +6655,18 @@ impl<'p> Emitter<'p> {
                         })
                         .copied();
                     let (before, after) = Self::around(how);
-                    if let Some(value) = &field.value {
+                    // **Into a field both kinds of text flow into, each value
+                    // goes as it is** (ADR-222 D3): a view borrowed, text of its
+                    // own moved in.
+                    let either = self.either_field(&owner, field.name);
+                    if either {
+                        out.push(": nikaia_std::either_text::EitherText::from(");
+                        match &field.value {
+                            Some(value) => self.expr(out, value, depth, flow)?,
+                            None => out.push(&self.name(field.name)),
+                        }
+                        out.push(")");
+                    } else if let Some(value) = &field.value {
                         out.push(": ");
                         out.push(before);
                         self.expr(out, value, depth, flow)?;
@@ -6625,9 +6702,22 @@ impl<'p> Emitter<'p> {
                 out.push(&format!("{owner} {{ "));
                 for field in fields {
                     out.push(&self.name(field.name));
-                    if let Some(value) = &field.value {
-                        out.push(": ");
-                        self.expr(out, value, depth, flow)?;
+                    let either = self.either_field(&owner, field.name);
+                    match (&field.value, either) {
+                        (Some(value), true) => {
+                            out.push(": nikaia_std::either_text::EitherText::from(");
+                            self.expr(out, value, depth, flow)?;
+                            out.push(")");
+                        }
+                        (Some(value), false) => {
+                            out.push(": ");
+                            self.expr(out, value, depth, flow)?;
+                        }
+                        (None, true) => out.push(&format!(
+                            ": nikaia_std::either_text::EitherText::from({})",
+                            self.name(field.name)
+                        )),
+                        (None, false) => {}
                     }
                     out.push(", ");
                 }

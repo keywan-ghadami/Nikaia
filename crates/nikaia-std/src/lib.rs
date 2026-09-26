@@ -29,6 +29,7 @@ pub mod channel;
 pub mod cli;
 pub mod concat;
 pub mod count;
+pub mod either_text;
 pub mod error;
 pub mod fixed;
 pub mod foreign;

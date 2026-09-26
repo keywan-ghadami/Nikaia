@@ -125,13 +125,16 @@ fn a_literal_nobody_keeps_stays_a_view() {
     assert_eq!(ran("view", source).trim(), "same");
 }
 
-/// **A view of text the program has is still refused**, and the help says how:
-/// that is a copy, and a copy is written where it happens (ADR-107 D3).
+/// **A view of text the program has is still refused where the field is
+/// published and text of its own flows into it too** (ADR-222 D2), and the
+/// help says how: that is a copy, and a copy is written where it happens
+/// (ADR-107 D3). Anywhere else the field is a view, or both per value.
 #[test]
 fn a_view_where_a_string_is_kept_is_refused_with_the_way_out() {
     let found = findings(
-        "struct Person { name: String }\n\
-         fn make(n: ref String) -> Person { return Person { name: n } }\n",
+        "pub struct Person { pub name: String }\n\
+         pub fn make(n: ref String) -> Person { return Person { name: n } }\n\
+         pub fn built() -> Person { return Person { name: f\"x\" } }\n",
     );
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].code, "NK1106");
@@ -213,9 +216,12 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
     };
 
     // A parameter: the caller's text, and the answer that copies nothing.
+    // Published, with text of its own flowing in too, so the field stays text
+    // of its own (ADR-222 D2).
     let (why, help) = notes(
-        "struct Person { name: String }\n\
-         fn make(n: ref String) -> Person { return Person { name: n } }\n",
+        "pub struct Person { pub name: String }\n\
+         pub fn make(n: ref String) -> Person { return Person { name: n } }\n\
+         pub fn built() -> Person { return Person { name: f\"x\" } }\n",
     );
     assert!(why.contains("the text belongs to the caller"), "{why}");
     assert!(why.contains("`Person` keeps its `name`"), "{why}");
@@ -223,10 +229,13 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
     assert!(help.contains("declare `n: String`"), "{help}");
     assert!(help.contains("n.clone()"), "{help}");
 
-    // A name bound to a literal: the compiler would have built it, and says so.
+    // A name bound to a literal, handed to a function that keeps it: the
+    // compiler would have built it, and says so. (Kept in a field or handed
+    // back, the binding is declared `String` for it - ADR-222 D4.)
     let (why, help) = notes(
         "struct Person { name: String }\n\
-         fn main() { let s = \"Ada\"\n let p = Person { name: s } }\n",
+         fn make(n: String) -> Person { return Person { name: n } }\n\
+         fn main() { let s = \"Ada\"\n let p = make(s) }\n",
     );
     assert!(why.contains("bound to the literal \"Ada\""), "{why}");
     assert!(why.contains("ADR-207"), "{why}");
@@ -234,8 +243,9 @@ fn a_kept_view_is_explained_for_the_case_it_is() {
 
     // Any other view: it points into something that stays.
     let (why, help) = notes(
-        "struct Person { name: String }\n\
-         fn make(n: ref String) -> Person { return Person { name: n.trim() } }\n",
+        "pub struct Person { pub name: String }\n\
+         pub fn make(n: ref String) -> Person { return Person { name: n.trim() } }\n\
+         pub fn built() -> Person { return Person { name: f\"x\" } }\n",
     );
     assert!(
         why.contains("points into text something else owns"),
