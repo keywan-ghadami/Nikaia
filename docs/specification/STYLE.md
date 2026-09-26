@@ -8,70 +8,54 @@ the compiler disagrees with is a defect of one of the two.
 
 The specification states **the language contract**: what a program may write,
 what it means, and what the compiler refuses, with the diagnostic it refuses
-it with. It does not argue, and it does not remember. Argument and history
-live in the decision records, one record per decision ([the ADRs](adr/README.md)),
-and the specification points at them.
+it with. Nothing else. Argument, history and implementation status live in
+other files — the decision records ([the ADRs](adr/README.md)), the
+[changelog](../../CHANGELOG.md) and the [roadmap](../project_status_and_roadmap.md)
+— and the specification does not repeat them or point at them. Every sentence
+a reader does not need to write a correct program costs every reader tokens and
+time.
 
-Three kinds of text are allowed on a page, in this order and marked so a reader
-can tell them apart:
+Two kinds of text are allowed on a page:
 
 1. **The rule.** Indicative present, third person, one rule per sentence.
    *A configuration parameter has a default. A call that omits it takes the
    default.*
 2. **The consequence.** What follows from the rule for a program, in the same
    voice. *A parameter without a default is positional.*
-3. **The rationale**, at most one short paragraph, opened with
-   `*Design rationale:*` and closed with the record that holds the argument.
-   *Design rationale: the separator makes the two zones visible without
-   counting parameters ([ADR-133](adr/adr-133.md)).*
 
 A page may end a rule with a pointed sentence that fixes it in memory, set as
 a block quote after the rule it belongs to:
 
 > The compiler may be concurrent even when the program is not.
 
-That is the one place the specification's voice is allowed. A rule is sober;
-a principle may be pointed.
-
 ## 2. What a page does not contain
 
-* **History.** Not how a rule came to be, not what an earlier draft said, not
-  how often a count was wrong, not which test caught what. Where a reader may
-  meet an earlier form in old code, one sentence names it as withdrawn and
-  points at the record: *The form `dsl X from Y` is withdrawn
-  ([ADR-082](adr/adr-082.md)).*
-* **Argument.** No options weighed, no objections answered. The record does
-  that.
+* **References to decision records.** No `ADR-…` citation, link or number.
+  A reference to another section of the specification (*Part I 6.6*) stays.
+* **Rationale.** No *why*, no *design rationale*, no options weighed, no
+  objections answered, no comparison with what another language or an
+  alternative design would do — unless the comparison *is* the rule (*`..<`
+  stops before its end*).
+* **History.** Not how a rule came to be, not what an earlier draft or version
+  said, not what was withdrawn or renamed, not which test caught what. A
+  withdrawn form is refused by the compiler with a diagnostic that names the
+  replacement; the page states the current form only.
+* **Implementation status.** No *built*, *not yet implemented*, *today*,
+  *currently* or version numbers. The page states the contract; the roadmap
+  and the changelog say how much of it the compiler carries out.
 * **The reader.** No *the reader will*, no *it is worth saying*, no *you* and
   *your* in a rule. A rule names its subject: *user code*, *a program*, *the
   caller*, *the compiler*, *the runtime*.
-* **Compression.** One idea per sentence. A sentence that carries a rule, its
-  consequence and its rationale is three sentences.
+* **Compression.** One idea per sentence.
 * **Capitals on common nouns.** *compiler*, *variable*, *runtime error*,
   *build*. Capitals are for names: Nikaia, Rust, WebAssembly, and for the
   language's own constructs written as they are written: `comptime`,
   `grammar`, `Shared`.
 
-## 3. Implementation status
+## 3. Reserved words
 
-A rule the compiler does not fully carry out yet is followed by a status note,
-always in this form and with one of six values:
-
-> **Implementation status:** Partially implemented. Runtime parsing is
-> implemented. Compile-time evaluation is not implemented ([ADR-073](adr/adr-073.md) §5).
-
-| value | meaning |
-| :--- | :--- |
-| **Implemented** | the compiler carries out the rule as written; the note is omitted unless the section needs to say which diagnostic fires |
-| **Partially implemented** | part of the rule is carried out; the note says which part, in plain sentences |
-| **Not implemented** | the rule is decided and none of it is built |
-| **Reserved** | a word is reserved and has no construct |
-| **Withdrawn** | a form the language had is removed; the note names the replacement |
-| **Unspecified** | the page shows a construct no record decides; the note names where the decision will be taken |
-
-The sentences after the value state facts: what is built, what is not, which
-diagnostic a program meets today, and the record whose §5 carries the work.
-They do not narrate.
+A word that is reserved and has no construct is listed as reserved, in one
+sentence, with no status note.
 
 ## 4. Vocabulary
 
@@ -102,6 +86,6 @@ has its own, and never describes a refusal without its code where one exists.
 ## 6. What does not change under this standard
 
 Code blocks are the specification's examples and tests; an editorial pass
-leaves every ```` ```nika ```` block byte for byte as it is and in its place.
-Section numbers and headings are what the records cite and do not move.
-Every reference to a record stays.
+leaves the code of every ```` ```nika ```` block as it is and in its place.
+Section numbers and headings are what the compiler's messages and other
+documents cite and do not move.

@@ -18,15 +18,10 @@ the two is a bug and the disagreement gets recorded.
   ledger, `std`, the diagnostics contract.
 
 The three parts follow one language standard,
-[`specification/STYLE.md`](specification/STYLE.md): rule, then consequence, then
-at most one short *Design rationale* ending in the ADR. A page carries no
-history, no argument, no instruction counts and no timings. Those are the next
-two sections.
-
-A rule specified ahead of the compiler says so in a status note of one form,
-`> **Implementation status:** <value>.`, with a controlled vocabulary of six
-values. That note is maintained; a stale one is a defect, because a reader
-cannot tell a plan from a promise.
+[`specification/STYLE.md`](specification/STYLE.md): the rule, then its
+consequence — nothing else. A page carries no ADR references, no rationale, no
+history and no implementation status; those live in the decision records, the
+changelog and the roadmap, and are not repeated there.
 
 ## 2. The decisions — [`specification/adr/`](specification/adr)
 
