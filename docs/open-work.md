@@ -278,7 +278,7 @@ day it is written.
 
 Nothing of [ADR-058](specification/adr/adr-058.md) is built. What is built is the
 bench that decided it (`benches/sendfile/`) and the write-up
-([`zero-copy-send.md`](zero-copy-send.md)); `send_file` beside the ring could have
+([`zero-copy-send.md`](history/zero-copy-send.md)); `send_file` beside the ring could have
 been built ahead of the server and deliberately was not, because D3's measurement
 makes it the mechanism that loses at the sizes a server sends most.
 
@@ -1044,7 +1044,7 @@ of its own; and the intra-crate call graph with the `use` table (0.0.163), for
 the row where an `unsafe impl Send` took the bound away. **Both crossing
 experiments under `examples/foreign-runtime/` are refused by this compiler** —
 `NK2502`, in Nikaia's vocabulary, on the author's line — including `smuggled/`,
-which [`foreign-runtime.md`](foreign-runtime.md) §3.5 did not expect.
+which [`foreign-runtime.md`](history/foreign-runtime.md) §3.5 did not expect.
 
 ***And the parser is built too***
 ([ADR-195](specification/adr/adr-195.md) D3, [ADR-196](specification/adr/adr-196.md)

@@ -131,7 +131,7 @@ pub enum Segment {
 /// adds to it and none of them subtracts, so a `String` that starts this size
 /// never reserves more than it uses. That is what makes it usable without a
 /// threshold - there is no crossover to measure, only the question of whether
-/// it is worth emitting at all (`docs/staging-candidates.md` §3).
+/// it is worth emitting at all (ADR-178 §1).
 ///
 /// A `<for>` body counts **once**, because the compiler knows what the body is
 /// and not how many elements the collection has. Counting it once is the floor;

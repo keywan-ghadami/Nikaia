@@ -44,7 +44,7 @@ cargo run -p overlap-bench --release --bin runtime -- 20000 9
 It measures **both** mechanisms — `io-method = "auto"` and `io-method =
 "blocking"` pinned — because the answer differs between them, and that
 difference is the finding. The numbers, the method and the confound are in
-[`docs/runtime-cost.md`](../../docs/runtime-cost.md).
+[`docs/history/runtime-cost.md`](../../docs/history/runtime-cost.md).
 
 ## …and what the *lowering* costs, which is not the same question
 
@@ -67,4 +67,4 @@ It greps the emitted Rust and prints which lowering each binary got, because two
 identical binaries would measure a very stable nothing. Both mechanisms again,
 and here the fallback's column is the *decision* rather than the finding: D10
 performs the pair in written order where overlapping is not free, so that column
-should be zero and not +38 µs. The numbers are `docs/runtime-cost.md` §6.
+should be zero and not +38 µs. The numbers are `docs/history/runtime-cost.md` §6.

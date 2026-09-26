@@ -13,7 +13,7 @@ panic hook), Part III Appendix A.2 (the panic table),
 body), [ADR-029](specification/adr/adr-029.md) D3 and D4 (`from(f)`),
 [ADR-037](specification/adr/adr-037.md) D2 and D3 (the switch),
 [ADR-038](specification/adr/adr-038.md) D4 (whose thread the I/O thread is),
-[`rc-or-arc.md`](rc-or-arc.md) §7 (where that experiment stopped, and why this one
+[`rc-or-arc.md`](history/rc-or-arc.md) §7 (where that experiment stopped, and why this one
 starts here)
 **What ran:** `benches/lockfloor/` (the measurement),
 `crates/nikaia/tests/lock_floor.rs` (the question put to the real `sync`
@@ -27,7 +27,7 @@ inference), and the seven `.nika` and three `.rs` probes quoted below
 > called changes nothing about when it runs or what it touches, which is what this
 > page is about. Transcribe the reasoning, not the code.
 
-[`rc-or-arc.md`](rc-or-arc.md) §7 ended by naming the decision it could not
+[`rc-or-arc.md`](history/rc-or-arc.md) §7 ended by naming the decision it could not
 make: *"`RefCell` and `Mutex` are not observationally equivalent… That is the
 second decision D3's question turns out to contain."* Part II 12.2 gives
 `Locked[T]` two implementations, one per `user_parallelism`, and if the floor
@@ -96,12 +96,12 @@ by the script before and after every table: **0.48 → 1.73** across the first r
 and **1.35 → 3.02** across the second, the rise being this measurement's own
 threaded rows.
 
-The same box class as [`rc-or-arc.md`](rc-or-arc.md) §1, and not the same box as
-[`runtime-cost.md`](runtime-cost.md) §1's — so nothing here may be compared
+The same box class as [`rc-or-arc.md`](history/rc-or-arc.md) §1, and not the same box as
+[`runtime-cost.md`](history/runtime-cost.md) §1's — so nothing here may be compared
 against a number there.
 
 **Read the ratios and the signs, not the absolutes.**
-[`runtime-cost.md`](runtime-cost.md) §6.3 is the standing warning with a number
+[`runtime-cost.md`](history/runtime-cost.md) §6.3 is the standing warning with a number
 on it: re-running an earlier measurement on a box of this class a day later moved
 every absolute figure by **1.4 to 1.9×, the baseline included**. Every row below
 is reported with the two runs beside each other (§4.2), and the one row whose
@@ -495,7 +495,7 @@ bench type. Nothing proposes it; it exists to put a number on the trade.)
 
 ### 4.4 The pair, and `rc-or-arc.md` §7
 
-[`rc-or-arc.md`](rc-or-arc.md) §7 measured `Rc<RefCell<i32>>` against
+[`rc-or-arc.md`](history/rc-or-arc.md) §7 measured `Rc<RefCell<i32>>` against
 `Arc<Mutex<i32>>` at **+20.8 ns, ×5.72**, and split it by subtraction: *"about
 9 ns is the count and about 12 ns the lock"*. This is the lock measured on its
 own, with no reference count in the shape, on the same box class: **+11.2 and

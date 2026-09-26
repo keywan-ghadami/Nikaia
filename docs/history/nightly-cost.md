@@ -7,13 +7,13 @@ since been **withdrawn** from the project. The withdrawal was decided *without a
 further measurement*, and every number below is the number it was decided on.
 Nothing here is revised: this is the notebook page, and a notebook page is not
 edited when the experiment ends. What happened, and why, is
-[`../CHANGELOG.md`](../CHANGELOG.md) and
+[`../CHANGELOG.md`](../../CHANGELOG.md) and
 [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md).
-**Related:** [ADR-001](specification/adr/adr-001.md) D1 (the toolchain, stable,
-as this file's third conclusion wanted), [ADR-005](specification/adr/adr-005.md)
+**Related:** [ADR-001](../specification/adr/adr-001.md) D1 (the toolchain, stable,
+as this file's third conclusion wanted), [ADR-005](../specification/adr/adr-005.md)
 D2 (Group B.2, now the frontend's desugaring),
-[ADR-021](specification/adr/adr-021.md) D9 (the precedent for refusing a backend
-by name), [`subprocess-cost.md`](subprocess-cost.md) (the same machine, the same
+[ADR-021](../specification/adr/adr-021.md) D9 (the precedent for refusing a backend
+by name), [`subprocess-cost.md`](../subprocess-cost.md) (the same machine, the same
 method, the adjacent question)
 
 At the time of writing, the project pinned one exact nightly `rustc` and justified
@@ -44,7 +44,7 @@ already have.
 
 Intel Xeon @ 2.80 GHz, 4 vCPU, 15 GB RAM, Linux 6.18.44 x86_64 — a **shared virtual
 machine** with no `cpufreq` governor exposed, and the same box
-[`subprocess-cost.md`](subprocess-cost.md) used. `rustc 1.94.0-nightly (8d670b93d
+[`subprocess-cost.md`](../subprocess-cost.md) used. `rustc 1.94.0-nightly (8d670b93d
 2025-12-31)`, which is the `nightly-2026-01-01` `rust-toolchain.toml` named at the time;
 stable is `1.94.1 (e408947bf 2026-03-25)` for
 the builds and `1.98.1 (48a229cea 2026-09-01)` for the installs, because an install measures
@@ -104,10 +104,10 @@ frontend never gained any.
 
 ## 3. `-Zpolonius=next`: what it would buy, and what it would cost
 
-[ADR-005](specification/adr/adr-005.md) D2 names one situation — conditional return of a
+[ADR-005](../specification/adr/adr-005.md) D2 names one situation — conditional return of a
 borrow, the `get_or_insert` shape — as rejected by the stable borrow checker and accepted by
 `-Zpolonius=next`. Three records rested on the flag at the time — the toolchain pin, ADR-005
-§1's Group B.2 and the [ADR index](specification/adr/README.md) — while ADR-005 §5 already said
+§1's Group B.2 and the [ADR index](../specification/adr/README.md) — while ADR-005 §5 already said
 the case is **not built**. What nobody had done is compile something twice and count.
 
 ### 3.1 The positive controls, because a harness that finds nothing must first find something
@@ -213,7 +213,7 @@ function body's tail is the one place where the value *is* the function's, so th
 was right stays. Fixing the cause is one three-state `Tail` in place of the `bool` —
 `Statement`, `Value`, `Return` — and the rewrite is allowed only at `Return`.
 
-**The `catch` row is the one to read twice.** [ADR-034](specification/adr/adr-034.md) D1 is
+**The `catch` row is the one to read twice.** [ADR-034](../specification/adr/adr-034.md) D1 is
 about exactly that handler: one that can `return` makes the next statement conditional on the
 guarded operation having succeeded, so the two may not be overlapped, and
 `contracts::order`'s `diverts` counts any `return` anywhere in the handler when it refuses. It
@@ -263,8 +263,8 @@ compiles and prints what it printed.
 
 The `E0621` above is one line to make go away and the wrong line to write. Stage 0 spells a
 view's lifetime by **position** and by nothing else
-([ADR-011](specification/adr/adr-011.md) D6, which is
-[ADR-008](specification/adr/adr-008.md) in the only form a bootstrap compiler can express it):
+([ADR-011](../specification/adr/adr-011.md) D6, which is
+[ADR-008](../specification/adr/adr-008.md) in the only form a bootstrap compiler can express it):
 named inside the grammar module and on the structs it builds, elided in a free function's
 signature, and — in a method of an `impl` whose receiver holds views — elided on the `&` while
 every named type takes `'a`. That third spelling is what makes `examples/1brc.nika` work:
@@ -285,7 +285,7 @@ things and the signature cannot say which:
   never stored.
 
 One spelling cannot serve both, and the source writes no lifetime to choose with
-([ADR-005](specification/adr/adr-005.md) D1, ADR-008 D1) — so the **use** has to decide, and
+([ADR-005](../specification/adr/adr-005.md) D1, ADR-008 D1) — so the **use** has to decide, and
 deciding it per view is ADR-008 D2's tether lattice, whose "least state that makes the program
 valid" is the same question one level up and which that record's own status line says is not
 built. Two things are the owner's:
@@ -302,7 +302,7 @@ A partial fix is worse than none here: it would make the storing shape compile a
 inspecting one failing differently, in a compiler whose whole claim about lifetimes is that
 the position decides and the author never writes one.
 
-**And `E0621`'s *text* is not translated.** [ADR-005](specification/adr/adr-005.md) D7 now
+**And `E0621`'s *text* is not translated.** [ADR-005](../specification/adr/adr-005.md) D7 now
 enumerates it — E0382, E0499, E0502, E0505, E0506, E0597, E0716, E0621, plus E0277 added after
 the foreign-runtime experiment — and when this was written it did not, which is what this
 paragraph found. Being in the enumeration is worth exactly what it is worth:
@@ -323,7 +323,7 @@ records as open — and it is a second reason this is a record's business and no
 | `json.rs`, **full debug compile** | 1 731 303 418 | 1 854 471 352 | **+7.11 %** |
 
 The full-compile row is the one to quote, and it cross-checks
-[`subprocess-cost.md`](subprocess-cost.md) §4, which measured the same file's full debug
+[`subprocess-cost.md`](../subprocess-cost.md) §4, which measured the same file's full debug
 compile at 1 719 M Ir — 0.7 % apart, a day and a flag apart.
 
 Wall-clock beside it, median of nine after two warm-ups, milliseconds:
@@ -441,7 +441,7 @@ bridge produced a library and no compiler. Four changes, none of them in a front
    are now behind the same `cfg`;
 2. the `required-features` line is gone, and the bridge arm of the backend match is two
    functions, one per `cfg`;
-3. the absent one **fails by name** — [ADR-021](specification/adr/adr-021.md) D9's rule about
+3. the absent one **fails by name** — [ADR-021](../specification/adr/adr-021.md) D9's rule about
    `cranelift`, applied to a backend that was configured out rather than never written —
    and the message says which feature, which toolchain component, and roughly what it
    weighs. `crates/nikaia/tests/backend_absent.rs` asserts that, and asserts that the
@@ -499,20 +499,20 @@ turned out to be one half of it:
   optional backend. When that backend went, the pin had nothing left to buy.
 * **`-Z` bought nothing**, because no `-Z` flag was ever passed. Group B.2 is
   answered by the frontend desugaring this file found the corpus already writing
-  ([ADR-005](specification/adr/adr-005.md) D2), and the flag was never picked up.
+  ([ADR-005](../specification/adr/adr-005.md) D2), and the flag was never picked up.
 * **The pin's cost to a user was not bytes but identity** — a non-relocatable
   binary tied to one rustup home. That is the measurement that did the most work
   and the one nothing argued back at.
 
-What the records say now: [ADR-001](specification/adr/adr-001.md) D1, the
-toolchain is stable and one file names it; [ADR-004](specification/adr/adr-004.md)
+What the records say now: [ADR-001](../specification/adr/adr-001.md) D1, the
+toolchain is stable and one file names it; [ADR-004](../specification/adr/adr-004.md)
 D1, there is one lowering and it emits Rust source text;
-[ADR-005](specification/adr/adr-005.md) D2, Group B.2 is the frontend's to
+[ADR-005](../specification/adr/adr-005.md) D2, Group B.2 is the frontend's to
 desugar. The full account, including what each withdrawn thing was for, is
-[`../CHANGELOG.md`](../CHANGELOG.md) and
+[`../CHANGELOG.md`](../../CHANGELOG.md) and
 [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md).
 
 One question this file handed on is still open and is unaffected by any of it:
 whether the compiler should invoke the rustup shim or a named compiler
-([`subprocess-cost.md`](subprocess-cost.md) §5) — *which* `rustc` a Nikaia
+([`subprocess-cost.md`](../subprocess-cost.md) §5) — *which* `rustc` a Nikaia
 installation is entitled to assume.

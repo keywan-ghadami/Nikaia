@@ -5,7 +5,7 @@
 //! the program was built rather than by a branch in `std`:
 //!
 //! * **Under twelve keys**, no displacements. `Fixed::get` walks the keys with a
-//!   length check, which [`docs/fixed-map-lookup.md`](../../../docs/fixed-map-lookup.md)
+//!   length check, which [`docs/history/fixed-map-lookup.md`](../../../docs/history/fixed-map-lookup.md)
 //!   §6 measured within 0 to 17 % of a generated `match` — past the point where
 //!   the hash has already won, so the `match` this would otherwise have emitted
 //!   buys nothing.

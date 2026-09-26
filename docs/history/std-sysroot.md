@@ -3,13 +3,13 @@
 **Date:** September 12, 2026 — a laboratory record, and a snapshot of that day.
 
 > **Read as a snapshot.** Where this page reasons about what follows from
-> `user_parallelism`, it predates [ADR-037](specification/adr/adr-037.md) D6: the
+> `user_parallelism`, it predates [ADR-037](../specification/adr/adr-037.md) D6: the
 > owner count of a `Shared[T]` is atomic at **both** settings now, because the
 > runtime touches it as well as your code, so a count keyed on the switch would
 > race with the machinery under it. Any sentence here that has `no` avoiding an
 > atomic is that sentence and not a claim about the compiler today.
 
-Laboratory notes for [ADR-002](specification/adr/adr-002.md) D4. Nothing here is
+Laboratory notes for [ADR-002](../specification/adr/adr-002.md) D4. Nothing here is
 normative; the decision and the numbers that settled it are in the record, and
 this is the method, the machine, and the two things that turned out differently
 from what the shape of the problem suggested.
@@ -161,7 +161,7 @@ file in `std` is lowered at `user_parallelism = no` and at `yes` and the bytes
 compared (`crates/nikaia/tests/sysroot.rs`). With one file and one function in it
 this is nearly free and nearly trivial — and it is the only thing standing between
 "lowered at one setting" and a `Shared` lowered to `Rc` inside a program built at
-`yes`, which is what [ADR-037](specification/adr/adr-037.md) D3 would produce.
+`yes`, which is what [ADR-037](../specification/adr/adr-037.md) D3 would produce.
 
 ## 7. One thing left for the owner
 
@@ -171,7 +171,7 @@ second project cost 1.65 s with no linking surgery, and it has two consequences
 worth a decision rather than a note:
 
 * `rm -rf target` no longer gives a cold build. The state that survives is in the
-  user's cache directory, and [ADR-021](specification/adr/adr-021.md) §3 already
+  user's cache directory, and [ADR-021](../specification/adr/adr-021.md) §3 already
   owes an eviction policy for the other store there.
 * Two builds that share an entry serialise on Cargo's lock on that directory.
   Two projects with their own `target/` did not, so a developer building two

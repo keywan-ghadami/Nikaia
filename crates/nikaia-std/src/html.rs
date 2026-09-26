@@ -76,7 +76,7 @@ const ESCAPES: [(char, &str); 5] = [
 /// That is the second thing measured here and it is the one that mattered: a
 /// 256-entry table of `&str` was **16 % slower** than the five compares it
 /// replaced, because a fat pointer per byte is 4 KB of cache to walk where a
-/// mask is a register (`docs/staging-candidates.md` §3).
+/// mask is a register (ADR-178 §1).
 ///
 /// **A byte scan is sound because all five are ASCII.** A byte of a multi-byte
 /// UTF-8 character is always `0x80` or above, so it can never be one of these -
@@ -121,7 +121,7 @@ fn replacement(byte: u8) -> &'static str {
 ///
 /// **65 % cheaper than the version this replaced**, measured under callgrind on
 /// 40 000 holes (`crates/nikaia/tests/measure.rs`,
-/// `docs/staging-candidates.md` §3.2). Two of the three things tried made it
+/// `docs/history/staging-candidates.md` §3.2). Two of the three things tried made it
 /// *worse*, which is why both are written down where they were tried.
 ///
 /// It does **not** make text safe for every position: a `<script>` body, a CSS
@@ -144,7 +144,7 @@ pub fn escape(text: &str) -> Cow<'_, str> {
     // looks obviously better, and that this function was first written with -
     // costs 12 % more here: the index arithmetic and the bounds check on each
     // slice outweigh what the copies save on text this size
-    // (`docs/staging-candidates.md` §3).
+    // (`docs/history/staging-candidates.md` §3).
     for c in text[first..].chars() {
         // `c as u32` first: a character above the mask's range is never one of
         // the five, and this is the ordinary case.

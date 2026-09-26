@@ -207,7 +207,7 @@ fn a_break_may_stand_where_a_value_is_expected() {
 /// The lowering is name for name (ADR-011 D2), and this is what says so — the
 /// one assertion in this file about emitted text rather than about behaviour,
 /// because *"it compiles to a jump and not to a flag"* is the claim
-/// `docs/break-continue-cost.md` rests its numbers on.
+/// `docs/history/break-continue-cost.md` rests its numbers on.
 #[test]
 fn the_lowering_is_the_same_word() {
     let rust = lowered(

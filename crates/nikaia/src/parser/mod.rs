@@ -2147,7 +2147,7 @@ grammar! {
         // best, the two are tried and fail for *every* assignment and every bare
         // expression: **740 instructions a statement** and +1.28% on a
         // statement-dense file, against **665 per block** here, and a program has
-        // far fewer blocks than statements (`docs/break-continue-cost.md` §3).
+        // far fewer blocks than statements (ADR-084 D8).
         //
         // It is free to choose because both words are reserved (ADR-071 D1), so
         // `NAME` cannot take one and no earlier arm can swallow a jump. The

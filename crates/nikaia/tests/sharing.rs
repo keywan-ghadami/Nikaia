@@ -11,7 +11,7 @@
 //! and the fail-closed cases, where being wrong is a data race rather than a
 //! missed 9 ns.
 //!
-//! [`docs/rc-or-arc.md`](../../../docs/rc-or-arc.md) is the experiment this grew
+//! [`docs/history/rc-or-arc.md`](../../../docs/history/rc-or-arc.md) is the experiment this grew
 //! out of: what the atomic costs, and the fail-open bug the prototype had - a
 //! `<struct>.<field>` slot guarded on "already known", which made the answer
 //! depend on the order somebody wrote their functions in. That test is here, and
@@ -172,7 +172,7 @@ fn a_call_this_compiler_cannot_see_the_end_of_comes_out_atomic() {
 ///
 /// A public function's callers are in a unit this build never sees. The
 /// representation is in the artifact by the time one of them crosses, so nothing
-/// here can answer - and `docs/rc-or-arc.md` §5.1 is why a ledger column would
+/// here can answer - and ADR-037 D8 is why a ledger column would
 /// not answer either.
 #[test]
 fn a_shared_in_a_published_signature_comes_out_atomic() {
@@ -273,7 +273,7 @@ fn a_shared_in_a_struct_field_that_stays_put_keeps_a_plain_count() {
 /// forced slots it had already met would answer `plain` for this program and
 /// `atomic` for the same two functions in the other order - a fail-open bug, and
 /// the one direction the polarity forbids. It is a real one: the prototype had it
-/// (`docs/rc-or-arc.md` §8).
+/// (`docs/history/rc-or-arc.md` §8).
 #[test]
 fn a_struct_field_is_decided_whatever_order_the_functions_are_written_in() {
     for source in [
@@ -296,7 +296,7 @@ fn a_struct_field_is_decided_whatever_order_the_functions_are_written_in() {
 /// A struct whose fields are Rust - an entry with no `fields` - cannot be walked,
 /// so a crossing of it says nothing about the `Shared` it may hold.
 ///
-/// This is the gap `docs/rc-or-arc.md` §5.2 names: the transitivity is exactly as
+/// This is the gap ADR-037 D8 names: the transitivity is exactly as
 /// good as the ledger's `fields`, and `fields` is empty for every type whose
 /// parts are Rust. A value *put into* such a type by a Nikaia program is still
 /// caught, because the putting is visible; one built inside the Rust half is not.
@@ -335,7 +335,7 @@ fn a_type_whose_fields_are_rust_hides_what_it_holds() {
 /// atomic. The file's own comment says the opposite about the build it is written
 /// for ("At `user_parallelism = no` ... `Shared` costs a non-atomic refcount"),
 /// and both are right: the per-build expansion gives it `Rc`, and a per-value
-/// inference that may not fail open cannot. That gap is `docs/rc-or-arc.md` §6's
+/// inference that may not fail open cannot. That gap is `docs/history/rc-or-arc.md` §6's
 /// finding, and this is where it is asserted rather than asserted about.
 #[test]
 fn the_one_shared_in_the_repository_comes_out_atomic_undecided() {
@@ -447,7 +447,7 @@ fn a_shared_that_came_out_of_a_call_is_atomic() {
 /// A `Shared` **read back out of a struct field** is the field's allocation, not
 /// a fresh one.
 ///
-/// The sibling of `docs/rc-or-arc.md` §8's guard, in the other direction: the
+/// The sibling of `docs/history/rc-or-arc.md` §8's guard, in the other direction: the
 /// prototype joined a handle *put into* a field to the field's slot and did not
 /// join one *taken out*, so reading it back produced a class nothing forced and
 /// a plain count on a value that crosses. Both orders of the two functions are
@@ -631,7 +631,7 @@ fn a_public_parameter_that_holds_a_shared_exposes_the_field() {
 /// The summary is a ledger column, beside `sync`, `throws`, `touches` and
 /// `borrows`.
 ///
-/// `docs/rc-or-arc.md` §5.1 names the shape: which parameters and result are one
+/// ADR-037 D7 names the shape: which parameters and result are one
 /// class, and which count that class gets. The union-find that decides a count
 /// computes it already, which is what makes this a column and not a mechanism
 /// (ADR-020 D1).

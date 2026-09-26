@@ -2,30 +2,30 @@
 
 **Date:** September 12, 2026
 **Status:** the experiment ran; the finding was evidence under
-[ADR-037](specification/adr/adr-037.md) D3, and the owner has since decided with
+[ADR-037](../specification/adr/adr-037.md) D3, and the owner has since decided with
 it — see §11. This page keeps the **method, the machine and the false starts**,
 which is what a note is for; what was decided, and the one number it was decided
 on, are in the record.
-**Related:** [ADR-037](specification/adr/adr-037.md) D3 (the open question) and D2
-(the switch), [ADR-005](specification/adr/adr-005.md) §1 Group B and §5.3 (the check this
-would change), [ADR-006](specification/adr/adr-006.md) (cleanup, whose observability is
-the gate in §2), [ADR-010](specification/adr/adr-010.md) D1 (the polarity), [ADR-027](specification/adr/adr-027.md) D1
-(the fixpoint this one is compared against), [ADR-029](specification/adr/adr-029.md) (the walk
-through a struct's fields), [ADR-038](specification/adr/adr-038.md) D7 (the foreign crossing),
+**Related:** [ADR-037](../specification/adr/adr-037.md) D3 (the open question) and D2
+(the switch), [ADR-005](../specification/adr/adr-005.md) §1 Group B and §5.3 (the check this
+would change), [ADR-006](../specification/adr/adr-006.md) (cleanup, whose observability is
+the gate in §2), [ADR-010](../specification/adr/adr-010.md) D1 (the polarity), [ADR-027](../specification/adr/adr-027.md) D1
+(the fixpoint this one is compared against), [ADR-029](../specification/adr/adr-029.md) (the walk
+through a struct's fields), [ADR-038](../specification/adr/adr-038.md) D7 (the foreign crossing),
 Part II 12.2 (the counter that wants to cross)
 **What ran:** `benches/refcount/` (the measurement),
 `crates/nikaia/src/contracts/sharing.rs` and `crates/nikaia/tests/sharing.rs`
 (the prototype), `nikaia --sharing` (what it prints)
 
 > **Read as a snapshot.** The lambdas on this page are written in the form
-> [ADR-049](specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, with
+> [ADR-049](../specification/adr/adr-049.md) withdrew — `sort_by_key fn { a }`, with
 > the argument read off the body — and **no sample here compiles as written**; the
 > current spelling names its arguments, `sort_by_key fn(x) { x }` (Part I, 5.3).
 > The analysis each section records is unaffected: what a lambda's arguments are
 > called changes nothing about when it runs or what it touches, which is what this
 > page is about. Transcribe the reasoning, not the code.
 
-[ADR-037](specification/adr/adr-037.md) D3 expands `Shared` from `user_parallelism` —
+[ADR-037](../specification/adr/adr-037.md) D3 expands `Shared` from `user_parallelism` —
 `no` gives `Rc`, `yes` gives `Arc` — **per build**, and then says of itself:
 *"Whether the choice between `Rc` and `Arc` could be made per value rather than
 per build is a real question and is not answered here."* This is the experiment
@@ -68,7 +68,7 @@ that question was worth, and what it found.
 Intel Xeon @ **2.80 GHz**, 4 vCPU, 15 GB RAM, Linux 6.18.44 x86_64 — a shared
 virtual machine with no `cpufreq` governor exposed. `rustc 1.94.1 (e408947bf
 2026-03-25)`, stable, which is the only toolchain this repository has
-([ADR-001](specification/adr/adr-001.md) D1). `--release`. The load average is printed by
+([ADR-001](../specification/adr/adr-001.md) D1). `--release`. The load average is printed by
 the script before and after every table rather than assumed away: **0.24 → 1.95**
 across the first block and **0.83 → 1.34** across the second, the rise being this
 measurement's own threaded rows.
@@ -113,9 +113,9 @@ pair from being folded away and is *also* the shape the emitter would write for 
 
 ## 2. Question zero: do they differ in anything observable?
 
-The reason [ADR-037](specification/adr/adr-037.md) D3 gives for `Shared` being written by
+The reason [ADR-037](../specification/adr/adr-037.md) D3 gives for `Shared` being written by
 hand is that *sharing changes when a value is cleaned up, and that is observable*
-([ADR-006](specification/adr/adr-006.md)). If the same were true of the choice *between* the
+([ADR-006](../specification/adr/adr-006.md)). If the same were true of the choice *between* the
 two counts, the language's own rule against inferring cleanup timing would forbid
 this inference and there would be nothing to build. So it was checked first.
 
@@ -135,7 +135,7 @@ Two differences are real and neither is in that table.
 
 **The thread a destructor runs on.** With an atomic count the last handle may be
 dropped on a thread other than the one that built the value, so a `Cleanup`
-([ADR-006](specification/adr/adr-006.md)) runs *there* — which is observable, and which
+([ADR-006](../specification/adr/adr-006.md)) runs *there* — which is observable, and which
 `docs/foreign-runtime.md` §4 already found to matter. It is not a counter-example
 to the gate: it can only happen to a value that crosses a thread, and a value
 that crosses is one the inference has no freedom about — it is atomic by the
@@ -270,7 +270,7 @@ asked which did and which did not:
   whose end this compiler cannot see — *is* the seed list, translated from "which
   types may not cross" to "which values must be atomic". `send::names_used` is
   reused unchanged for the names a `spawn` body mentions.
-* **[ADR-029](specification/adr/adr-029.md)'s walk through a struct's `fields` carried §5.2's
+* **[ADR-029](../specification/adr/adr-029.md)'s walk through a struct's `fields` carried §5.2's
   case**, and carried it in the opposite direction from `send.rs`: there, a field
   that may not cross makes the struct refuse; here, a struct that crosses makes
   the field's count atomic. Same ledger, same walk, reversed arrow.
@@ -298,7 +298,7 @@ seeds. So the least fixpoint of "is atomic" is precisely the complement of the
 greatest fixpoint of "stays plain": the two framings compute the same set, and
 they reach it in one step.
 
-That is unlike `sync` ([ADR-027](specification/adr/adr-027.md) D1), which genuinely needs a
+That is unlike `sync` ([ADR-027](../specification/adr/adr-027.md) D1), which genuinely needs a
 greatest fixpoint, because its constraint is *conjunctive* over a call graph that
 can cycle — `f` is `sync` if everything it calls is, and two mutually recursive
 functions have to be allowed to assume each other. Nothing here is conjunctive.
@@ -346,7 +346,7 @@ The three ways out, and what each costs:
 **Which of the three is available is not decided, and not by this experiment.**
 Part III 13.3's manifest says it in as many words: *"How [a Nikaia
 package] is resolved is not decided: no record names a registry, a name space or a
-distribution format"* ([ADR-002](specification/adr/adr-002.md) D1 §5 refuses such a
+distribution format"* ([ADR-002](../specification/adr/adr-002.md) D1 §5 refuses such a
 dependency today). If a package ships **source** and is re-lowered per build, (3)
 is available and cheap. If it ships a **compiled artifact**, (3) is impossible and
 the choice is between (1)'s broken libraries and (2)'s monomorphisation. **So hard
@@ -412,7 +412,7 @@ marks every one of them `undecided` rather than letting it pass as a decision.
 | case | why nothing decides it |
 | :--- | :--- |
 | a `Shared` in a **public** signature (parameter or result) | its callers are in a unit this build does not read (§5.1) |
-| a `Shared` handed to a **call nothing describes** | the body may start a thread of its own ([ADR-038](specification/adr/adr-038.md) D7) |
+| a `Shared` handed to a **call nothing describes** | the body may start a thread of its own ([ADR-038](../specification/adr/adr-038.md) D7) |
 | a `Shared` handed to a **method nothing describes** | the same, reached by a name rather than a path |
 | a `Shared` in an argument position **no contract covers** | more arguments than the signature has parameters; nothing says where it went |
 
@@ -612,7 +612,7 @@ that does not lower still has one.
 ## 11. Which option the owner took
 
 **C.** `Shared` is an atomic count at **both** settings
-([ADR-037](specification/adr/adr-037.md) D6), and §9's reason is the one that
+([ADR-037](../specification/adr/adr-037.md) D6), and §9's reason is the one that
 decided it: the verdict of `NK25xx` is about a *type* and may never consult the
 switch, so a `Shared` whose expansion moved with the switch had to be refused a
 crossing at both settings — and Part II 12.2's counter is the program that wanted
@@ -628,7 +628,7 @@ decision and not a finding of this experiment.
 
 **And then B on top of it, narrowed to an optimisation.** The prototype in
 `contracts::sharing` became the real thing under one rule
-([ADR-037](specification/adr/adr-037.md) D7): *it may only ever take an atomic
+([ADR-037](../specification/adr/adr-037.md) D7): *it may only ever take an atomic
 away.* Atomic is the floor, and the analysis may lower a particular value to a
 plain count only where it **proves** nothing crosses with it. §2's gate is what
 lets it — nothing a program can observe distinguishes the two counts, and the one
@@ -649,9 +649,9 @@ overlapping analysis never put one on a thread; now it may, so a handle whose
 allocation this analysis did not watch being made is atomic.
 
 **What the owner did not take from §9.** There is no way for a programmer to ask
-for the cheaper count — [ADR-037](specification/adr/adr-037.md) D8 enumerates
+for the cheaper count — [ADR-037](../specification/adr/adr-037.md) D8 enumerates
 every fallback and answers "would an override help?" no for all of them, the way
-[ADR-033](specification/adr/adr-033.md) D9 did for the ordering analysis. And
+[ADR-033](../specification/adr/adr-033.md) D9 did for the ordering analysis. And
 **§7's `Locked` half is not decided by any of it**: `RefCell` against `Mutex` is
 observable, so it is written rather than inferred, and what an always-`Mutex`
 floor would cost against Part II 12.2 is a separate question. **A** was not taken

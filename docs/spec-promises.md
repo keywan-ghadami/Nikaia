@@ -118,7 +118,7 @@ Codes the compiler emits: `NK1101`–`NK1113`, `NK2202`, `NK2501`, `NK2502`,
 > was written.
 
 `NK2605` was added after this page was written, for the shape
-[`from-for-throws-and-touches.md`](from-for-throws-and-touches.md) §6 found: a
+[`from-for-throws-and-touches.md`](history/from-for-throws-and-touches.md) §6 found: a
 written call that can fail, in a function that declares nothing.
 
 ## Left for the owner

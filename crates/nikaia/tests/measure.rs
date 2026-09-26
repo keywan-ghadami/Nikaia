@@ -1,7 +1,7 @@
 //! The measurement loop.
 //!
-//! `docs/staging-candidates.md` §5 records that the benchmark *programs* exist
-//! and the harness does not, and §6 ends on the rule this file serves: **a
+//! `docs/history/staging-candidates.md` §5 records that the benchmark *programs* exist
+//! and the harness does not, and ADR-178 D2 is the rule this file serves: **a
 //! staging decision enters the compiler only together with a measured
 //! crossover.** This is where a crossover is measured.
 //!
@@ -138,7 +138,7 @@ fn thousands(n: u64) -> String {
 
 /// The template's `String::new()` against a `String::with_capacity(…)`.
 ///
-/// `docs/staging-candidates.md` §3 names this as the smallest candidate and
+/// `docs/history/staging-candidates.md` §3 names this as the smallest candidate and
 /// says the honest part out loud: it is a small win, and saying so afterwards
 /// would look like an excuse. So it is said here, before the number.
 ///
@@ -200,7 +200,7 @@ fn strip_capacity(rust: &str) -> String {
 /// template's reservation can - the code being measured is behind a crate
 /// boundary. So this prints one number and the comparison is made the way
 /// ADR-010's hasher was: the same tree, built twice, once with the patch. The
-/// numbers that comparison produced are in `docs/staging-candidates.md` §3.
+/// numbers that comparison produced are in `docs/history/staging-candidates.md` §3.
 ///
 /// `benches/template.nika` is the right workload for it: two holes per row,
 /// one that needs escaping and one that does not, so both paths through
@@ -225,7 +225,7 @@ fn what_escaping_costs() {
 /// **What is being asked.** Not *"is a jump fast"* - it is one instruction -
 /// but *"what does a program pay for not having one"*, which is a different
 /// question with three different answers, one per loop shape. They are printed
-/// together rather than argued about: `docs/break-continue-cost.md` reads them.
+/// together rather than argued about: `docs/history/break-continue-cost.md` reads them.
 #[test]
 #[ignore = "shells out to valgrind; run with --ignored"]
 fn what_a_jump_saves_against_the_shape_that_replaces_it() {

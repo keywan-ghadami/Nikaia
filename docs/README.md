@@ -69,8 +69,6 @@ is normative and nothing may depend on it to know what a program means.
   change against Nikaia, what the upstream patch does, and what was tried and
   must not be redone. A guide; the open work that was in it is in
   [`open-work.md`](open-work.md).
-* [`staging-candidates.md`](staging-candidates.md) — the survey of where
-  compile-time staging would pay, and what it costs to check one.
 * [`error-corpus.md`](error-corpus.md) — twenty-six broken `.nika` files and
   what the compiler says about each, before and after.
 * [`stored-views.md`](stored-views.md) — the `E0621` a stored naked view used to
@@ -78,10 +76,6 @@ is normative and nothing may depend on it to know what a program means.
   tether lattice would have to track that they do not: the seven things it needs,
   the two the compiler has, and the measurement showing that building the
   reachable half first refuses a program in `examples/` that works today.
-* [`from-for-throws-and-touches.md`](from-for-throws-and-touches.md) — whether
-  ADR-029 D3's `sync = "from(f)"` argument carries to the other two effect
-  columns: the smallest program for each, the ledger it produced, and the one
-  place the argument breaks.
 * [`spec-promises.md`](spec-promises.md) — every construct and command the
   specification names, run against the compiler one probe at a time; the
   evidence behind the **Status** notes in Parts I–III.
@@ -93,29 +87,6 @@ is normative and nothing may depend on it to know what a program means.
 * [`subprocess-cost.md`](subprocess-cost.md) — what invoking `rustc` as a child
   process costs, against the codegen it wraps: 0.64 % of a compile, which is what
   the text interface of ADR-004 D1 is paid for with.
-* [`std-sysroot.md`](std-sysroot.md) — what `std`'s build graph cost when `std`
-  had the compiler as a build dependency, the 58 packages that existed only for
-  that, and the two things that were expected to decide it and did not.
-* [`nightly-cost.md`](nightly-cost.md) — what a toolchain weighs, what the
-  nightly-only borrow checker would have bought and cost, and the measurements
-  that led to the withdrawal recorded in `CHANGELOG.md`.
-* [`runtime-cost.md`](runtime-cost.md) — what a pair of operations costs on a
-  runtime that is already running, and the finding that only the completion
-  path gets ADR-033 §8.5's zero.
-* [`break-continue-cost.md`](break-continue-cost.md) — `break` and `continue`
-  built and measured *before* they were decided, so that the question
-  [ADR-070](specification/adr/adr-070.md) D2 left open could be answered with
-  numbers: what a jump costs at run time (nothing) against what the shapes
-  standing in for it cost (a quarter of a `while`, and all of a `for` that
-  wanted to stop early), what two more rules cost the parser and why the answer
-  is per *block* rather than per statement, and the four constructs a jump may
-  not leave because each is a function in the language below. §7 says what
-  [ADR-084](specification/adr/adr-084.md) took from it and what it did not.
-* [`rc-or-arc.md`](rc-or-arc.md) — what an atomic reference count costs, whether
-  `Rc` and `Arc` differ in anything a program can observe, and the prototype that
-  asked ADR-037 D3's open question of a value instead of a build. The method, the
-  machine and the false starts; §11 says which option the owner took, and
-  ADR-037 D6–D8 are the decision.
 * [`mutex-floor.md`](mutex-floor.md) — what an always-`Mutex` floor for
   `Locked` would cost against Part II 12.2's no-pausing rule: why blocking is
   not pausing in this language, the one ledger line the answer turns on, and
@@ -131,23 +102,11 @@ is normative and nothing may depend on it to know what a program means.
   character (ADR-037 D7 already picks `Rc` against `Arc` per value by proving a
   reachability property), the five things the first afternoon would run into,
   and the one that would kill it.
-* [`fixed-map-lookup.md`](fixed-map-lookup.md) — a fixed map's lookup, `match`
-  against a perfect hash, and the crossover ADR-079 D3 left unnamed.
-* [`zero-copy-send.md`](zero-copy-send.md) — what it costs to answer a request
-  with a file, and the trap in the obvious reading of *map it, don't read it*.
-* [`foreign-runtime.md`](foreign-runtime.md) — a Nikaia program that starts
-  `hyper`, and what ADR-038 D7's two rules cost today.
 * [`automatic-clone.md`](automatic-clone.md) — why having the compiler insert the
   `.clone()` a detached task makes necessary is not a convenience: it adds an
   owner and so moves a cleanup point, which is the observable change ADR-037 D3
   refused to infer and ADR-005 §3 already rejected outright, so the proposal has
   to answer those records rather than appeal to typing saved.
-* [`technical_notes.md`](technical_notes.md) — the compiler-internals findings
-  from the path that was withdrawn; kept as the notebook page it is.
-* [`withdrawn-one-way-down.md`](withdrawn-one-way-down.md) — what the nightly
-  toolchain, the Bridge-IR backend and the `rustc_ast` path were, what was
-  measured about them, and why they were withdrawn without a further
-  measurement.
 * [`toolchain_architecture.md`](toolchain_architecture.md) — how the crates in
   the workspace stack up.
 * [`project_status_and_roadmap.md`](project_status_and_roadmap.md) — what runs
@@ -157,6 +116,47 @@ is normative and nothing may depend on it to know what a program means.
 This is the right home for the detail the specification must not carry: the
 method, the machine, the false starts, the measurement that overturned an
 intuition.
+
+### Closed notes — [`history/`](history)
+
+**The same notebook, kept but no longer current.** A note moves here once its
+question is answered (the ADR it fed now carries the decision) or its subject
+is withdrawn — never for age by itself. The method and the measurement are
+still true and still cited by ADR number from wherever they are used; only the
+question the page was written to answer is no longer open.
+
+* [`staging-candidates.md`](history/staging-candidates.md) — the survey of
+  where compile-time staging would pay; every candidate is closed
+  ([ADR-178](specification/adr/adr-178.md)).
+* [`from-for-throws-and-touches.md`](history/from-for-throws-and-touches.md) —
+  whether ADR-029 D3's `sync = "from(f)"` argument carries to the other two
+  effect columns; answered, and the syntax it was written against is
+  superseded.
+* [`std-sysroot.md`](history/std-sysroot.md) — what `std`'s build graph cost
+  when `std` had the compiler as a build dependency; that dependency is gone.
+* [`nightly-cost.md`](history/nightly-cost.md) — what the pinned nightly
+  toolchain cost and bought; withdrawn, per `../CHANGELOG.md`.
+* [`runtime-cost.md`](history/runtime-cost.md) — what a pair of operations
+  costs on a running runtime; the evidence behind ADR-038 §4.3 and ADR-033 D10,
+  both decided.
+* [`break-continue-cost.md`](history/break-continue-cost.md) — `break` and
+  `continue`, priced before [ADR-084](specification/adr/adr-084.md) decided
+  them.
+* [`rc-or-arc.md`](history/rc-or-arc.md) — what an atomic reference count
+  costs; the question ADR-037 D3 left open, closed by ADR-037 D6–D8.
+* [`fixed-map-lookup.md`](history/fixed-map-lookup.md) — a fixed map's lookup,
+  `match` against a perfect hash; the crossover
+  [ADR-176](specification/adr/adr-176.md) D2 rests on.
+* [`zero-copy-send.md`](history/zero-copy-send.md) — what it costs to answer a
+  request with a file; [ADR-058](specification/adr/adr-058.md)'s evidence.
+* [`foreign-runtime.md`](history/foreign-runtime.md) — a Nikaia program that
+  starts `hyper`; the finding changed no decision under
+  [ADR-038](specification/adr/adr-038.md) D7.
+* [`technical_notes.md`](history/technical_notes.md) — compiler-internals
+  findings from the `rustc_ast` path; that path is withdrawn.
+* [`withdrawn-one-way-down.md`](history/withdrawn-one-way-down.md) — what the
+  nightly toolchain, the Bridge-IR backend and the `rustc_ast` path were, and
+  why they were withdrawn.
 
 ## 4. The history — [`../CHANGELOG.md`](../CHANGELOG.md)
 

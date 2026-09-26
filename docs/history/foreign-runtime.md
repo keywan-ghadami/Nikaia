@@ -2,26 +2,26 @@
 
 **Date:** September 11, 2026
 **Status:** the experiment ran; the finding is evidence under
-[ADR-038](specification/adr/adr-038.md) D7 and changes no decision
-**Related:** [ADR-038](specification/adr/adr-038.md) D7 (the two rules under test) and §4
-(which asked for this early), [ADR-002](specification/adr/adr-002.md) D1 (the crates.io promise),
-[ADR-037](specification/adr/adr-037.md) D2/D3 and §3 (`user_parallelism`, `Shared`, the structural
-`Send` check), [ADR-005](specification/adr/adr-005.md) D7 and §1 Group B (where that check was
-decided), [ADR-006](specification/adr/adr-006.md) D3 (a cancelled cleanup parks with *our*
-runtime), [ADR-033](specification/adr/adr-033.md) D4 (fail-closed `touches`)
-**The programs:** [`examples/foreign-runtime/`](../examples/foreign-runtime), driven by
+[ADR-038](../specification/adr/adr-038.md) D7 and changes no decision
+**Related:** [ADR-038](../specification/adr/adr-038.md) D7 (the two rules under test) and §4
+(which asked for this early), [ADR-002](../specification/adr/adr-002.md) D1 (the crates.io promise),
+[ADR-037](../specification/adr/adr-037.md) D2/D3 and §3 (`user_parallelism`, `Shared`, the structural
+`Send` check), [ADR-005](../specification/adr/adr-005.md) D7 and §1 Group B (where that check was
+decided), [ADR-006](../specification/adr/adr-006.md) D3 (a cancelled cleanup parks with *our*
+runtime), [ADR-033](../specification/adr/adr-033.md) D4 (fail-closed `touches`)
+**The programs:** [`examples/foreign-runtime/`](../../examples/foreign-runtime), driven by
 `crates/nikaia/tests/foreign_runtime.rs`
 
 > **Read as a snapshot.** Where this page reasons about what follows from
-> `user_parallelism`, it predates [ADR-037](specification/adr/adr-037.md) D6: the
+> `user_parallelism`, it predates [ADR-037](../specification/adr/adr-037.md) D6: the
 > owner count of a `Shared[T]` is atomic at **both** settings now, because the
 > runtime touches it as well as your code, so a count keyed on the switch would
 > race with the machinery under it. Any sentence here that has `no` avoiding an
 > atomic is that sentence and not a claim about the compiler today.
 
-[ADR-038](specification/adr/adr-038.md) §4 called D7's two rules "the exception worth checking
+[ADR-038](../specification/adr/adr-038.md) §4 called D7's two rules "the exception worth checking
 early rather than late, because a program that starts `hyper` is the cheapest test of whether
-[ADR-002](specification/adr/adr-002.md) D1's crates.io promise and this record can hold at the
+[ADR-002](../specification/adr/adr-002.md) D1's crates.io promise and this record can hold at the
 same time". This is that program, and what it found.
 
 **Three conclusions, first.**
@@ -48,11 +48,11 @@ same time". This is that program, and what it found.
 Intel Xeon @ 2.10 GHz, 4 vCPU, 15 GB RAM, Linux 6.18.44 x86_64 — a shared virtual machine.
 `rustc 1.94.0-nightly (8d670b93d 2025-12-31)` — the compiler these programs were built with on
 the day, kept because a measurement is worth what the compiler under it was. It is **not** a
-toolchain this repository names: since [ADR-001](specification/adr/adr-001.md) D1 the channel is
+toolchain this repository names: since [ADR-001](../specification/adr/adr-001.md) D1 the channel is
 stable, and `rust-toolchain.toml` says so and nothing else. crates.io was reachable;
 every dependency below was fetched, not vendored.
 
-Four programs, all in [`examples/foreign-runtime/`](../examples/foreign-runtime):
+Four programs, all in [`examples/foreign-runtime/`](../../examples/foreign-runtime):
 
 * `serve/` — starts the server, serves one request, and sends a `String` to a foreign thread.
 * `crossing/` — sends a value that may not cross a thread. Expected to be refused.
@@ -93,7 +93,7 @@ fn main() {
 about, because "Nikaia cannot call Rust" would be the wrong lesson — it can, directly, with no
 annotation and no `extern` block at all. `hyper_shim::serve_once(18080)` lowers to
 `hyper_shim::serve_once(18080)`, because Stage 0 lowers name for name
-([ADR-011](specification/adr/adr-011.md) D2) and a qualified path is emitted as written. The
+([ADR-011](../specification/adr/adr-011.md) D2) and a qualified path is emitted as written. The
 generated Rust is an ordinary crate in an ordinary Cargo package, so any Rust function whose
 signature Nikaia can *spell* is callable.
 
@@ -159,25 +159,25 @@ the next person writing one will hit them.
 
 > **A value may only cross into a foreign thread if it may cross any thread.** […] The structural
 > `Send` check ADR-037 §3 names is what decides it.
-> — [ADR-038](specification/adr/adr-038.md) D7
+> — [ADR-038](../specification/adr/adr-038.md) D7
 
 ### 3.1 The structural `Send` check does not exist
 
 It is decided in three places:
 
-* [ADR-005](specification/adr/adr-005.md) §1 Group B — "`Send`-ness checked **structurally in the
+* [ADR-005](../specification/adr/adr-005.md) §1 Group B — "`Send`-ness checked **structurally in the
   frontend** at *every* setting of `user_parallelism`, so a library written at `0` cannot turn out
-  un-compilable at `auto`" (the `0`/`auto` spelling predates [ADR-037](specification/adr/adr-037.md)
+  un-compilable at `auto`" (the `0`/`auto` spelling predates [ADR-037](../specification/adr/adr-037.md)
   D2's `no`/`yes`, and is stale in that record).
 * Part III Appendix C.3 — `NK25xx`, Portability: "**Reserved**: the `Send` rules that parallel code
   needs, reported at `user_parallelism = no` as a lint, so a library built there stays usable at
   `yes`."
-* [ADR-037](specification/adr/adr-037.md) §3 and D2's list of what the switch governs.
+* [ADR-037](../specification/adr/adr-037.md) §3 and D2's list of what the switch governs.
 
 In `crates/` the word appears four times, all of them the `Send` bounds on
 `nikaia_std::task::both`, plus one unrelated comment. There is no analysis, no `NK25xx`, and
 nothing that walks a type. The verdict is entirely `rustc`'s, inherited through
-[ADR-002](specification/adr/adr-002.md) §3 ("Rust's own guarantees are inherited rather than
+[ADR-002](../specification/adr/adr-002.md) §3 ("Rust's own guarantees are inherited rather than
 rebuilt").
 
 ### 3.2 An `Rc` cannot reach a foreign thread today — and the reason is not a Nikaia check
@@ -187,7 +187,7 @@ can reach another thread with nothing complaining. The honest answer has two hal
 
 **No, and twice over** — *as of the day this was written; both halves have since gone stale and
 the correction is below.* First, **Nikaia has no `Rc` to send.** `Shared`, which
-[ADR-037](specification/adr/adr-037.md) D3 lowered to `Rc` at `user_parallelism = no`, was not
+[ADR-037](../specification/adr/adr-037.md) D3 lowered to `Rc` at `user_parallelism = no`, was not
 implemented: there is no `Rc::new` or `Arc::new` anywhere in the emitter, and the only `Shared` in
 `crates/` is a word inside a comment about a type's generics. Every value a Nikaia program can
 build today — `i64`, `f64`, `bool`, `String`, `List`, `HashMap`, a struct of those — is `Send`.
@@ -209,12 +209,12 @@ and ADR-037 §3 all exist to prevent, arriving through a foreign call rather tha
 > **Both halves above went stale, and the correction is kept beside them rather than written over
 > them**, because what this page is for is the finding and the finding includes how it was reasoned.
 >
-> **`Shared` is built.** [ADR-064](specification/adr/adr-064.md) gave the shared mutable type its
+> **`Shared` is built.** [ADR-064](../specification/adr/adr-064.md) gave the shared mutable type its
 > name and constructor, and Part II 12.2's counter compiles and runs at both settings. So *"Nikaia
 > has no `Rc` to send"* is no longer the reason the answer is no.
 >
 > **And the failure mode this paragraph predicted cannot happen**, because the premise it rests on
-> was taken away deliberately. [ADR-037](specification/adr/adr-037.md) D6 narrowed D3: `Shared` is
+> was taken away deliberately. [ADR-037](../specification/adr/adr-037.md) D6 narrowed D3: `Shared` is
 > an **atomic** count at *both* settings, so there is no `yes`/`no` split left to be inconsistent
 > about — and D6's own argument is this paragraph's, reached from the other side. D7 then allows
 > `contracts::sharing` to take the atomic away for a value it can prove crosses nothing, which is
@@ -222,7 +222,7 @@ and ADR-037 §3 all exist to prevent, arriving through a foreign call rather tha
 >
 > **What replaced it is a refusal.** D7's per-value inference means a `Shared[Conn]` is an `Rc` for
 > one value and an `Arc` for another in the same program, and no foreign signature can name both —
-> so [ADR-061](specification/adr/adr-061.md) D1 refuses a `Shared` handed to code nothing describes,
+> so [ADR-061](../specification/adr/adr-061.md) D1 refuses a `Shared` handed to code nothing describes,
 > the same refusal a lock already had and for the sentence that was already the lock's reason.
 > `contracts::send`'s `CHOSEN` is where that lives. The way out is to pass what is inside.
 >
@@ -270,7 +270,7 @@ It is refused. Four things about *how* are the finding:
 
 `crates/nikaia/src/diagnostics/translate` maps a byte offset in the emitted Rust back to the
 `.nika` span that produced it, through `emit::SourceMap`
-([ADR-012](specification/adr/adr-012.md)). Fed the same `rustc` JSON by hand, it does the right
+([ADR-012](../specification/adr/adr-012.md)). Fed the same `rustc` JSON by hand, it does the right
 thing:
 
 ```text
@@ -304,7 +304,7 @@ crossed: not Send (refcount 1) on tokio-rt-worker, called from main
 
 Nikaia contributes nothing to this outcome, and nothing to the previous one either: the whole of
 D7's first rule is, today, whatever `Send` bound the foreign crate's author happened to write.
-[ADR-033](specification/adr/adr-033.md) D4 already names this case for the *ordering* question —
+[ADR-033](../specification/adr/adr-033.md) D4 already names this case for the *ordering* question —
 "anything reached through `unsafe`" — and it is the same case here. What is worth being explicit
 about is that **a structural `Send` check in the frontend would not have caught this one either**:
 the value it would check is `Send`-by-declaration at the point Nikaia can see it. Only the callee's
@@ -318,16 +318,16 @@ the foreign crate is honest, and a note to that effect belongs next to it.
 > **A `Cleanup` may not be owned by a foreign task.** ADR-006 D3 parks a cancelled cleanup with
 > *our* runtime, and a foreign runtime's shutdown will not drain that queue. A `Cleanup` handed
 > across is a cleanup that may never run.
-> — [ADR-038](specification/adr/adr-038.md) D7
+> — [ADR-038](../specification/adr/adr-038.md) D7
 
-[ADR-006](specification/adr/adr-006.md) is unbuilt, so this cannot be run. The argument below is
+[ADR-006](../specification/adr/adr-006.md) is unbuilt, so this cannot be run. The argument below is
 the deliverable. It concludes that **the rule is right and its stated reason is the least of five**,
 and that a cheaper alternative to refusal exists which ADR-038 did not consider.
 
 ### 4.1 What goes wrong, in order of severity
 
 **(a) On the ordinary path, `cleanup()` is never called at all — and that is worse than the
-cancellation case D7 names.** [ADR-006](specification/adr/adr-006.md) D1 inserts `cleanup()` on
+cancellation case D7 names.** [ADR-006](../specification/adr/adr-006.md) D1 inserts `cleanup()` on
 every exit path *of a Nikaia block*, during lowering. A value handed to a foreign function leaves
 Nikaia's control flow at that call: the frontend sees a `let` and a call, and whatever eventually
 destroys the value is Rust the frontend never lowered. So there is no inserted `cleanup().await`,
@@ -337,7 +337,7 @@ Rust's `Drop` runs, which is `drop()`, the last-resort synchronous fallback. Par
 reason — the parked queue not being drained — is about *cancellation*; this is the normal case and
 it fails earlier and more completely.
 
-**(b) D5's shutdown drain cannot even report it.** [ADR-006](specification/adr/adr-006.md) D5 waits
+**(b) D5's shutdown drain cannot even report it.** [ADR-006](../specification/adr/adr-006.md) D5 waits
 at exit for "parked cleanups and detached tasks", and on expiry warns, "naming every resource that
 did not finish cleanly" (`NK2603`). A value owned by a foreign task is neither a parked cleanup nor
 a detached task. The drain is satisfied, the deadline is not exceeded, the program exits `0`, and
@@ -345,7 +345,7 @@ the warning that exists precisely to prevent silent data loss has nothing to nam
 invisible by construction**, which is the property that makes it worse than a hang.
 
 **(c) The `throws` obligation is accounted for at a scope exit that never happens.**
-[ADR-006](specification/adr/adr-006.md) D4 makes the inserted `cleanup()` a real call site: a
+[ADR-006](../specification/adr/adr-006.md) D4 makes the inserted `cleanup()` a real call site: a
 `cleanup()` that declares `throws IoError` gives the enclosing function a `throws` it did not write
 (`NK2601`), and the ledger records it. Hand the value to a foreign call and the enclosing function
 keeps the obligation in its signature while the call that justified it is gone. Worse, if the
@@ -357,9 +357,9 @@ here, because the runtime was never told.
 **(d) `cleanup()` may pause, and a foreign executor cannot drive it.** This is the one place where
 the two records collide mechanically rather than in bookkeeping. `cleanup()` is a pausable Nikaia
 function, so in the lowered program it is a future whose wakers come from *our* runtime — and
-[ADR-038](specification/adr/adr-038.md) D3/D4 put those completions on our I/O thread, on
+[ADR-038](../specification/adr/adr-038.md) D3/D4 put those completions on our I/O thread, on
 `io_uring` where the machine has it. A `tokio` task polling that future is a second runtime nested
-inside the first. [ADR-006](specification/adr/adr-006.md) D5's own "honest limit" already names the
+inside the first. [ADR-006](../specification/adr/adr-006.md) D5's own "honest limit" already names the
 shape of what follows: *"FFI that blocks the thread rather than pausing will block a single-threaded
 event loop and with it the deadline timer."* A cleanup awaiting our runtime from inside a foreign
 task is that hazard with the arrow reversed, and the thing it can stall is the timer that is
@@ -391,15 +391,15 @@ Three notes on building it:
   C.2 allows*. Measured, and it is visible from the outside: a function **declared** `sync` whose
   body calls `hyper_shim::serve_once` compiles today and is recorded in `nikaia.contracts` as
   `sync = true`. So the precondition for this rule is expression-level spans
-  ([ADR-024](specification/adr/adr-024.md) D7), which the code comment already names as the
+  ([ADR-024](../specification/adr/adr-024.md) D7), which the code comment already names as the
   blocker. A `Cleanup` rule that shrugged where `sync` shrugs would be a rule in name only.
 * **It has to be structural and transitive**, like the `Send` check ADR-005 Group B names, and for
   the same reason: a struct with one `Cleanup` field, a `List` of them, a closure capturing one. No
   analysis in the frontend walks a type for a marker today. The ledger's `signature` and `fields`
-  ([ADR-024](specification/adr/adr-024.md)) are the raw material and nothing reads them that way.
+  ([ADR-024](../specification/adr/adr-024.md)) are the raw material and nothing reads them that way.
 
 The diagnostic belongs next to `NK2602` and has a way out that already exists —
-[ADR-006](specification/adr/adr-006.md) D4's explicit `close()`, which consumes the resource and
+[ADR-006](../specification/adr/adr-006.md) D4's explicit `close()`, which consumes the resource and
 returns the error normally:
 
 ```text
@@ -442,9 +442,9 @@ down as rejected rather than unconsidered.
 
 > What needs no rule: the ledger knows nothing about a foreign crate's effects, so `touches` is
 > absent, so it reaches everything and orders against everything
-> ([ADR-033](specification/adr/adr-033.md) D4). Fail-closed polarity means interop cannot silently
+> ([ADR-033](../specification/adr/adr-033.md) D4). Fail-closed polarity means interop cannot silently
 > break the ordering guarantee — it only makes programs that use it slower.
-> — [ADR-038](specification/adr/adr-038.md) D7
+> — [ADR-038](../specification/adr/adr-038.md) D7
 
 **Confirmed, empirically, and it is the one claim here asserted on every `cargo test`.**
 `nikaia --input examples/foreign-runtime/overlaps.nika --overlaps --user-parallelism yes`:
@@ -469,7 +469,7 @@ pair with a foreign call in it is kept in order, and the reason given is the abs
 not something that happens to coincide with it. The emitter agrees: exactly one overlap in the
 lowered program, inside `control`.
 
-*(Updated for [ADR-033](specification/adr/adr-033.md) D10. That overlap was a `task::both` when this
+*(Updated for [ADR-033](../specification/adr/adr-033.md) D10. That overlap was a `task::both` when this
 was written and is now `task::read_pair` — the control is two file reads, and two reads are carried
 by the runtime with no thread of the program's in them. Which also means the `--user-parallelism yes`
 in the command above is no longer needed to see it: the assertion on every `cargo test` runs at both
@@ -526,7 +526,7 @@ what it handed over. Three are now answered in the records that own them, and
 this note is where a reader of §6 finds out.
 
 1. **`Shared` lands *after* `NK25xx`.** The structural `Send` check is built —
-   [ADR-005](specification/adr/adr-005.md) §5 — and §3.2's asymmetry cannot
+   [ADR-005](../specification/adr/adr-005.md) §5 — and §3.2's asymmetry cannot
    arrive unannounced: a value that may not cross a thread is refused as
    `NK2501` into a task and `NK2502` into a call this compiler cannot see the end
    of, in Nikaia words and in the `.nika` file, with the same verdict at both
@@ -541,10 +541,10 @@ this note is where a reader of §6 finds out.
    which is neither permission nor a refusal — but the refusal now names the line
    the author wrote. The **text** is still Rust's, which is the second decision
    §6 separated out and which is still open.
-3. **`E0277` is in [ADR-005](specification/adr/adr-005.md) D7's enumerated
+3. **`E0277` is in [ADR-005](../specification/adr/adr-005.md) D7's enumerated
    classes.** §3.3's fourth finding, recorded where the promise lives.
 4. **D7's second rule — refuse or wrap — is still open.** §4.3 is unchanged and
-   still the argument; [ADR-006](specification/adr/adr-006.md) is unbuilt, so
+   still the argument; [ADR-006](../specification/adr/adr-006.md) is unbuilt, so
    nothing has been built that would decide it.
 
 And the addition §6 asked for rather than a decision: D7's first rule now says
@@ -555,7 +555,7 @@ evidence.
 produced.** A value that may not cross at `no` may not cross at `yes` either,
 because the verdict is not allowed to consult the switch — so once `Shared`
 exists, a `Shared` will not cross a thread at all, and Part II 12.2's shared
-counter is the program that wants to. [ADR-037](specification/adr/adr-037.md) D3
+counter is the program that wants to. [ADR-037](../specification/adr/adr-037.md) D3
 already names the way out and leaves it open ("whether the *choice between `Rc`
 and `Arc`* could be made per value rather than per build"). That is now the
 question standing directly in front of `Shared`, and it was not on §6's list.
@@ -567,11 +567,11 @@ question standing directly in front of `Shared`, and it was not on §6's list.
 **Date:** September 22, 2026. Added rather than edited in, for §7's reason: what
 is above is what was measured, and this is what changed.
 
-[ADR-193](specification/adr/adr-193.md) D1 gave a description a `threads`
+[ADR-193](../specification/adr/adr-193.md) D1 gave a description a `threads`
 column — three values, hand-written, the absence meaning *nobody said* — and D2
 made `NK2502` ask a **described** call where the word says `true`. Before that,
 the refusal asked its question only of a call *nothing* describes, which is
-[ADR-038](specification/adr/adr-038.md) D7's own wording, so a crate that
+[ADR-038](../specification/adr/adr-038.md) D7's own wording, so a crate that
 answered every other question honestly turned the check off by being described.
 
 `hyper_shim::across_a_thread` and `across_a_thread_unchecked` both build a
@@ -616,20 +616,20 @@ So the experiment's own finding moves, and the new one is sharper than the old:
 * **What `unsafe impl Send` defeats is `rustc`**, not a description. A crate
   that lies in `unsafe` Rust still has to lie in its `.contracts` file to get
   past this, and that file is committed and reviewed like code
-  ([ADR-104](specification/adr/adr-104.md) D5) — which is a different thing to
+  ([ADR-104](../specification/adr/adr-104.md) D5) — which is a different thing to
   ask of an author than a bound the compiler infers.
 * **What is *not* claimed**: none of this is soundness. A description that says
   `crosses = true` about a type holding an `Rc` gets exactly as far as it did
   before. The column moves who has to be honest, and says so out loud
-  ([ADR-193](specification/adr/adr-193.md) D3).
+  ([ADR-193](../specification/adr/adr-193.md) D3).
 
 **And §2.2's sentence about the path is superseded**, which is worth saying
 because it is the reason none of this could be measured until now. That section
 records `{ path = "../../../../shim" }` as *relative to the generated
-`Cargo.toml`*, and it was, until [ADR-053](specification/adr/adr-053.md) D1 gave
+`Cargo.toml`*, and it was, until [ADR-053](../specification/adr/adr-053.md) D1 gave
 every package a member directory of its own and left every one of those `..`
 one short. All three projects here were unbuildable from that day until
-[ADR-197](specification/adr/adr-197.md), and nothing said so: the tests that
+[ADR-197](../specification/adr/adr-197.md), and nothing said so: the tests that
 build them fetch `hyper` from crates.io and are `#[ignore]`d, and CI does not
 run ignored tests. A `path` is relative to `nikaia.toml` now, so the three
 manifests say `../shim`.
@@ -639,4 +639,4 @@ cache's key, so a hand edit — which D5 *expects* — took effect only after th
 build directory was thrown away. It failed **open**: dropping a claim was seen,
 because a refused build records nothing, while adding one hit an entry recorded
 before the word was there. `Choices::describes` is the dimension that closes it
-([ADR-021](specification/adr/adr-021.md) D7's *every dimension in one place*).
+([ADR-021](../specification/adr/adr-021.md) D7's *every dimension in one place*).

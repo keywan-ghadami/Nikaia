@@ -4,7 +4,7 @@
 //!
 //! **Four tables and no generated code.** The obvious lowering for a small map
 //! was a `match` written out by the emitter, because that is what the numbers
-//! favour against a hash. What [`docs/fixed-map-lookup.md`](../../../docs/fixed-map-lookup.md)
+//! favour against a hash. What [`docs/history/fixed-map-lookup.md`](../../../docs/history/fixed-map-lookup.md)
 //! §6 then measured is a **linear scan over these very arrays**, and it is the
 //! `match` within 0 to 17 % up to twenty-four keys — a dozen past the point
 //! where the perfect hash has already taken the lead. So the range where a
