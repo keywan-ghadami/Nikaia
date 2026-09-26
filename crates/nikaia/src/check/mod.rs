@@ -955,6 +955,8 @@ fn walked<'a>(
         task_bindings: Vec::new(),
         said_mut: BTreeSet::new(),
         expected: None,
+        expected_either: false,
+        field_either: false,
         type_parameters: BTreeMap::new(),
         struct_parameters: BTreeMap::new(),
         borrowing_self: false,
@@ -2137,6 +2139,12 @@ struct Checker<'a> {
     inside_a_comptime: bool,
     /// What the function being walked declared it hands back.
     expected: Option<Ty>,
+    /// The function being checked hands back text **both kinds** of which
+    /// flow into its result ([ADR-222](../../docs/specification/adr/adr-222.md)
+    /// D3): text of its own is moved in as it is, so it is not a view refused.
+    expected_either: bool,
+    /// The same for the field whose value is being checked.
+    field_either: bool,
     /// The type parameters in scope where the body being walked stands - the
     /// function's own `[T]` and the `[T]` of the `impl` around it.
     ///
@@ -3713,6 +3721,10 @@ impl<'a> Checker<'a> {
             .as_ref()
             .map(|t| Ty::from_ast(self.parsed, t).erase(&parameters));
         let outer = std::mem::replace(&mut self.expected, expected.clone());
+        let outer_either = std::mem::replace(
+            &mut self.expected_either,
+            ret_type.as_ref().is_some_and(|t| t.either),
+        );
         let outer_throwing = std::mem::replace(&mut self.throwing, *throws);
 
         let keeps: Vec<String> = self
@@ -3802,6 +3814,7 @@ impl<'a> Checker<'a> {
         self.a_task_took_what_is_used_again();
 
         self.expected = outer;
+        self.expected_either = outer_either;
         self.throwing = outer_throwing;
         self.type_parameters = outer_declared;
         self.borrowing_self = outer_borrowing;
@@ -7335,6 +7348,7 @@ impl<'a> Checker<'a> {
                                 continue;
                             }
                             let keeper = format!("`{owner}` keeps its `{field}` after this line");
+                            self.field_either = self.either_field(&owner, &field);
                             self.expect_kept(
                                 &found,
                                 &want,
@@ -9256,6 +9270,16 @@ impl<'a> Checker<'a> {
         what: &str,
         message: impl FnOnce(&str, &str) -> String,
     ) {
+        // **Text of its own into a position both kinds of text flow into** is
+        // moved in as it is (ADR-222 D3): that is what the position is for.
+        let either = match what {
+            "returns" => self.expected_either,
+            "field" => std::mem::take(&mut self.field_either),
+            _ => false,
+        };
+        if either && *found == Ty::named("String") && *want == Ty::view("str") {
+            return;
+        }
         let before = self.checked.findings.len();
         self.expect(found, want, span, what, message);
         if self.checked.findings.len() == before {
@@ -9267,6 +9291,22 @@ impl<'a> Checker<'a> {
             finding.notes.extend(why);
             finding.help = Some(help);
         }
+    }
+
+    /// Whether a struct's field is text both kinds of which flow into
+    /// ([ADR-222](../../docs/specification/adr/adr-222.md) D3).
+    fn either_field(&self, owner: &str, field: &str) -> bool {
+        let owner = owner.rsplit("::").next().unwrap_or(owner);
+        self.parsed
+            .program
+            .items
+            .iter()
+            .any(|item| match &item.node {
+                Item::Struct { name, fields, .. } if self.parsed.text(*name) == owner => fields
+                    .iter()
+                    .any(|f| f.ty.either && self.parsed.text(f.name) == field),
+                _ => false,
+            })
     }
 
     /// **Why a view of text needs `.to_owned()` here, said for the case it is**

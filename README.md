@@ -394,7 +394,7 @@ bootstrap compiler can already parse.
 
 ## 🚦 Where the project actually stands
 
-**Pre-alpha, as of 0.0.202.** The [roadmap](docs/project_status_and_roadmap.md) shows 74 % —
+**Pre-alpha, as of 0.0.203.** The [roadmap](docs/project_status_and_roadmap.md) shows 74 % —
 that counts *areas of scope* built, and the language area alone reads 100 %. Neither number says
 how close you are to writing the program you have in mind. This section does, in plain words.
 Every wall and risk below has an entry of the same subject in
@@ -421,7 +421,7 @@ own words** with an `NK`-code and a help line, and the ones that are not still p
 | use a crate from crates.io | refused until you run `nikaia describe <crate>` and commit what it writes | foreign code is described before it is called; works, but it is a step |
 | write tests | nothing to run them with | no `nikaia test` and no `assert` — Part III 14 is not built. Compare output instead |
 | format, get completion, generate docs | nothing | no `nikaia fmt`, no LSP, no `nikaia doc`. [`editors/vscode`](editors/) has syntax highlighting only |
-| put a **view** of text (a `ref String` parameter, a slice, a name bound to a literal) where a `String` is **kept** — a field, a `return` | refused, and the message says why and what copies nothing | a copy of text you already have is written, never inserted; a literal itself is fine anywhere, and a view handed to a function that only reads needs nothing |
+| hand a **view** of text to a function that keeps it as a `String`, or bind it with `let s: String = …` | refused, and the message says why and what copies nothing | a copy of text you already have is written, never inserted. A view kept in a `String` **field** or handed back from `-> String` works: the field or result becomes a view, or either per value ([ADR-222](docs/specification/adr/adr-222.md)) |
 | do I/O inside a lambda handed to `std` (`map`, `filter`, …) | refused — write a `for` loop | `std`'s entries take synchronous Rust closures; a lazy walk of a pausing sequence has no shape yet |
 | put your own modules in subdirectories (`src/a/b.nika`) | not found | modules are one level: a `.nika` file beside `main.nika` |
 | talk to a database | not possible | `std::db` and the SQL DSL are specified, not built — which is why `fortunes` doesn't run |
@@ -446,7 +446,7 @@ finished or not.
 | Area | Promise | Built | Open |
 | :--- | :--- | :--- | :--- |
 | **The tether** ([ADR-209](docs/specification/adr/adr-209.md)) | a view may outlive its buffer, with no annotation and no copy | ✅ all of it: the buffer lives in the caller's frame, in a handle a task carries, or one handle per buffer where a cache drops entries — for text and for a list of structs of views alike; `nikaia --tethers` shows which | a buffer handed both to a task *and* out of the function; a *map* of structs holding views that drops entries — both refused with an explanation |
-| **Text as one type** ([ADR-207](docs/specification/adr/adr-207.md), [208](docs/specification/adr/adr-208.md)) | text is `String`, and you never convert by hand | ✅ literals work wherever a `String` is wanted; a view handed to a function that only reads needs nothing | a *view* kept where a `String` is declared needs `.clone()` — whether it should become a tether instead is undecided |
+| **Text as one type** ([ADR-207](docs/specification/adr/adr-207.md), [208](docs/specification/adr/adr-208.md)) | text is `String`, and you never convert by hand | ✅ literals work wherever a `String` is wanted; a view handed to a function that only reads needs nothing; a `String` field or result a view flows into becomes a view, or either per value, and only that field pays ([ADR-222](docs/specification/adr/adr-222.md)) | a view handed to a function that *keeps* a `String`, or bound by an annotated `let`, needs `.clone()` |
 | **Functions have no colour** ([ADR-055](docs/specification/adr/adr-055.md)) | no `async`/`await`; any function may pause | ✅ inferred everywhere, including tasks and `overlap` | a lambda that pauses, handed to `std` (`map`, `filter`), and a lazy walk of a pausing sequence — refused, write a loop |
 | **Locks without deadlocks** ([ADR-057](docs/specification/adr/adr-057.md)) | `access_all` takes locks in one order; a lock is never held across a pause | ✅ the lock, all its doors, and `access_all` | the analysis that would refuse misuse answers *undecided* for 24 of 59 functions in the examples, so those refusals are not switched on |
 | **SQL checked at build time** ([ADR-143](docs/specification/adr/adr-143.md)) | a misspelled column is refused while the program is built | — | not started: `std::db`, the driver, and the query DSL |

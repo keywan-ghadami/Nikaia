@@ -1,6 +1,6 @@
 # Nikaia Language Specification
 **Part III: Tooling, Ecosystem & Interoperability**
-**Version:** 0.0.202 (Draft)
+**Version:** 0.0.203 (Draft)
 **Date:** 2026-09-26
 
 ---
@@ -1241,7 +1241,7 @@ A code specified ahead of its check has no reproduction test.
 
 ### C.4. What a Type Error Looks Like
 
-Two of the `NK1xxx` family, on a file that says `io::read_to_string("input.txt")` and puts a view of text it was handed in a `String` field:
+Two of the `NK1xxx` family, on a file that says `io::read_to_string("input.txt")` and puts a view of text it was handed in a published `String` field that text of its own also flows into:
 
 ```text
 error[NK1101]: `io::read_to_string` takes 0 arguments, and this call passes 1

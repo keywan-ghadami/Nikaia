@@ -23,6 +23,7 @@ pub mod parser;
 pub mod project;
 pub mod specbook;
 pub mod sysroot;
+pub mod text_tiers;
 pub mod traits;
 pub mod types;
 pub mod views;

@@ -709,6 +709,13 @@ pub struct Type {
     /// D1 writes, and a bare `[T]` is a value of no size, which this language
     /// has nowhere to put.
     pub is_slice: bool,
+    /// **Text that is a view or text of its own, decided per value**
+    /// ([ADR-222](../../../docs/specification/adr/adr-222.md) D3). Never
+    /// written: set by [`crate::text_tiers`] on a `String` field or result
+    /// that both kinds of text flow into, which is then also `is_view`. Below
+    /// it is `nikaia_std::either_text::EitherText`, which borrows a view and
+    /// owns what it was handed, so neither kind pays for the other.
+    pub either: bool,
 }
 
 /// One line of an `extern "C"` block, before the two shapes are taken apart

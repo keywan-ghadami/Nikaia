@@ -667,6 +667,14 @@ pub fn report(parsed: &Parsed, ledger: &Ledger) -> String {
     // this unit's own inference produced it.
     let here = Ledger::infer(parsed);
     let mut lines: Vec<String> = Vec::new();
+    // **What a `String` field or result is below** (ADR-222 D5), where it is
+    // not text of its own.
+    if !parsed.text_tiers.is_empty() {
+        lines.push("text (declared `String`):\n".to_string());
+        for line in &parsed.text_tiers {
+            lines.push(format!("    {line}\n"));
+        }
+    }
     for (key, contract) in &ledger.functions {
         if contract.views.is_empty() || !here.functions.contains_key(key) {
             continue;

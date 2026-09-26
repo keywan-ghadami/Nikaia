@@ -357,6 +357,10 @@ pub struct Parsed {
     /// The alternative was the same lookup at fourteen call sites in three
     /// modules, where the fifteenth would have been the one that forgot.
     aliases: std::collections::BTreeMap<String, String>,
+    /// What [`crate::text_tiers`] decided about a `String` field or result
+    /// that is not text of its own below, one line each, for `--tethers`
+    /// ([ADR-222](../../../docs/specification/adr/adr-222.md) D5).
+    pub text_tiers: Vec<String>,
 }
 
 impl Parsed {
@@ -381,6 +385,7 @@ impl Parsed {
             },
             interner: self.interner.clone(),
             aliases: self.aliases.clone(),
+            text_tiers: self.text_tiers.clone(),
         }
     }
 
@@ -414,6 +419,7 @@ impl Parsed {
                     generics: out.generics,
                     is_view: false,
                     is_slice: false,
+                    either: false,
                     ..out
                 };
             }
@@ -451,6 +457,7 @@ impl Parsed {
             program: ast::Program { items },
             interner: self.interner.clone(),
             aliases: self.aliases.clone(),
+            text_tiers: self.text_tiers.clone(),
         }
     }
 
@@ -874,11 +881,17 @@ pub fn parse_to_ast(input: &str) -> Result<Parsed> {
     }
 
     let aliases = Parsed::aliases_of(&program, &interner);
-    Ok(Parsed {
+    let mut parsed = Parsed {
         program,
         interner,
         aliases,
-    })
+        text_tiers: Vec::new(),
+    };
+    // **What a `String` field or result is below is decided here, once**
+    // ([ADR-222](../../../../docs/specification/adr/adr-222.md)): by what flows
+    // into it, and written into its type so every later reader agrees.
+    crate::text_tiers::refine(&mut parsed);
+    Ok(parsed)
 }
 
 // --- Action-block helpers ---
@@ -1725,6 +1738,7 @@ grammar! {
                     count: None,
                     is_mut: mutable,
                     is_slice: false,
+                    either: false,
                 }
             }
           // **An integer where a type argument stands**
@@ -1749,6 +1763,7 @@ grammar! {
                     count: Some(n),
                     is_mut: false,
                     is_slice: false,
+                    either: false,
                 }
             }
           // `(A, B)`. The parts go where a named type's arguments go, so
@@ -1768,6 +1783,7 @@ grammar! {
                     count: None,
                     is_mut: false,
                     is_slice: false,
+                    either: false,
                 }
             }
           // **A parameter may be code**
@@ -1797,6 +1813,7 @@ grammar! {
                     count: None,
                     is_mut: false,
                     is_slice: false,
+                    either: false,
                 }
             }
 

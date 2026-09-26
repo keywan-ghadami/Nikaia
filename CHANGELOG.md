@@ -4,6 +4,27 @@ Since 0.0.8, **every change package raises the patch number by one**, and a
 heading below is one package: what it decided, what it changed, what it left
 open. The version is the specification's; the compiler's crates carry their own.
 
+## [0.0.203] — 2026-09-26
+
+**A `String` field or result is below what flows into it** —
+[ADR-222](docs/specification/adr/adr-222.md), the owner's decision on
+`open-work.md` §2.19: the costs are carried by the special case, not by the
+general one.
+
+Right after parsing, every field declared `String` and every function declared
+`-> String` is read for what the package puts there. With text of its own only,
+it stays `String` and nothing changes. With views only (literals count as
+views), it becomes `ref String`, and ADR-209 places the buffer. With both, it
+becomes `nikaia_std::either_text::EitherText`, a `Cow<str>` that borrows a view
+and moves text of its own in at each line. A published field or result is never
+both; that one case keeps ADR-208 D2's refusal. A name bound to a literal and
+kept as text of its own is declared `String`. The README's wall is gone for a
+field and a `return`: a `ref String` parameter, a slice of a buffer the
+function read (which used to pass the checker and fail in `rustc`), a name bound
+to a literal, and `return line.trim()` from `-> String` all compile and run.
+`--tethers` reports the tiers. A kept argument, an annotated `let` and `?String`
+are still refused as before (`open-work.md` §2.19).
+
 ## [0.0.202] — 2026-09-26
 
 **A list of structs of views that drops entries is held, one handle per
